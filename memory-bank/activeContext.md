@@ -22,7 +22,6 @@
 * **backend/main.py** enhanced: build info (git SHA, timestamp), `REQUIRE_NEO4J` guard.  
 * **requirements.txt** cleaned — fixed `python-json-logger`, removed stray `asyncio`, aligned crewai/chromadb versions.  
 * **Factory.py** now uses try/except imports so missing optional tools don’t break runtime/tests.  
-* Added **.ruff.toml**, **pytest.ini** (with pytest-env), `.pre-commit-config.yaml`.  
 * Initial **Memory Bank**: `projectbrief.md`, `productContext.md` authored.  
 * CI currently re-running after dependency conflict fix.
 
@@ -31,7 +30,7 @@
 ## 3. Next Steps
 1. **Monitor CI run** – merge or patch until pipeline green.  
 2. **Complete Memory Bank** – write `systemPatterns.md`, `techContext.md`, `progress.md`.  
-3. **Implement GeminiLLMProvider** – subclass CrewAI `BaseLLM`, unit-test.  
+3. **Configure Gemini in CrewAI** – Set MODEL & GEMINI_API_KEY in .env; test with `LLM()` class..  
 4. **PatternLibrary PoC** – decide LLM-vs-code conversion of YAML motifs → Cypher.  
 5. **Design HITL Workflow** – compliance_checker pause / webhook / resume endpoints.  
 6. **Performance metrics** – add Prometheus latency histograms; target < 5 s enrichment.  
@@ -45,9 +44,10 @@
 | **Use sequential crew for MVP** | Provides deterministic, auditable task order required by regulators. |
 | **crewai 0.5.0 + chromadb ≥0.5.23** | Latest stable versions without dependency conflict. |
 | **Try/except import guards in tools/factory** | Allows tests & CI to run even if optional crypto tools absent. |
-| **Skip tests when API module missing** | Keeps pipeline green until image-analysis & other endpoints delivered. |
+| **Skip tests when API module missing** | Keeps pipeline green until image analysis & other endpoints delivered. |
 | **Structured logging (structlog + python-json-logger)** | JSON logs ready for ELK / Loki aggregation. |
 | **Environment-driven config (Pydantic Settings)** | Twelve-factor compliance; Docker secrets friendly. |
+| **Native Gemini Support in CrewAI** | CrewAI 0.5.0+ has built-in Gemini support via `LLM(model="gemini/...", api_key=...)`. No custom provider needed! |
 
 ---
 
