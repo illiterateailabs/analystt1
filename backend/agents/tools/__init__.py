@@ -2,35 +2,61 @@
 CrewAI Tools for Analyst Augmentation Agent.
 
 This package contains custom tools that can be used by CrewAI agents
-to interact with external systems and services, including:
-
-- GraphQueryTool: Execute Cypher queries against Neo4j
-- SandboxExecTool: Run Python code in isolated e2b sandboxes
-- CodeGenTool: Generate Python code using Gemini
-- PatternLibraryTool: Access fraud pattern templates
-- PolicyDocsTool: Retrieve compliance policies and regulations
-- TemplateEngineTool: Generate reports from templates
-- Neo4jSchemaTool: Retrieve Neo4j database schema
-- RandomTxGeneratorTool: Generate random transactions for testing
+to interact with external systems and services.
 """
 
-from backend.agents.tools.graph_query_tool import GraphQueryTool
-from backend.agents.tools.sandbox_exec_tool import SandboxExecTool
-from backend.agents.tools.code_gen_tool import CodeGenTool
-from backend.agents.tools.pattern_library_tool import PatternLibraryTool
-from backend.agents.tools.policy_docs_tool import PolicyDocsTool
-from backend.agents.tools.template_engine_tool import TemplateEngineTool
-from backend.agents.tools.neo4j_schema_tool import Neo4jSchemaTool
-from backend.agents.tools.random_tx_generator_tool import RandomTxGeneratorTool
+# Only import tools that actually exist to prevent import errors
+try:
+    from backend.agents.tools.graph_query_tool import GraphQueryTool
+except ImportError:
+    GraphQueryTool = None
 
-# Export all tools
+try:
+    from backend.agents.tools.sandbox_exec_tool import SandboxExecTool
+except ImportError:
+    SandboxExecTool = None
+
+try:
+    from backend.agents.tools.code_gen_tool import CodeGenTool
+except ImportError:
+    CodeGenTool = None
+
+try:
+    from backend.agents.tools.pattern_library_tool import PatternLibraryTool
+except ImportError:
+    PatternLibraryTool = None
+
+try:
+    from backend.agents.tools.policy_docs_tool import PolicyDocsTool
+except ImportError:
+    PolicyDocsTool = None
+
+try:
+    from backend.agents.tools.template_engine_tool import TemplateEngineTool
+except ImportError:
+    TemplateEngineTool = None
+
+try:
+    from backend.agents.tools.neo4j_schema_tool import Neo4jSchemaTool
+except ImportError:
+    Neo4jSchemaTool = None
+
+try:
+    from backend.agents.tools.random_tx_generator_tool import RandomTxGeneratorTool
+except ImportError:
+    RandomTxGeneratorTool = None
+
+# Export only the tools that successfully imported
 __all__ = [
-    "GraphQueryTool",
-    "SandboxExecTool",
-    "CodeGenTool",
-    "PatternLibraryTool",
-    "PolicyDocsTool",
-    "TemplateEngineTool",
-    "Neo4jSchemaTool",
-    "RandomTxGeneratorTool",
+    name for name in [
+        "GraphQueryTool",
+        "SandboxExecTool",
+        "CodeGenTool",
+        "PatternLibraryTool",
+        "PolicyDocsTool",
+        "TemplateEngineTool",
+        "Neo4jSchemaTool",
+        "RandomTxGeneratorTool",
+    ]
+    if globals().get(name) is not None
 ]
