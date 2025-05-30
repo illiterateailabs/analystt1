@@ -25,6 +25,7 @@ memory-bank/
 ├── techContext.md         # Stack, env setup, constraints
 ├── activeContext.md       # Current focus & next steps  ← read first
 ├── progress.md            # What works & what’s left
+├── session-handoff-2025-05-30.md  # End-of-day handoff with restart instructions (latest)
 └── (additional folders)   # e.g. research/, integrations/, playbooks/
 ```
 
@@ -38,6 +39,7 @@ memory-bank/
 | 4 | **techContext.md** | Technologies, dependencies, dev & deploy guidelines. |
 | 5 | **activeContext.md** | *Living* log: current work, recent changes, next actions. |
 | 6 | **progress.md** | Chronological status, done vs TODO, issues, metrics. |
+| 7 | **session-handoff-2025-05-30.md** | Latest EOD summary & restart script for next session. |
 
 ### 2.2 Optional Context  
 Create extra `.md` files / subfolders when detail is too large for core files:  
