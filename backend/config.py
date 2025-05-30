@@ -50,6 +50,35 @@ class Settings(BaseSettings):
     alpha_vantage_api_key: Optional[str] = Field(default=None, env="ALPHA_VANTAGE_API_KEY")
     polygon_api_key: Optional[str] = Field(default=None, env="POLYGON_API_KEY")
     news_api_key: Optional[str] = Field(default=None, env="NEWS_API_KEY")
+    
+    # Crypto Data APIs
+    # Dune Analytics API
+    dune_api_key: Optional[str] = Field(default=None, env="DUNE_API_KEY", 
+                                       description="API key for Dune Analytics")
+    
+    # Block Explorer APIs
+    etherscan_api_key: Optional[str] = Field(default=None, env="ETHERSCAN_API_KEY", 
+                                            description="API key for Etherscan (Ethereum)")
+    bscscan_api_key: Optional[str] = Field(default=None, env="BSCSCAN_API_KEY", 
+                                          description="API key for BSCScan (Binance Smart Chain)")
+    polygonscan_api_key: Optional[str] = Field(default=None, env="POLYGONSCAN_API_KEY", 
+                                              description="API key for PolygonScan (Polygon)")
+    arbiscan_api_key: Optional[str] = Field(default=None, env="ARBISCAN_API_KEY", 
+                                           description="API key for Arbiscan (Arbitrum)")
+    optimism_api_key: Optional[str] = Field(default=None, env="OPTIMISM_API_KEY", 
+                                           description="API key for Optimism Explorer")
+    ftmscan_api_key: Optional[str] = Field(default=None, env="FTMSCAN_API_KEY", 
+                                          description="API key for FTMScan (Fantom)")
+    snowtrace_api_key: Optional[str] = Field(default=None, env="SNOWTRACE_API_KEY", 
+                                            description="API key for Snowtrace (Avalanche)")
+    
+    # Other Crypto APIs
+    coingecko_api_key: Optional[str] = Field(default=None, env="COINGECKO_API_KEY", 
+                                            description="API key for CoinGecko Pro")
+    moralis_api_key: Optional[str] = Field(default=None, env="MORALIS_API_KEY", 
+                                          description="API key for Moralis")
+    covalent_api_key: Optional[str] = Field(default=None, env="COVALENT_API_KEY", 
+                                           description="API key for Covalent")
 
     # Monitoring & Logging
     sentry_dsn: Optional[str] = Field(default=None, env="SENTRY_DSN")
@@ -135,11 +164,33 @@ class JWTConfig:
     SECRET_KEY = settings.secret_key
 
 
+class CryptoConfig:
+    """Crypto API configuration."""
+    
+    # Dune Analytics
+    DUNE_API_KEY = settings.dune_api_key
+    
+    # Block Explorer APIs
+    ETHERSCAN_API_KEY = settings.etherscan_api_key
+    BSCSCAN_API_KEY = settings.bscscan_api_key
+    POLYGONSCAN_API_KEY = settings.polygonscan_api_key
+    ARBISCAN_API_KEY = settings.arbiscan_api_key
+    OPTIMISM_API_KEY = settings.optimism_api_key
+    FTMSCAN_API_KEY = settings.ftmscan_api_key
+    SNOWTRACE_API_KEY = settings.snowtrace_api_key
+    
+    # Other Crypto APIs
+    COINGECKO_API_KEY = settings.coingecko_api_key
+    MORALIS_API_KEY = settings.moralis_api_key
+    COVALENT_API_KEY = settings.covalent_api_key
+
+
 # Export commonly used configurations
 __all__ = [
     "settings",
     "GeminiConfig",
     "Neo4jConfig",
     "E2BConfig",
-    "JWTConfig"
+    "JWTConfig",
+    "CryptoConfig"
 ]

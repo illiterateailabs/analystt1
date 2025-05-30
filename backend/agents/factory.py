@@ -26,10 +26,18 @@ from backend.agents.tools import (
     Neo4jSchemaTool,
     RandomTxGeneratorTool,
 )
+# Import crypto tools module
+from backend.agents.tools.crypto import (
+    DuneAnalyticsTool,
+    DefiLlamaTool, 
+    EtherscanTool,
+    create_crypto_tools
+)
 from backend.agents.llm import GeminiLLMProvider
 from backend.integrations.neo4j_client import Neo4jClient
 from backend.integrations.gemini_client import GeminiClient
 from backend.integrations.e2b_client import E2BClient
+from backend.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +100,29 @@ class CrewFactory:
             tools["random_tx_generator_tool"] = RandomTxGeneratorTool()
         except ImportError:
             logger.warning("RandomTxGeneratorTool not available, skipping")
+            
+        # Initialize crypto tools
+        try:
+            # Prepare API keys for crypto tools
+            crypto_api_keys = {
+                "dune_api_key": getattr(settings, "dune_api_key", None),
+                "etherscan_api_key": getattr(settings, "etherscan_api_key", None),
+                "bscscan_api_key": getattr(settings, "bscscan_api_key", None),
+                "polygonscan_api_key": getattr(settings, "polygonscan_api_key", None),
+            }
+            
+            # Create crypto tools
+            crypto_tools = create_crypto_tools(
+                neo4j_client=self.neo4j_client,
+                api_keys=crypto_api_keys
+            )
+            
+            # Add crypto tools to the tools dictionary
+            tools.update(crypto_tools)
+            
+            logger.info(f"Initialized {len(crypto_tools)} crypto tools")
+        except Exception as e:
+            logger.warning(f"Error initializing crypto tools: {e}")
         
         logger.info(f"Initialized {len(tools)} tools")
         return tools
@@ -117,6 +148,11 @@ class CrewFactory:
                 if tool_name == "sandbox_exec_tool" and hasattr(tool, "close"):
                     await tool.close()
                     logger.info("Closed e2b sandbox")
+                    
+                # Close crypto tool connections if they have close methods
+                if tool_name in ["dune_analytics_tool", "defillama_tool", "etherscan_tool"] and hasattr(tool, "close"):
+                    await tool.close()
+                    logger.info(f"Closed {tool_name} connection")
         except Exception as e:
             logger.error(f"Error closing connections: {e}")
     
@@ -297,6 +333,46 @@ class CrewFactory:
                     expected_output="Report comparing the actual scenario with detected patterns",
                     agent=agents["report_writer"],
                     context=[tasks[0], tasks[3]] if len(tasks) > 3 else None,
+                ),
+            ]
+        
+        elif crew_name == "crypto_investigation":
+            # Create tasks for crypto investigation crew
+            tasks = [
+                Task(
+                    description="Collect and normalize data from multiple blockchain sources",
+                    expected_output="Structured blockchain data from multiple sources",
+                    agent=agents["crypto_data_collector"],
+                ),
+                Task(
+                    description="Trace transactions and identify related addresses",
+                    expected_output="Transaction flow analysis and address clusters",
+                    agent=agents["blockchain_detective"],
+                    context=[tasks[0]] if tasks else None,
+                ),
+                Task(
+                    description="Analyze DeFi protocol interactions and risks",
+                    expected_output="DeFi protocol analysis with risk assessment",
+                    agent=agents["defi_analyst"],
+                    context=[tasks[0], tasks[1]] if len(tasks) > 1 else None,
+                ),
+                Task(
+                    description="Track large holder movements and their impact",
+                    expected_output="Whale activity analysis with potential market impact",
+                    agent=agents["whale_tracker"],
+                    context=[tasks[1]] if len(tasks) > 1 else None,
+                ),
+                Task(
+                    description="Analyze smart contract interactions and protocol behavior",
+                    expected_output="Smart contract analysis with potential vulnerabilities",
+                    agent=agents["protocol_investigator"],
+                    context=[tasks[2], tasks[3]] if len(tasks) > 3 else None,
+                ),
+                Task(
+                    description="Produce comprehensive crypto investigation report",
+                    expected_output="Markdown report with blockchain analysis findings",
+                    agent=agents["report_writer"],
+                    context=[tasks[1], tasks[2], tasks[3], tasks[4]] if len(tasks) > 4 else None,
                 ),
             ]
         
