@@ -1,48 +1,142 @@
 """
 Analyst's Augmentation Agent - FastAPI Application Entry Point
 
-This module serves as the main entry point for the FastAPI application,
-configuring middleware, routers, logging, and event handlers.
+This module initializes the FastAPI application, configures middleware,
+mounts API routers, and sets up client connections for the Analyst's
+Augmentation Agent.
 """
 
 import logging
+import os
 import time
-from typing import Any, Dict, List, Optional, Union
+from contextlib import asynccontextmanager
+from typing import Dict, List, Any, Optional
 
-from fastapi import FastAPI, Request, Response, status, Depends
+from fastapi import FastAPI, Request, Response, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.exceptions import RequestValidationError
-from fastapi.exception_handlers import http_exception_handler
-from starlette.exceptions import HTTPException as StarletteHTTPException
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
+from fastapi.routing import APIRouter
+from fastapi.openapi.utils import get_openapi
 
-from backend.config import settings
+# Import configuration
+from backend.config import settings, GeminiConfig, Neo4jConfig, E2BConfig, JWTConfig
 from backend.core.logging import setup_logging
-from backend.api.v1 import auth, chat, crew, graph, analysis
-from backend.integrations.neo4j_client import Neo4jClient
-from backend.integrations.e2b_client import E2BClient
-from backend.integrations.gemini_client import GeminiClient
 
-# Setup logging
+# Import API routers
+from backend.api.v1.analysis import router as analysis_router
+from backend.api.v1.auth import router as auth_router
+from backend.api.v1.chat import router as chat_router
+from backend.api.v1.crew import router as crew_router
+from backend.api.v1.graph import router as graph_router
+
+# Import clients
+from backend.integrations.neo4j_client import Neo4jClient
+from backend.integrations.gemini_client import GeminiClient
+from backend.integrations.e2b_client import E2BClient
+
+# Import CrewFactory for health checks
+from backend.agents.factory import CrewFactory
+
+# Configure logging
 setup_logging()
 logger = logging.getLogger(__name__)
 
-# Initialize rate limiter
-limiter = Limiter(key_func=get_remote_address)
 
-# Create FastAPI app
+# Lifespan context manager for startup/shutdown events
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan context manager for FastAPI application.
+    
+    Handles startup and shutdown events, including initializing and
+    closing connections to external services.
+    """
+    # Startup: Initialize clients and store in app state
+    logger.info("Initializing application clients...")
+    
+    # Initialize Neo4j client
+    neo4j_client = Neo4jClient(
+        uri=Neo4jConfig.URI,
+        username=Neo4jConfig.USERNAME,
+        password=Neo4jConfig.PASSWORD,
+        database=Neo4jConfig.DATABASE
+    )
+    
+    # Initialize Gemini client
+    gemini_client = GeminiClient(
+        api_key=GeminiConfig.API_KEY,
+        model=GeminiConfig.MODEL
+    )
+    
+    # Initialize e2b client
+    e2b_client = E2BClient(
+        api_key=E2BConfig.API_KEY,
+        template_id=E2BConfig.TEMPLATE_ID
+    )
+    
+    # Connect to Neo4j
+    try:
+        await neo4j_client.connect()
+        logger.info("Connected to Neo4j database")
+    except Exception as e:
+        logger.error(f"Error connecting to Neo4j: {e}")
+        # We'll continue even if Neo4j connection fails, as some endpoints might not need it
+    
+    # Store clients in app state
+    app.state.neo4j = neo4j_client
+    app.state.gemini = gemini_client
+    app.state.e2b = e2b_client
+    
+    # Initialize CrewFactory for health checks
+    app.state.crew_factory = CrewFactory()
+    
+    # Application startup complete
+    logger.info("Application startup complete")
+    
+    yield
+    
+    # Shutdown: Close connections
+    logger.info("Shutting down application...")
+    
+    # Close Neo4j connection
+    if hasattr(app.state, "neo4j"):
+        try:
+            await app.state.neo4j.close()
+            logger.info("Closed Neo4j connection")
+        except Exception as e:
+            logger.error(f"Error closing Neo4j connection: {e}")
+    
+    # Close e2b sandboxes if any are active
+    if hasattr(app.state, "e2b"):
+        try:
+            await app.state.e2b.close_all_sandboxes()
+            logger.info("Closed all e2b sandboxes")
+        except Exception as e:
+            logger.error(f"Error closing e2b sandboxes: {e}")
+    
+    # Close CrewFactory connections
+    if hasattr(app.state, "crew_factory"):
+        try:
+            await app.state.crew_factory.close()
+            logger.info("Closed CrewFactory connections")
+        except Exception as e:
+            logger.error(f"Error closing CrewFactory connections: {e}")
+    
+    logger.info("Application shutdown complete")
+
+
+# Create FastAPI application
 app = FastAPI(
     title=settings.app_name,
-    description="AI-powered system for analyst workflows with multimodal understanding, graph analytics, and secure code execution.",
+    description="API for the Analyst's Augmentation Agent, powered by CrewAI, Gemini, and Neo4j",
     version=settings.app_version,
+    lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
-    debug=settings.debug,
+    debug=settings.debug
 )
+
 
 # Add CORS middleware
 app.add_middleware(
@@ -53,204 +147,185 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Add rate limiting middleware
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Global clients
-neo4j_client = Neo4jClient()
-e2b_client = E2BClient()
-gemini_client = GeminiClient()
-
-
-# Startup event
-@app.on_event("startup")
-async def startup_event():
-    """Initialize connections and resources on startup."""
-    logger.info(f"Starting {settings.app_name} v{settings.app_version}")
-    
-    # Connect to Neo4j
-    try:
-        await neo4j_client.connect()
-        logger.info("Connected to Neo4j database")
-    except Exception as e:
-        logger.error(f"Failed to connect to Neo4j: {e}")
-    
-    # Initialize other resources
-    logger.info("Application startup complete")
-
-
-# Shutdown event
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Clean up resources on shutdown."""
-    logger.info("Shutting down application")
-    
-    # Close Neo4j connection
-    try:
-        if hasattr(neo4j_client, 'driver') and neo4j_client.driver is not None:
-            await neo4j_client.close()
-            logger.info("Closed Neo4j connection")
-    except Exception as e:
-        logger.error(f"Error closing Neo4j connection: {e}")
-    
-    # Close any active e2b sandboxes
-    try:
-        await e2b_client.close_all_sandboxes()
-        logger.info("Closed all e2b sandboxes")
-    except Exception as e:
-        logger.error(f"Error closing e2b sandboxes: {e}")
-    
-    logger.info("Application shutdown complete")
-
-
-# Request middleware
+# Request logging middleware
 @app.middleware("http")
-async def add_process_time_header(request: Request, call_next):
-    """Add processing time header to responses."""
+async def log_requests(request: Request, call_next):
+    """Log request information and timing."""
     start_time = time.time()
     
+    # Generate request ID
+    import uuid
+    request_id = str(uuid.uuid4())
+    request.state.request_id = request_id
+    
+    # Log request
+    logger.info(
+        f"Request started: {request.method} {request.url.path} "
+        f"(ID: {request_id})"
+    )
+    
+    # Process request
     try:
         response = await call_next(request)
+        
+        # Log response
         process_time = time.time() - start_time
+        logger.info(
+            f"Request completed: {request.method} {request.url.path} "
+            f"(ID: {request_id}, Status: {response.status_code}, "
+            f"Time: {process_time:.3f}s)"
+        )
+        
+        # Add timing header
         response.headers["X-Process-Time"] = str(process_time)
+        response.headers["X-Request-ID"] = request_id
+        
         return response
     except Exception as e:
-        logger.exception(f"Unhandled exception: {e}")
+        # Log error
         process_time = time.time() - start_time
+        logger.error(
+            f"Request failed: {request.method} {request.url.path} "
+            f"(ID: {request_id}, Error: {str(e)}, "
+            f"Time: {process_time:.3f}s)"
+        )
         
-        # Create a proper error response
-        error_response = JSONResponse(
+        # Return error response
+        return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={
                 "detail": "Internal server error",
-                "type": "server_error",
-                "instance": request.url.path,
+                "request_id": request_id
             }
         )
-        error_response.headers["X-Process-Time"] = str(process_time)
-        return error_response
 
 
-# Exception handlers
-@app.exception_handler(StarletteHTTPException)
-async def custom_http_exception_handler(request: Request, exc: StarletteHTTPException):
-    """Custom HTTP exception handler with logging."""
-    logger.warning(f"HTTP error {exc.status_code}: {exc.detail}")
-    return await http_exception_handler(request, exc)
-
-
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Handle validation errors with detailed responses."""
-    logger.warning(f"Validation error: {exc}")
+# Error handling middleware
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Handle HTTP exceptions."""
+    logger.warning(
+        f"HTTP exception: {exc.status_code} {exc.detail} "
+        f"(Path: {request.url.path})"
+    )
+    
     return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={
-            "detail": exc.errors(),
-            "body": exc.body,
-            "type": "validation_error",
-            "instance": request.url.path,
-        },
+        status_code=exc.status_code,
+        content={"detail": exc.detail}
     )
 
 
-# Health check endpoint
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    """Handle general exceptions."""
+    # Get request ID if available
+    request_id = getattr(request.state, "request_id", "unknown")
+    
+    logger.exception(
+        f"Unhandled exception in {request.method} {request.url.path} "
+        f"(ID: {request_id}): {str(exc)}"
+    )
+    
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "detail": "Internal server error",
+            "request_id": request_id
+        }
+    )
+
+
+# Mount API routers
+api_router = APIRouter(prefix="/api/v1")
+api_router.include_router(analysis_router, prefix="/analysis", tags=["Analysis"])
+api_router.include_router(auth_router, prefix="/auth", tags=["Authentication"])
+api_router.include_router(chat_router, prefix="/chat", tags=["Chat"])
+api_router.include_router(crew_router, prefix="/crew", tags=["Crew"])
+api_router.include_router(graph_router, prefix="/graph", tags=["Graph"])
+
+app.include_router(api_router)
+
+
+# Health check endpoints
 @app.get("/health", tags=["Health"])
 async def health_check():
-    """Health check endpoint for monitoring."""
-    # Check Neo4j connection
-    neo4j_status = "healthy"
-    try:
-        if not hasattr(neo4j_client, 'driver') or neo4j_client.driver is None:
-            await neo4j_client.connect()
-        result = await neo4j_client.execute_query("RETURN 1 as n")
-        if not result or not result[0].get('n') == 1:
-            neo4j_status = "degraded"
-    except Exception as e:
-        logger.error(f"Neo4j health check failed: {e}")
-        neo4j_status = "unhealthy"
-    
-    # Check Gemini API
-    gemini_status = "healthy"
-    try:
-        # Simple ping to Gemini
-        await gemini_client.generate_text("Hello")
-    except Exception as e:
-        logger.error(f"Gemini API health check failed: {e}")
-        gemini_status = "unhealthy"
-    
-    # Determine overall status
-    overall_status = "healthy"
-    if neo4j_status == "unhealthy" or gemini_status == "unhealthy":
-        overall_status = "unhealthy"
-    elif neo4j_status == "degraded" or gemini_status == "degraded":
-        overall_status = "degraded"
-    
+    """Basic health check endpoint."""
     return {
-        "status": overall_status,
+        "status": "ok",
         "version": settings.app_version,
-        "services": {
-            "neo4j": neo4j_status,
-            "gemini": gemini_status,
-            "e2b": "healthy"  # We don't check e2b on every health check to avoid unnecessary sandbox creation
-        },
         "timestamp": time.time()
     }
 
 
-# Debug endpoint (only available in debug mode)
-@app.get("/debug/config", tags=["Debug"])
-async def debug_config():
-    """Return application configuration (debug mode only)."""
-    if not settings.debug:
-        raise StarletteHTTPException(status_code=404, detail="Not found")
-    
-    # Return non-sensitive configuration
-    return {
-        "app_name": settings.app_name,
-        "app_version": settings.app_version,
-        "debug": settings.debug,
-        "log_level": settings.log_level,
-        "cors_origins": settings.cors_origins,
-        "neo4j_uri": settings.neo4j_uri,
-        "neo4j_username": settings.neo4j_username,
-        "neo4j_database": settings.neo4j_database,
-        "e2b_template_id": settings.e2b_template_id,
-        "gemini_model": settings.gemini_model,
-    }
+@app.get("/health/neo4j", tags=["Health"])
+async def neo4j_health(neo4j: Neo4jClient = Depends(lambda: app.state.neo4j)):
+    """Check Neo4j connection health."""
+    try:
+        # Test connection with simple query
+        result = await neo4j.execute_query("RETURN 1 as test")
+        return {
+            "status": "ok",
+            "connected": True,
+            "version": await neo4j.get_server_info(),
+            "timestamp": time.time()
+        }
+    except Exception as e:
+        logger.error(f"Neo4j health check failed: {e}")
+        return {
+            "status": "error",
+            "connected": False,
+            "error": str(e),
+            "timestamp": time.time()
+        }
 
 
-# Include API routers
-app.include_router(
-    auth.router,
-    prefix="/api/v1/auth",
-    tags=["Authentication"]
-)
+@app.get("/health/gemini", tags=["Health"])
+async def gemini_health(gemini: GeminiClient = Depends(lambda: app.state.gemini)):
+    """Check Gemini API connection health."""
+    try:
+        # Test connection with simple prompt
+        response = await gemini.generate_text("Say hello!")
+        return {
+            "status": "ok",
+            "connected": True,
+            "model": GeminiConfig.MODEL,
+            "response": response[:50] + "..." if len(response) > 50 else response,
+            "timestamp": time.time()
+        }
+    except Exception as e:
+        logger.error(f"Gemini health check failed: {e}")
+        return {
+            "status": "error",
+            "connected": False,
+            "error": str(e),
+            "timestamp": time.time()
+        }
 
-app.include_router(
-    chat.router,
-    prefix="/api/v1/chat",
-    tags=["Chat"]
-)
 
-app.include_router(
-    crew.router,
-    prefix="/api/v1/crew",
-    tags=["CrewAI"]
-)
-
-app.include_router(
-    graph.router,
-    prefix="/api/v1/graph",
-    tags=["Graph"]
-)
-
-app.include_router(
-    analysis.router,
-    prefix="/api/v1/analysis",
-    tags=["Analysis"]
-)
+@app.get("/health/crew", tags=["Health"])
+async def crew_health(factory: CrewFactory = Depends(lambda: app.state.crew_factory)):
+    """Smoke test the CrewFactory."""
+    try:
+        # Get available crews
+        available_crews = factory.get_available_crews()
+        
+        # Get available tools
+        available_tools = list(factory.tools.keys())
+        
+        return {
+            "status": "ok",
+            "available_crews": available_crews,
+            "available_tools": available_tools,
+            "timestamp": time.time()
+        }
+    except Exception as e:
+        logger.error(f"Crew health check failed: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "timestamp": time.time()
+        }
 
 
 # Root endpoint
@@ -260,13 +335,62 @@ async def root():
     return {
         "name": settings.app_name,
         "version": settings.app_version,
-        "docs": "/docs",
-        "health": "/health",
-        "api_prefix": "/api/v1"
+        "description": "Analyst's Augmentation Agent API",
+        "docs_url": "/docs",
+        "health_check": "/health"
     }
 
 
-# Make the app available to uvicorn
+# Custom OpenAPI schema
+def custom_openapi():
+    """Generate custom OpenAPI schema."""
+    if app.openapi_schema:
+        return app.openapi_schema
+    
+    openapi_schema = get_openapi(
+        title=settings.app_name,
+        version=settings.app_version,
+        description="API for the Analyst's Augmentation Agent, powered by CrewAI, Gemini, and Neo4j",
+        routes=app.routes,
+    )
+    
+    # Add security scheme for JWT
+    openapi_schema["components"] = {
+        "securitySchemes": {
+            "bearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT",
+            }
+        }
+    }
+    
+    # Apply security to all endpoints except auth and health
+    for path in openapi_schema["paths"]:
+        if not any(path.startswith(prefix) for prefix in ["/health", "/api/v1/auth", "/"]):
+            for method in openapi_schema["paths"][path]:
+                if method.lower() in ["get", "post", "put", "delete", "patch"]:
+                    openapi_schema["paths"][path][method]["security"] = [{"bearerAuth": []}]
+    
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
+
+
+# Run the application with uvicorn when executed directly
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("backend.main:app", host="0.0.0.0", port=8000, reload=True)
+    
+    # Get port from environment or use default
+    port = int(os.environ.get("PORT", 8000))
+    
+    # Run with uvicorn
+    uvicorn.run(
+        "backend.main:app",
+        host="0.0.0.0",
+        port=port,
+        reload=settings.debug,
+        log_level=settings.log_level.lower()
+    )
