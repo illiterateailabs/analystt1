@@ -1,0 +1,708 @@
+# Fraud Motifs Schema Definition
+# This schema defines the structure for fraud detection patterns in the PatternLibrary
+# Used by the fraud_pattern_hunter agent to identify known financial crime patterns
+
+# Schema version and metadata
+schema_version: "1.0.0"
+last_updated: "2025-05-30"
+maintainer: "illiterateai"
+
+# Schema definition for fraud motif patterns
+pattern_schema:
+  # Metadata section - descriptive information about the pattern
+  metadata:
+    id:
+      type: string
+      description: "Unique identifier for the pattern (e.g., STRUCT_001)"
+      required: true
+      pattern: "^[A-Z]+_\\d{3}$"  # Format validation
+    
+    name:
+      type: string
+      description: "Human-readable name of the pattern"
+      required: true
+      max_length: 100
+    
+    description:
+      type: string
+      description: "Detailed explanation of what this pattern represents"
+      required: true
+    
+    category:
+      type: string
+      description: "Classification category"
+      required: true
+      enum:
+        - "STRUCTURING"     # Breaking large transactions into smaller ones
+        - "LAYERING"        # Complex transaction chains to hide source
+        - "INTEGRATION"     # Reintroducing illicit funds as legitimate
+        - "ROUND_TRIPPING"  # Funds returning to source after multiple hops
+        - "SMURFING"        # Using multiple accounts/entities for small transactions
+        - "SHELL_COMPANY"   # Using entities with no real business purpose
+        - "WASH_TRADING"    # Creating artificial market activity
+        - "RAPID_MOVEMENT"  # Unusually quick transfers through multiple accounts
+        - "MIXER_USAGE"     # Cryptocurrency mixing/tumbling
+        - "ANOMALOUS"       # Other unusual patterns
+    
+    risk_level:
+      type: string
+      description: "Risk severity of this pattern"
+      required: true
+      enum:
+        - "LOW"
+        - "MEDIUM"
+        - "HIGH"
+        - "CRITICAL"
+    
+    regulatory_implications:
+      type: array
+      description: "Relevant regulations or compliance requirements"
+      items:
+        type: string
+      examples:
+        - "SAR filing required"
+        - "BSA/AML violation"
+        - "FATF Recommendation 16"
+        - "Potential sanctions violation"
+    
+    tags:
+      type: array
+      description: "Keywords for categorization and search"
+      items:
+        type: string
+      examples:
+        - "cryptocurrency"
+        - "tax_evasion"
+        - "money_laundering"
+        - "market_manipulation"
+    
+    reference_id:
+      type: string
+      description: "External reference ID (e.g., FinCEN advisory number)"
+      required: false
+
+  # Detection logic section - defines how to identify this pattern
+  detection:
+    # Graph pattern - nodes and relationships to match
+    graph_pattern:
+      type: object
+      description: "Neo4j subgraph pattern to match"
+      required: true
+      properties:
+        nodes:
+          type: array
+          description: "Nodes to match in the pattern"
+          required: true
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                description: "Variable name for this node in the pattern"
+                required: true
+              labels:
+                type: array
+                description: "Neo4j labels for this node"
+                required: true
+                items:
+                  type: string
+              properties:
+                type: object
+                description: "Property constraints for this node"
+                required: false
+        
+        relationships:
+          type: array
+          description: "Relationships between nodes"
+          required: true
+          items:
+            type: object
+            properties:
+              source:
+                type: string
+                description: "Source node ID (must match a node.id)"
+                required: true
+              target:
+                type: string
+                description: "Target node ID (must match a node.id)"
+                required: true
+              type:
+                type: string
+                description: "Relationship type in Neo4j"
+                required: true
+              direction:
+                type: string
+                description: "Direction of relationship"
+                required: true
+                enum:
+                  - "OUTGOING"  # source -> target
+                  - "INCOMING"  # source <- target
+                  - "BOTH"      # source -- target
+              properties:
+                type: object
+                description: "Property constraints for this relationship"
+                required: false
+        
+        path_patterns:
+          type: array
+          description: "Complex path patterns (variable length, etc.)"
+          required: false
+          items:
+            type: object
+            properties:
+              start_node:
+                type: string
+                description: "Starting node ID"
+                required: true
+              end_node:
+                type: string
+                description: "Ending node ID"
+                required: true
+              relationship_types:
+                type: array
+                description: "Allowed relationship types in this path"
+                items:
+                  type: string
+              min_length:
+                type: integer
+                description: "Minimum path length"
+                default: 1
+              max_length:
+                type: integer
+                description: "Maximum path length"
+                default: 3
+              direction:
+                type: string
+                enum:
+                  - "OUTGOING"
+                  - "INCOMING"
+                  - "BOTH"
+                default: "OUTGOING"
+    
+    # Temporal constraints - time-based rules
+    temporal_constraints:
+      type: array
+      description: "Time-based constraints for pattern detection"
+      required: false
+      items:
+        type: object
+        properties:
+          type:
+            type: string
+            description: "Type of temporal constraint"
+            required: true
+            enum:
+              - "TIME_WINDOW"        # Events within a time window
+              - "SEQUENCE"           # Events in specific order
+              - "FREQUENCY"          # Number of events in period
+              - "VELOCITY"           # Speed of value movement
+              - "TIME_OF_DAY"        # Specific time of day pattern
+              - "DAY_OF_WEEK"        # Specific day of week pattern
+              - "SEASONAL"           # Seasonal pattern
+          node_id:
+            type: string
+            description: "Node ID this constraint applies to"
+            required: true
+          property:
+            type: string
+            description: "Property containing timestamp"
+            required: true
+          parameters:
+            type: object
+            description: "Parameters specific to constraint type"
+            required: true
+    
+    # Value constraints - amount-based rules
+    value_constraints:
+      type: array
+      description: "Value/amount-based constraints"
+      required: false
+      items:
+        type: object
+        properties:
+          type:
+            type: string
+            description: "Type of value constraint"
+            required: true
+            enum:
+              - "THRESHOLD"           # Above/below specific amount
+              - "RANGE"               # Within/outside a range
+              - "ROUNDED"             # Rounded amounts (e.g., exact thousands)
+              - "STRUCTURING"         # Just below reporting threshold
+              - "UNUSUAL"             # Deviation from historical pattern
+              - "RATIO"               # Ratio between values
+          node_id:
+            type: string
+            description: "Node ID this constraint applies to"
+            required: true
+          property:
+            type: string
+            description: "Property containing the value"
+            required: true
+          parameters:
+            type: object
+            description: "Parameters specific to constraint type"
+            required: true
+    
+    # Aggregation rules - for patterns requiring aggregation
+    aggregation_rules:
+      type: array
+      description: "Aggregation-based detection rules"
+      required: false
+      items:
+        type: object
+        properties:
+          type:
+            type: string
+            description: "Type of aggregation"
+            required: true
+            enum:
+              - "COUNT"               # Number of instances
+              - "SUM"                 # Sum of values
+              - "AVG"                 # Average of values
+              - "MIN"                 # Minimum value
+              - "MAX"                 # Maximum value
+              - "STDDEV"              # Standard deviation
+          group_by:
+            type: array
+            description: "Properties to group by"
+            required: false
+            items:
+              type: string
+          having:
+            type: object
+            description: "Conditions on the aggregated values"
+            required: true
+          window:
+            type: object
+            description: "Time window for aggregation"
+            required: false
+    
+    # Additional detection logic
+    additional_conditions:
+      type: string
+      description: "Additional WHERE conditions in Cypher syntax"
+      required: false
+
+  # Cypher template - parameterized query template
+  cypher_template:
+    type: string
+    description: "Parameterized Cypher query template for this pattern"
+    required: true
+    examples:
+      - "MATCH (a:Account)-[:SENT]->(t:Transaction)-[:RECEIVED_BY]->(b:Account) WHERE t.amount >= $threshold AND t.timestamp > datetime() - duration($time_window) RETURN a, t, b"
+  
+  # Response actions - what to do when pattern is detected
+  response_actions:
+    type: array
+    description: "Recommended actions when this pattern is detected"
+    required: true
+    items:
+      type: object
+      properties:
+        action:
+          type: string
+          description: "Action to take"
+          required: true
+          enum:
+            - "ALERT"                # Generate alert
+            - "INVESTIGATE"          # Trigger investigation
+            - "REPORT"               # File regulatory report
+            - "MONITOR"              # Enhanced monitoring
+            - "BLOCK"                # Block transaction/account
+            - "SCORE"                # Adjust risk score
+        priority:
+          type: string
+          description: "Priority of this action"
+          required: true
+          enum:
+            - "LOW"
+            - "MEDIUM"
+            - "HIGH"
+            - "CRITICAL"
+        details:
+          type: string
+          description: "Additional details about this action"
+          required: false
+        recipients:
+          type: array
+          description: "Who should receive this action"
+          required: false
+          items:
+            type: string
+
+# Example patterns using the schema
+example_patterns:
+  # Structuring pattern example
+  - metadata:
+      id: "STRUCT_001"
+      name: "Structuring - Multiple Transactions Below Reporting Threshold"
+      description: "Multiple cash transactions just below the reporting threshold (e.g., $10,000 in the US) from the same source within a short time period."
+      category: "STRUCTURING"
+      risk_level: "HIGH"
+      regulatory_implications:
+        - "SAR filing required"
+        - "BSA/AML violation"
+      tags:
+        - "cash_transactions"
+        - "money_laundering"
+        - "tax_evasion"
+    
+    detection:
+      graph_pattern:
+        nodes:
+          - id: "source"
+            labels: ["Person", "Entity"]
+            properties: {}
+          - id: "account"
+            labels: ["Account"]
+            properties: {}
+          - id: "transactions"
+            labels: ["Transaction"]
+            properties:
+              amount: { $gte: 8000, $lt: 10000 }  # Just below $10,000
+      
+        relationships:
+          - source: "source"
+            target: "account"
+            type: "OWNS"
+            direction: "OUTGOING"
+            properties: {}
+          - source: "account"
+            target: "transactions"
+            type: "SENT"
+            direction: "OUTGOING"
+            properties: {}
+      
+      temporal_constraints:
+        - type: "TIME_WINDOW"
+          node_id: "transactions"
+          property: "timestamp"
+          parameters:
+            window: "P7D"  # 7-day period
+      
+      aggregation_rules:
+        - type: "COUNT"
+          group_by: ["source.id"]
+          having:
+            count: { $gte: 3 }  # At least 3 transactions
+          window:
+            duration: "P7D"  # 7-day period
+    
+    cypher_template: |
+      MATCH (source)-[:OWNS]->(account:Account)-[:SENT]->(tx:Transaction)
+      WHERE tx.amount >= $min_amount AND tx.amount < $threshold
+      AND tx.timestamp > datetime() - duration($time_window)
+      WITH source, count(tx) as txCount, sum(tx.amount) as total
+      WHERE txCount >= $min_transactions
+      RETURN source, txCount, total
+      ORDER BY txCount DESC
+    
+    response_actions:
+      - action: "ALERT"
+        priority: "HIGH"
+        details: "Multiple transactions below reporting threshold detected"
+      - action: "REPORT"
+        priority: "HIGH"
+        details: "File SAR within 30 days"
+  
+  # Layering pattern example
+  - metadata:
+      id: "LAYER_001"
+      name: "Complex Layering Through Multiple Accounts"
+      description: "Funds moved through multiple accounts/entities in rapid succession with no clear business purpose, often involving different jurisdictions."
+      category: "LAYERING"
+      risk_level: "HIGH"
+      regulatory_implications:
+        - "SAR filing required"
+        - "Money laundering red flag"
+      tags:
+        - "money_laundering"
+        - "cross_border"
+    
+    detection:
+      graph_pattern:
+        nodes:
+          - id: "source_account"
+            labels: ["Account"]
+            properties: {}
+          - id: "intermediary_accounts"
+            labels: ["Account"]
+            properties: {}
+          - id: "destination_account"
+            labels: ["Account"]
+            properties: {}
+          - id: "transactions"
+            labels: ["Transaction"]
+            properties:
+              amount: { $gte: 5000 }  # Significant amount
+        
+        path_patterns:
+          - start_node: "source_account"
+            end_node: "destination_account"
+            relationship_types: ["SENT", "RECEIVED_BY"]
+            min_length: 3
+            max_length: 10
+            direction: "OUTGOING"
+      
+      temporal_constraints:
+        - type: "VELOCITY"
+          node_id: "transactions"
+          property: "timestamp"
+          parameters:
+            max_duration: "P2D"  # Complete path within 2 days
+      
+      value_constraints:
+        - type: "RATIO"
+          node_id: "transactions"
+          property: "amount"
+          parameters:
+            min_ratio: 0.9  # At least 90% of original amount reaches destination
+    
+    cypher_template: |
+      MATCH path = (source:Account)-[:SENT]->(:Transaction)-[:RECEIVED_BY]->
+                  (i1:Account)-[:SENT]->(:Transaction)-[:RECEIVED_BY]->
+                  (i2:Account)-[:SENT]->(:Transaction)-[:RECEIVED_BY]->
+                  (dest:Account)
+      WHERE source <> dest
+      AND source.jurisdiction <> dest.jurisdiction
+      WITH path, source, dest,
+           [n IN nodes(path) WHERE n:Transaction] AS txs
+      WITH path, source, dest, txs,
+           txs[0].amount AS start_amount,
+           txs[size(txs)-1].amount AS end_amount,
+           txs[0].timestamp AS start_time,
+           txs[size(txs)-1].timestamp AS end_time
+      WHERE end_amount >= start_amount * $min_ratio
+      AND duration.between(start_time, end_time).days <= $max_days
+      RETURN path, source, dest, start_amount, end_amount,
+             duration.between(start_time, end_time).days AS days
+    
+    response_actions:
+      - action: "ALERT"
+        priority: "HIGH"
+        details: "Complex layering pattern detected"
+      - action: "INVESTIGATE"
+        priority: "HIGH"
+        details: "Investigate source and destination entities"
+  
+  # Round-tripping pattern example
+  - metadata:
+      id: "ROUND_001"
+      name: "Round-Trip Transactions"
+      description: "Funds that circulate back to the originator through multiple entities, often used for artificial value creation or tax evasion."
+      category: "ROUND_TRIPPING"
+      risk_level: "HIGH"
+      regulatory_implications:
+        - "SAR filing required"
+        - "Potential tax evasion"
+        - "Potential market manipulation"
+      tags:
+        - "tax_evasion"
+        - "market_manipulation"
+    
+    detection:
+      graph_pattern:
+        nodes:
+          - id: "origin"
+            labels: ["Account", "Wallet"]
+            properties: {}
+          - id: "intermediaries"
+            labels: ["Account", "Wallet"]
+            properties: {}
+          - id: "transactions"
+            labels: ["Transaction"]
+            properties: {}
+        
+        path_patterns:
+          - start_node: "origin"
+            end_node: "origin"
+            relationship_types: ["SENT", "RECEIVED_BY", "TRANSFERRED", "RECEIVED_BY"]
+            min_length: 2
+            max_length: 8
+            direction: "OUTGOING"
+      
+      temporal_constraints:
+        - type: "TIME_WINDOW"
+          node_id: "transactions"
+          property: "timestamp"
+          parameters:
+            window: "P30D"  # Complete cycle within 30 days
+    
+    cypher_template: |
+      MATCH cycle = (origin)-[:SENT|TRANSFERRED]->(:Transaction)-[:RECEIVED_BY]->
+                    (i1)-[:SENT|TRANSFERRED]->(:Transaction)-[:RECEIVED_BY]->
+                    (i2)-[:SENT|TRANSFERRED]->(:Transaction)-[:RECEIVED_BY]->(origin)
+      WHERE all(n IN nodes(cycle) WHERE n:Transaction OR n:Account OR n:Wallet)
+      WITH cycle,
+           [n IN nodes(cycle) WHERE n:Transaction] AS txs
+      WITH cycle, txs,
+           min(tx.timestamp) AS start_time,
+           max(tx.timestamp) AS end_time
+      WHERE duration.between(start_time, end_time).days <= $max_days
+      RETURN cycle, start_time, end_time,
+             duration.between(start_time, end_time).days AS days,
+             size([n IN nodes(cycle) WHERE n:Transaction]) AS num_transactions
+    
+    response_actions:
+      - action: "ALERT"
+        priority: "HIGH"
+        details: "Round-trip transaction pattern detected"
+      - action: "REPORT"
+        priority: "HIGH"
+        details: "File SAR and consider tax authority notification"
+
+  # Cryptocurrency mixing pattern example
+  - metadata:
+      id: "MIXER_001"
+      name: "Cryptocurrency Mixing/Tumbling"
+      description: "Use of mixing or tumbling services to obscure the source of cryptocurrency funds."
+      category: "MIXER_USAGE"
+      risk_level: "HIGH"
+      regulatory_implications:
+        - "SAR filing required"
+        - "Virtual asset service provider regulations"
+        - "Potential sanctions violations"
+      tags:
+        - "cryptocurrency"
+        - "money_laundering"
+        - "darknet"
+    
+    detection:
+      graph_pattern:
+        nodes:
+          - id: "source_wallet"
+            labels: ["Wallet"]
+            properties: {}
+          - id: "mixer_wallet"
+            labels: ["Wallet"]
+            properties:
+              is_known_mixer: { $eq: true }
+          - id: "destination_wallet"
+            labels: ["Wallet"]
+            properties: {}
+          - id: "transactions"
+            labels: ["Transaction"]
+            properties: {}
+        
+        relationships:
+          - source: "source_wallet"
+            target: "transactions"
+            type: "TRANSFERRED"
+            direction: "OUTGOING"
+          - source: "transactions"
+            target: "mixer_wallet"
+            type: "RECEIVED_BY"
+            direction: "OUTGOING"
+          - source: "mixer_wallet"
+            target: "transactions"
+            type: "TRANSFERRED"
+            direction: "OUTGOING"
+          - source: "transactions"
+            target: "destination_wallet"
+            type: "RECEIVED_BY"
+            direction: "OUTGOING"
+      
+      temporal_constraints:
+        - type: "TIME_WINDOW"
+          node_id: "transactions"
+          property: "timestamp"
+          parameters:
+            window: "P7D"  # Within 7 days
+    
+    cypher_template: |
+      MATCH (source:Wallet)-[:TRANSFERRED]->(tx1:Transaction)-[:RECEIVED_BY]->(mixer:Wallet)
+      WHERE mixer.is_known_mixer = true
+      WITH source, mixer
+      MATCH (mixer)-[:TRANSFERRED]->(tx2:Transaction)-[:RECEIVED_BY]->(dest:Wallet)
+      WHERE tx2.timestamp > tx1.timestamp
+      AND duration.between(tx1.timestamp, tx2.timestamp).days <= $max_days
+      RETURN source, mixer, dest, tx1, tx2,
+             duration.between(tx1.timestamp, tx2.timestamp).days AS days
+    
+    response_actions:
+      - action: "ALERT"
+        priority: "HIGH"
+        details: "Cryptocurrency mixing service usage detected"
+      - action: "INVESTIGATE"
+        priority: "HIGH"
+        details: "Investigate source and destination wallets"
+      - action: "REPORT"
+        priority: "HIGH"
+        details: "File SAR and consider blockchain analytics"
+
+  # Smurfing pattern example
+  - metadata:
+      id: "SMRF_001"
+      name: "Smurfing - Multiple Small Deposits"
+      description: "Multiple small deposits from different sources into the same destination account, often used to avoid detection."
+      category: "SMURFING"
+      risk_level: "HIGH"
+      regulatory_implications:
+        - "SAR filing required"
+        - "Money laundering red flag"
+      tags:
+        - "money_laundering"
+        - "structuring"
+    
+    detection:
+      graph_pattern:
+        nodes:
+          - id: "sources"
+            labels: ["Account", "Wallet"]
+            properties: {}
+          - id: "destination"
+            labels: ["Account", "Wallet"]
+            properties: {}
+          - id: "transactions"
+            labels: ["Transaction"]
+            properties:
+              amount: { $lt: 10000 }  # Small amounts
+        
+        relationships:
+          - source: "sources"
+            target: "transactions"
+            type: "SENT"
+            direction: "OUTGOING"
+          - source: "transactions"
+            target: "destination"
+            type: "RECEIVED_BY"
+            direction: "OUTGOING"
+      
+      temporal_constraints:
+        - type: "TIME_WINDOW"
+          node_id: "transactions"
+          property: "timestamp"
+          parameters:
+            window: "P30D"  # Within 30 days
+      
+      aggregation_rules:
+        - type: "COUNT"
+          group_by: ["destination.id"]
+          having:
+            count: { $gte: 5 }  # At least 5 different sources
+          window:
+            duration: "P30D"
+        - type: "SUM"
+          group_by: ["destination.id"]
+          having:
+            sum: { $gte: 20000 }  # Significant total amount
+          window:
+            duration: "P30D"
+    
+    cypher_template: |
+      MATCH (source)-[:SENT]->(tx:Transaction)-[:RECEIVED_BY]->(dest)
+      WHERE tx.amount < $threshold
+      AND tx.timestamp > datetime() - duration($time_window)
+      WITH dest, count(DISTINCT source) as sourceCount, count(tx) as txCount, sum(tx.amount) as total
+      WHERE sourceCount >= $min_sources AND total >= $min_total
+      RETURN dest, sourceCount, txCount, total
+      ORDER BY total DESC
+    
+    response_actions:
+      - action: "ALERT"
+        priority: "HIGH"
+        details: "Multiple small deposits from different sources detected"
+      - action: "INVESTIGATE"
+        priority: "HIGH"
+        details: "Investigate source entities and destination account"
