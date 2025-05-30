@@ -16,6 +16,7 @@ import uvicorn
 
 from backend.config import settings
 from backend.core.logging import configure_logging, get_logger
+from backend.core.metrics import setup_metrics
 from backend.api.v1 import auth, chat, analysis, graph, crew, prompts, webhooks
 from backend.integrations.neo4j_client import Neo4jClient
 
@@ -31,6 +32,9 @@ app = FastAPI(
     docs_url="/docs" if settings.ENVIRONMENT != "production" else None,
     redoc_url="/redoc" if settings.ENVIRONMENT != "production" else None,
 )
+
+# Set up Prometheus metrics
+setup_metrics(app)
 
 # Add CORS middleware
 app.add_middleware(
