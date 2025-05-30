@@ -4,6 +4,19 @@ This module contains tests for the GeminiClient, Neo4jClient, and E2BClient
 which integrate with external services.
 """
 
+import os
+import sys
+from pathlib import Path
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Set required environment variables before importing backend modules
+os.environ.setdefault("SECRET_KEY", "test_secret_key")
+os.environ.setdefault("GOOGLE_API_KEY", "dummy_key")
+os.environ.setdefault("E2B_API_KEY", "dummy_key") 
+os.environ.setdefault("NEO4J_PASSWORD", "test_password")
+
 import asyncio
 import base64
 import io
@@ -477,7 +490,7 @@ async def test_e2b_execute_code_error(mock_e2b_sdk):
         client = E2BClient()
         
         # Execute code with syntax error
-        code = "print('Hello, World!"  # Missing closing quote
+        code = "print('Hello, World!'"  # Missing closing quote
         result = await client.execute_code(code, sandbox=mock_session)
         
         # Verify result contains error

@@ -4,6 +4,19 @@ This module contains tests for token creation, validation, refresh, and
 authentication dependencies in the JWT authentication system.
 """
 
+import os
+import sys
+from pathlib import Path
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Set required environment variables before importing backend modules
+os.environ.setdefault("SECRET_KEY", "test_secret_key")
+os.environ.setdefault("GOOGLE_API_KEY", "dummy_key")
+os.environ.setdefault("E2B_API_KEY", "dummy_key") 
+os.environ.setdefault("NEO4J_PASSWORD", "test_password")
+
 import time
 import pytest
 from datetime import datetime, timedelta
