@@ -4,6 +4,7 @@ import yaml
 from pathlib import Path
 import logging
 from functools import lru_cache
+import asyncio
 
 from crewai import Agent, Crew, Task, Process
 from crewai.agent import AgentConfig
@@ -66,6 +67,7 @@ from backend.agents.config import load_agent_config, load_crew_config, get_avail
 from backend.integrations.neo4j_client import Neo4jClient
 from backend.integrations.e2b_client import E2BClient
 from backend.core.logging import get_logger
+from backend.core.metrics import track_crew_task_duration, increment_active_crews, decrement_active_crews
 
 logger = get_logger(__name__)
 
@@ -475,13 +477,15 @@ class CrewFactory:
             return None
     
     @classmethod
-    def run_crew(cls, crew_name: str, inputs: Dict[str, Any] = None, **override_kwargs) -> Dict[str, Any]:
+    async def run_crew(cls, crew_name: str, inputs: Dict[str, Any] = None, task_id: str = None, resume: bool = False, **override_kwargs) -> Dict[str, Any]:
         """
         Run a crew with the given name and inputs.
         
         Args:
             crew_name: The name of the crew to run
             inputs: Optional inputs for the crew
+            task_id: Optional task ID for tracking
+            resume: Whether this is resuming a paused execution
             **override_kwargs: Optional overrides for crew configuration
             
         Returns:
@@ -495,14 +499,59 @@ class CrewFactory:
                 "error": f"Failed to create crew: {crew_name}"
             }
         
+        # Track active crew
+        increment_active_crews(crew_name)
+        
         # Run the crew
         try:
-            result = crew.kickoff(inputs=inputs or {})
+            # Get tasks
+            tasks = crew.tasks
+            
+            # Initialize results
+            all_results = {}
+            
+            # Execute tasks
+            for i, task in enumerate(tasks):
+                agent_id = task.agent.role
+                task_description = task.description
+                
+                # Use context manager to track task duration and metrics
+                with track_crew_task_duration(crew_name, agent_id, task_description):
+                    # If resuming and this is the compliance_checker task that was paused
+                    if resume and agent_id.lower() == "compliance_checker" and i > 0:
+                        # Add review result to task context
+                        compliance_result = inputs.get("compliance_review_result", {})
+                        logger.info(f"Resuming with compliance review result: {compliance_result}")
+                        
+                        # Execute task with review result
+                        task_result = await task.execute(
+                            context=[all_results[prev_task.description] for prev_task in tasks[:i] if prev_task.description in all_results],
+                            inputs={**inputs, "review_result": compliance_result}
+                        )
+                    else:
+                        # Normal task execution
+                        task_result = await task.execute(
+                            context=[all_results[prev_task.description] for prev_task in tasks[:i] if prev_task.description in all_results],
+                            inputs=inputs
+                        )
+                    
+                    # Store result
+                    all_results[task.description] = task_result
+            
+            # Final result is the last task's result
+            result = all_results[tasks[-1].description] if tasks else None
+            
+            # Decrement active crew count
+            decrement_active_crews(crew_name)
+            
             return {
                 "success": True,
                 "result": result
             }
         except Exception as e:
+            # Decrement active crew count
+            decrement_active_crews(crew_name)
+            
             logger.error(f"Error running crew {crew_name}: {str(e)}")
             return {
                 "success": False,
@@ -516,3 +565,34 @@ class CrewFactory:
         cls._agent_cache.clear()
         cls._tool_cache.clear()
         logger.info("All caches cleared")
+    
+    # Connection management for external services
+    @classmethod
+    async def connect(cls) -> None:
+        """Connect to external services."""
+        # Connect to Neo4j
+        try:
+            neo4j_client = Neo4jClient()
+            await neo4j_client.connect()
+            logger.info("Connected to Neo4j")
+        except Exception as e:
+            logger.warning(f"Failed to connect to Neo4j: {str(e)}")
+        
+        # Connect to e2b
+        try:
+            e2b_client = E2BClient()
+            # e2b connection is lazy, no explicit connect needed
+            logger.info("e2b client initialized")
+        except Exception as e:
+            logger.warning(f"Failed to initialize e2b client: {str(e)}")
+    
+    @classmethod
+    async def close(cls) -> None:
+        """Close connections to external services."""
+        # Close Neo4j connection
+        try:
+            neo4j_client = Neo4jClient()
+            await neo4j_client.close()
+            logger.info("Closed Neo4j connection")
+        except Exception as e:
+            logger.warning(f"Error closing Neo4j connection: {str(e)}")

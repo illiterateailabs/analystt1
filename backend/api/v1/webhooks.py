@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field, HttpUrl, validator
 from backend.auth.dependencies import get_current_user
 from backend.config import settings
 from backend.core.logging import get_logger
+from backend.core.metrics import track_webhook_delivery
 
 # Configure logging
 logger = get_logger(__name__)
@@ -593,6 +594,10 @@ async def _send_webhook(delivery_id: str, webhook: WebhookConfig, payload: Webho
                 if response.status_code >= 200 and response.status_code < 300:
                     delivery.status = WebhookStatus.DELIVERED
                     logger.info(f"Webhook delivery successful: {delivery_id} (attempt {attempt})")
+                    
+                    # Track successful delivery metrics
+                    track_webhook_delivery(webhook.type, True)
+                    
                     return
                 
                 # Failed but retriable
@@ -601,6 +606,9 @@ async def _send_webhook(delivery_id: str, webhook: WebhookConfig, payload: Webho
                 delivery.status = WebhookStatus.RETRYING
                 
                 logger.warning(f"Webhook delivery failed: {delivery_id} (attempt {attempt}) - {error_msg}")
+                
+                # Track failed delivery metrics
+                track_webhook_delivery(webhook.type, False)
                 
                 # Wait before retrying
                 if attempt < MAX_RETRY_ATTEMPTS:
@@ -614,6 +622,9 @@ async def _send_webhook(delivery_id: str, webhook: WebhookConfig, payload: Webho
             delivery.status = WebhookStatus.RETRYING
             
             logger.warning(f"Webhook delivery failed: {delivery_id} (attempt {attempt}) - {error_msg}")
+            
+            # Track failed delivery metrics
+            track_webhook_delivery(webhook.type, False)
             
             # Wait before retrying
             if attempt < MAX_RETRY_ATTEMPTS:

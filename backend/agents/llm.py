@@ -18,8 +18,26 @@ from crewai.utilities.function_calling import FunctionCall, FunctionConfig
 from google.generativeai.types import FunctionDeclaration, Tool
 
 from backend.integrations.gemini_client import GeminiClient
+from backend.core.metrics import track_llm_usage
 
 logger = logging.getLogger(__name__)
+
+# Gemini pricing constants (per 1M tokens)
+GEMINI_PRICING = {
+    "gemini-1.5-flash": {
+        "input": 0.35 / 1_000_000,  # $0.35 per 1M input tokens
+        "output": 0.70 / 1_000_000,  # $0.70 per 1M output tokens
+    },
+    "gemini-1.5-pro": {
+        "input": 3.50 / 1_000_000,  # $3.50 per 1M input tokens
+        "output": 10.50 / 1_000_000,  # $10.50 per 1M output tokens
+    },
+    # Default pricing for other models
+    "default": {
+        "input": 3.50 / 1_000_000,  # Default to Pro pricing
+        "output": 10.50 / 1_000_000,
+    }
+}
 
 
 class GeminiLLMProvider(BaseLLM):
@@ -65,6 +83,10 @@ class GeminiLLMProvider(BaseLLM):
         self.last_call_time = 0
         self.min_call_interval = 0.1  # 100ms minimum between calls
         
+        # Get pricing for this model
+        model_base = model.split("-")[0] + "-" + model.split("-")[1]
+        self.pricing = GEMINI_PRICING.get(model, GEMINI_PRICING["default"])
+        
         logger.info(f"Initialized GeminiLLMProvider with model: {model}")
     
     def supports_function_calling(self) -> bool:
@@ -76,6 +98,21 @@ class GeminiLLMProvider(BaseLLM):
         """
         # Gemini 1.5 Pro supports function calling
         return self.model.startswith("gemini-1.5")
+    
+    def _calculate_cost(self, input_tokens: int, output_tokens: int) -> float:
+        """
+        Calculate the cost of a Gemini API call.
+        
+        Args:
+            input_tokens: Number of input tokens
+            output_tokens: Number of output tokens
+            
+        Returns:
+            Cost in USD
+        """
+        input_cost = input_tokens * self.pricing["input"]
+        output_cost = output_tokens * self.pricing["output"]
+        return input_cost + output_cost
     
     @backoff.on_exception(
         backoff.expo,
@@ -123,6 +160,20 @@ class GeminiLLMProvider(BaseLLM):
                     max_output_tokens=self.max_tokens,
                 )
                 
+                # Track token usage and cost
+                input_tokens = response.usage.prompt_tokens if hasattr(response, "usage") else len(prompt) // 4
+                output_tokens = response.usage.completion_tokens if hasattr(response, "usage") else len(response.text) // 4
+                cost_usd = self._calculate_cost(input_tokens, output_tokens)
+                
+                # Record metrics
+                track_llm_usage(
+                    model=self.model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cost_usd=cost_usd,
+                    success=True
+                )
+                
                 # Parse tool calls if present
                 if hasattr(response, "tool_calls") and response.tool_calls:
                     function_call = self._parse_tool_call(response.tool_calls[0], functions)
@@ -136,9 +187,36 @@ class GeminiLLMProvider(BaseLLM):
                     temperature=self.temperature,
                     max_output_tokens=self.max_tokens,
                 )
-                return response
+                
+                # Track token usage and cost
+                input_tokens = response.usage.prompt_tokens if hasattr(response, "usage") else len(prompt) // 4
+                output_tokens = response.usage.completion_tokens if hasattr(response, "usage") else len(response.text) // 4
+                cost_usd = self._calculate_cost(input_tokens, output_tokens)
+                
+                # Record metrics
+                track_llm_usage(
+                    model=self.model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cost_usd=cost_usd,
+                    success=True
+                )
+                
+                return response.text
         
         except Exception as e:
+            # Estimate token usage for failed requests
+            estimated_input_tokens = len(prompt) // 4
+            
+            # Record metrics for failed request
+            track_llm_usage(
+                model=self.model,
+                input_tokens=estimated_input_tokens,
+                output_tokens=0,
+                cost_usd=self._calculate_cost(estimated_input_tokens, 0),
+                success=False
+            )
+            
             # Handle specific error types
             if "rate limit" in str(e).lower():
                 logger.warning(f"Rate limit exceeded, retrying after delay: {e}")

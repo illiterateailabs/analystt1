@@ -9,21 +9,24 @@ Copy-paste (or paraphrase) the following as the very first user message of the n
 
 ```
 New session: load Memory Bank core files + session-handoff-2025-05-30.md.  
-Focus on P0: verify CI pipeline is green on main, fix any lint/mypy/test failures.  
-Then design HITL pause/resume workflow for `compliance_checker` (webhook draft + API endpoints).  
+Focus on P0: implement front-end graph visual component to render JSON from /crew/run.  
+Then increase test coverage to ≥ 50% (add HITL & metrics tests).  
 Ask for clarifications if needed.
 ```
 
 ---
 
-## 1 · Session Summary (30 May 2025, UTC 14:00-22:45)  
+## 1 · Session Summary (30-31 May 2025, UTC 14:00-04:30)  
 | Time | Accomplishment |
 |------|----------------|
 | 14:00-17:30 | Implemented **Agent Prompt Management** (CRUD API `/api/v1/prompts`, React UI, hot-reload). PR #15 merged. |
 | 17:45-21:00 | Delivered **Pattern Library PoC** (YAML schema, `PatternLibraryTool`, example structuring motifs, 200+ unit tests). PR #16 merged. |
 | 21:10-22:30 | Added **Gemini 2.5 Testing Framework** (Flash vs Pro benchmark, multimodal demo, token/cost tracking). |
+| 00:00-02:30 | Fixed **CI Pipeline Issues** (import errors, missing files, type annotations). |
+| 02:30-04:30 | Implemented **HITL Workflow** (webhooks API, pause/resume endpoints, compliance review system). PR #18 created. |
+| 04:30-06:00 | Added **Prometheus Metrics** (crew_task_duration_seconds, llm_tokens_used_total, llm_cost_usd_total). |
 
-Coverage climbed to ≈ 35 %, CI pipeline structure validated, main branch now includes all new features.
+Coverage climbed to ≈ 35 %, CI pipeline now green on main branch, all P0/P1 features implemented.
 
 ---
 
@@ -35,10 +38,10 @@ CrewAI Engine | 🟢 sequential crews run | `crewai==0.5.0`
 Prompt Management | 🟢 live | Runtime edit UI, defaults in YAML  
 Pattern Library | 🟢 PoC merged | Deterministic YAML→Cypher tool  
 Gemini Integration | 🟢 Flash & Pro tested | Testing script in `scripts/`  
-HITL Workflow | 🔴 not started | Top priority  
-Prometheus Metrics | 🔴 not started | Needed for observability  
+HITL Workflow | 🟢 implemented | Pause/resume endpoints, webhooks  
+Prometheus Metrics | 🟢 implemented | Task duration, token usage, cost tracking  
 Frontend UI | 🟡 skeleton | Chat, graph panes empty; Prompt editor done  
-CI Pipeline | 🟡 running | May fail on stricter lint/mypy rules  
+CI Pipeline | 🟢 passing | Green on main branch  
 Test Coverage | 35 % | Target ≥ 50 % before Phase-2 close  
 
 ---
@@ -46,11 +49,11 @@ Test Coverage | 35 % | Target ≥ 50 % before Phase-2 close
 ## 3 · Next Priorities (ordered)  
 Priority | Task | ETA | Owner next session
 ---|---|---|---
-P0 | **Confirm CI green** — fix any lint, type or test failures on `main` | 0.5 d | You
-P1 | **Design & implement HITL Workflow** for `compliance_checker` (pause, webhook, resume endpoint, minimal reviewer UI) | 2 d | You
-P1 | **Add Prometheus metrics** (`crew_task_duration_seconds`, `llm_tokens_used_total`, `llm_cost_usd_total`) | 1 d | You
-P2 | Front-end graph visual component (render JSON from `/crew/run`) | 2 d | —
-P2 | Raise test coverage to ≥ 50 % (add HITL & graph tests) | ongoing | —
+P0 | **Implement Front-end Graph Visual** — render JSON from `/crew/run` endpoint | 2 d | You
+P1 | **Raise test coverage to ≥ 50 %** — add HITL & metrics tests | ongoing | You
+P2 | **Cost Telemetry** — real-time Gemini token + USD tracking dashboard | 1 d | —
+P2 | **RBAC Enforcement** — apply decorators to protected endpoints | 1 d | —
+P2 | **Production Observability** — Loki/Sentry integration, SSE streaming | 2 d | —
 
 ---
 
@@ -59,20 +62,24 @@ P2 | Raise test coverage to ≥ 50 % (add HITL & graph tests) | ongoing | —
 2. **Prompt Management** enables runtime tuning; default YAMLs live under `backend/agents/configs/defaults/`.  
 3. **Pattern Library** uses canonical schema (`fraud_motifs_schema.yaml`) — all new motifs must follow it; conversion prefers template mode for performance.  
 4. **Gemini 2.5** models:  
-   • Flash = fast/cheap for simple tasks • Pro = deep reasoning • both support multimodal.  
+   • Flash = fast/cheap for simple tasks • Pro = deep reasoning • both support multimodal.  
    Testing framework (`scripts/test_gemini_models.py`) benchmarks and tracks cost.  
-5. CI uses matrix (py39-41) + docker build; lint/mypy are strict (ruff / mypy --strict).  
-6. Environment vars: `REQUIRE_NEO4J=true` in prod; dev can run without Neo4j.
+5. **HITL Workflow** implemented with pause/resume endpoints and webhook notifications for compliance_checker agent.
+6. **Prometheus Metrics** available at `/metrics` endpoint — tracking crew task duration, LLM token usage, and cost.
+7. CI uses matrix (py39-41) + docker build; lint/mypy are strict (ruff / mypy --strict).  
+8. Environment vars: `REQUIRE_NEO4J=true` in prod; dev can run without Neo4j.
 
 ---
 
 ## 5 · Things to Check / Verify Next Session  
-- [ ] GitHub Actions badge on **main** is green; if not, open workflow logs and patch.  
-- [ ] Prompt editor works end-to-end in dev container (login → edit → save → run crew).  
-- [ ] PatternLibraryTool can convert `STRUCT_001` and returns expected Cypher.  
-- [ ] Gemini API key valid; run `python scripts/test_gemini_models.py --text` to sanity-check models.  
-- [ ] Neo4j container healthy (`/health/neo4j` endpoint OK).  
-- [ ] Docker prod compose still builds after merges.
+- [x] GitHub Actions badge on **main** is green; if not, open workflow logs and patch.  
+- [x] Prompt editor works end-to-end in dev container (login → edit → save → run crew).  
+- [x] PatternLibraryTool can convert `STRUCT_001` and returns expected Cypher.  
+- [x] Gemini API key valid; run `python scripts/test_gemini_models.py --text` to sanity-check models.  
+- [x] Neo4j container healthy (`/health/neo4j` endpoint OK).  
+- [x] Docker prod compose still builds after merges.
+- [ ] HITL workflow with webhooks sends notifications correctly.
+- [ ] Prometheus metrics show up at `/metrics` endpoint.
 
 ---
 

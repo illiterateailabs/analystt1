@@ -67,6 +67,7 @@ python-dotenv==1.0.0
 structlog==23.2.0
 sentry-sdk[fastapi]==1.38.0
 python-json-logger==2.0.7
+prometheus-client==0.17.1
 
 # Testing
 pytest==7.4.3
