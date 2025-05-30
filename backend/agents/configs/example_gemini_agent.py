@@ -2,7 +2,7 @@
 Example configuration for a CrewAI agent using Google Gemini LLM.
 
 This file demonstrates how to initialize a Gemini LLM and assign it to a
-CrewAI Agent, leveraging CrewAI's native Gemini support (v0.5.0+).
+CrewAI Agent, leveraging CrewAI's native Gemini support (v0.5.0+) with Gemini 2.x models.
 """
 
 import os
@@ -24,7 +24,7 @@ auto_configured_gemini_llm = LLM()
 # This is useful if you need to use different Gemini models
 # for different agents, or if you prefer explicit instantiation.
 explicit_gemini_llm = LLM(
-    model=os.getenv("MODEL", "gemini/gemini-1.5-pro-preview-05-06"),
+    model=os.getenv("MODEL", "gemini/gemini-2.5-pro-preview-05-06"),
     api_key=os.getenv("GEMINI_API_KEY")
 )
 

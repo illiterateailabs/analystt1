@@ -65,7 +65,8 @@
 * **Ruff + pytest-env** drastically reduce “it works on my machine” issues.  
 * **Memory Bank is critical** – every reset requires re-reading; keep docs concise, single source of truth.  
 * **Factory import guards** prevent flaky pipelines when optional crypto tool files not yet implemented.  
-* **LLM cost visibility** must be integrated (AgentOps / Langtrace) before production.
+* **LLM cost visibility** must be integrated (AgentOps / Langtrace) before production.  
+* **Gemini 2.x models are current** – 1.5 models deprecated; use 2.5-flash for speed, 2.5-pro for reasoning, 2.0-flash for streaming..
 
 ---
 
