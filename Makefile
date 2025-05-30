@@ -158,17 +158,75 @@ test-backend: ## Run backend tests
 	@$(PYTEST) $(BACKEND_DIR)
 	@echo "$(GREEN)Backend tests completed.$(NC)"
 
+.PHONY: test-coverage
+test-coverage: ## Run tests with coverage report
+	@echo "$(BLUE)Running tests with coverage...$(NC)"
+	@$(PYTEST) --cov=backend --cov-report=html --cov-report=term-missing
+	@echo "$(GREEN)Coverage report generated in htmlcov/index.html$(NC)"
+
+.PHONY: test-watch
+test-watch: ## Run tests in watch mode
+	@echo "$(BLUE)Running tests in watch mode...$(NC)"
+	@$(VENV_DIR)/bin/ptw -- --testmon
+
+.PHONY: test-unit
+test-unit: ## Run only unit tests
+	@echo "$(BLUE)Running unit tests...$(NC)"
+	@$(PYTEST) -m unit
+
+.PHONY: test-integration
+test-integration: ## Run only integration tests
+	@echo "$(BLUE)Running integration tests...$(NC)"
+	@$(PYTEST) -m integration
+
 .PHONY: lint
-lint: ## Run linting
-	@echo "$(BLUE)Running linting...$(NC)"
-	@$(VENV_DIR)/bin/flake8 $(BACKEND_DIR)
+lint: ## Run linting with ruff
+	@echo "$(BLUE)Running ruff linter...$(NC)"
+	@$(VENV_DIR)/bin/ruff check backend tests
 	@echo "$(GREEN)Linting completed.$(NC)"
 
+.PHONY: lint-fix
+lint-fix: ## Run linting with automatic fixes
+	@echo "$(BLUE)Running ruff linter with fixes...$(NC)"
+	@$(VENV_DIR)/bin/ruff check --fix backend tests
+	@echo "$(GREEN)Linting with fixes completed.$(NC)"
+
 .PHONY: format
-format: ## Format code
-	@echo "$(BLUE)Formatting code...$(NC)"
-	@$(VENV_DIR)/bin/black $(BACKEND_DIR)
+format: ## Format code with black and isort
+	@echo "$(BLUE)Formatting code with black...$(NC)"
+	@$(VENV_DIR)/bin/black backend tests
+	@echo "$(BLUE)Sorting imports with isort...$(NC)"
+	@$(VENV_DIR)/bin/isort backend tests
 	@echo "$(GREEN)Formatting completed.$(NC)"
+
+.PHONY: format-check
+format-check: ## Check code formatting without changes
+	@echo "$(BLUE)Checking code formatting...$(NC)"
+	@$(VENV_DIR)/bin/black --check backend tests
+	@$(VENV_DIR)/bin/isort --check-only backend tests
+	@echo "$(GREEN)Format check completed.$(NC)"
+
+.PHONY: type-check
+type-check: ## Run type checking with mypy
+	@echo "$(BLUE)Running mypy type checker...$(NC)"
+	@$(VENV_DIR)/bin/mypy backend
+	@echo "$(GREEN)Type checking completed.$(NC)"
+
+.PHONY: pre-commit
+pre-commit: ## Run pre-commit hooks on all files
+	@echo "$(BLUE)Running pre-commit hooks...$(NC)"
+	@$(VENV_DIR)/bin/pre-commit run --all-files
+	@echo "$(GREEN)Pre-commit hooks completed.$(NC)"
+
+.PHONY: pre-commit-install
+pre-commit-install: ## Install pre-commit hooks
+	@echo "$(BLUE)Installing pre-commit hooks...$(NC)"
+	@$(VENV_DIR)/bin/pre-commit install
+	@echo "$(GREEN)Pre-commit hooks installed.$(NC)"
+
+.PHONY: ci
+ci: lint type-check test-coverage ## Run all CI checks locally
+	@echo "$(GREEN)All CI checks completed successfully!$(NC)"
 
 # ===========================================
 # Health Checks

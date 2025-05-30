@@ -1,0 +1,121 @@
+# Python bytecode and cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.env/
+.virtualenv/
+virtualenv/
+pythonenv/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+.project
+.pydevproject
+.settings/
+.classpath
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+coverage/
+
+# Build artifacts
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Node modules and Next.js
+node_modules/
+.next/
+out/
+.nuxt/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.vercel
+.turbo
+
+# Docker volumes
+docker-volumes/
+volumes/
+data-volume/
+
+# Log files
+logs/
+*.log
+log/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# mypy cache
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# pytest cache
+.pytest_cache/
+pytest-results.xml
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Local Neo4j data
+neo4j/data/
+neo4j/logs/
+neo4j/import/
+neo4j/plugins/
+
+# Local PostgreSQL data
+postgres-data/
+
+# Local Redis data
+redis-data/
+
+# Compiled JavaScript
+frontend/dist/
+frontend/.next/
+frontend/out/
+
+# Temporary files
+tmp/
+temp/

@@ -1,0 +1,207 @@
+version: '3.8'
+
+# Production configuration for Analyst's Augmentation Agent
+# Extends the base docker-compose.yml with production-specific settings
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - BUILD_ENV=production
+    image: analyst-agent-backend:${APP_VERSION:-1.0.0}
+    container_name: analyst-agent-backend
+    restart: unless-stopped
+    environment:
+      - ENV=production
+      - LOG_LEVEL=INFO
+      - CORS_ORIGINS=https://your-production-domain.com,https://api.your-production-domain.com
+      - PORT=8000
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - E2B_API_KEY=${E2B_API_KEY}
+      - E2B_TEMPLATE_ID=${E2B_TEMPLATE_ID:-python3-default}
+      - NEO4J_URI=${NEO4J_URI:-bolt://neo4j:7687}
+      - NEO4J_USERNAME=${NEO4J_USERNAME:-neo4j}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-analyst123}
+      - NEO4J_DATABASE=${NEO4J_DATABASE:-neo4j}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-analyst}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-analyst123}
+      - POSTGRES_DB=${POSTGRES_DB:-analyst_agent}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JWT_ALGORITHM=HS256
+      - JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30
+      - JWT_REFRESH_TOKEN_EXPIRE_DAYS=7
+      - REQUIRE_NEO4J=true
+    ports:
+      - "8000:8000"
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    volumes:
+      - ./logs:/app/logs
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    networks:
+      - analyst-network
+    profiles:
+      - prod
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - NODE_ENV=production
+    image: analyst-agent-frontend:${APP_VERSION:-1.0.0}
+    container_name: analyst-agent-frontend
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=https://api.your-production-domain.com
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    networks:
+      - analyst-network
+    profiles:
+      - prod
+
+  neo4j:
+    image: neo4j:5.15.0-enterprise
+    container_name: analyst-agent-neo4j
+    restart: unless-stopped
+    environment:
+      - NEO4J_AUTH=${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:-analyst123}
+      - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
+      - NEO4J_dbms_memory_heap_initial__size=512m
+      - NEO4J_dbms_memory_heap_max__size=1G
+      - NEO4J_dbms_memory_pagecache_size=512m
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+      - neo4j-import:/import
+      - neo4j-plugins:/plugins
+      - ./neo4j/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:7474"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+    networks:
+      - analyst-network
+
+  postgres:
+    image: postgres:15.4-alpine
+    container_name: analyst-agent-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-analyst}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-analyst123}
+      - POSTGRES_DB=${POSTGRES_DB:-analyst_agent}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-analyst} -d ${POSTGRES_DB:-analyst_agent}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    networks:
+      - analyst-network
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: analyst-agent-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-analyst123}
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-analyst123}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    networks:
+      - analyst-network
+
+volumes:
+  neo4j-data:
+  neo4j-logs:
+  neo4j-import:
+  neo4j-plugins:
+  postgres-data:
+  redis-data:
+
+networks:
+  analyst-network:
+    driver: bridge

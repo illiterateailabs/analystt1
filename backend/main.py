@@ -9,6 +9,8 @@ Augmentation Agent.
 import logging
 import os
 import time
+import subprocess
+import datetime
 from contextlib import asynccontextmanager
 from typing import Dict, List, Any, Optional
 
@@ -40,6 +42,23 @@ from backend.agents.factory import CrewFactory
 # Configure logging
 setup_logging()
 logger = logging.getLogger(__name__)
+
+
+def get_git_sha() -> str:
+    """Get the current git SHA."""
+    try:
+        return subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode('ascii').strip()[:7]
+    except Exception:
+        return "unknown"
+
+
+def get_build_info() -> Dict[str, str]:
+    """Get build information."""
+    return {
+        "git_sha": get_git_sha(),
+        "build_time": datetime.datetime.utcnow().isoformat(),
+        "version": settings.app_version,
+    }
 
 
 # Lifespan context manager for startup/shutdown events
@@ -82,6 +101,12 @@ async def lifespan(app: FastAPI):
         logger.error(f"Error connecting to Neo4j: {e}")
         # We'll continue even if Neo4j connection fails, as some endpoints might not need it
     
+    # Check if Neo4j connection is required
+    if os.getenv("REQUIRE_NEO4J", "false").lower() == "true":
+        if not hasattr(neo4j_client, 'driver') or neo4j_client.driver is None:
+            logger.error("REQUIRE_NEO4J is true but Neo4j connection failed")
+            raise Exception("Neo4j connection required but failed")
+    
     # Store clients in app state
     app.state.neo4j = neo4j_client
     app.state.gemini = gemini_client
@@ -89,6 +114,9 @@ async def lifespan(app: FastAPI):
     
     # Initialize CrewFactory for health checks
     app.state.crew_factory = CrewFactory()
+    
+    # Store build info in app state
+    app.state.build_info = get_build_info()
     
     # Application startup complete
     logger.info("Application startup complete")
@@ -254,7 +282,8 @@ async def health_check():
     return {
         "status": "ok",
         "version": settings.app_version,
-        "timestamp": time.time()
+        "timestamp": time.time(),
+        "build_info": app.state.build_info
     }
 
 
@@ -268,7 +297,8 @@ async def neo4j_health(neo4j: Neo4jClient = Depends(lambda: app.state.neo4j)):
             "status": "ok",
             "connected": True,
             "version": await neo4j.get_server_info(),
-            "timestamp": time.time()
+            "timestamp": time.time(),
+            "build_info": app.state.build_info
         }
     except Exception as e:
         logger.error(f"Neo4j health check failed: {e}")
@@ -276,7 +306,8 @@ async def neo4j_health(neo4j: Neo4jClient = Depends(lambda: app.state.neo4j)):
             "status": "error",
             "connected": False,
             "error": str(e),
-            "timestamp": time.time()
+            "timestamp": time.time(),
+            "build_info": app.state.build_info
         }
 
 
@@ -291,7 +322,8 @@ async def gemini_health(gemini: GeminiClient = Depends(lambda: app.state.gemini)
             "connected": True,
             "model": GeminiConfig.MODEL,
             "response": response[:50] + "..." if len(response) > 50 else response,
-            "timestamp": time.time()
+            "timestamp": time.time(),
+            "build_info": app.state.build_info
         }
     except Exception as e:
         logger.error(f"Gemini health check failed: {e}")
@@ -299,7 +331,8 @@ async def gemini_health(gemini: GeminiClient = Depends(lambda: app.state.gemini)
             "status": "error",
             "connected": False,
             "error": str(e),
-            "timestamp": time.time()
+            "timestamp": time.time(),
+            "build_info": app.state.build_info
         }
 
 
@@ -317,14 +350,16 @@ async def crew_health(factory: CrewFactory = Depends(lambda: app.state.crew_fact
             "status": "ok",
             "available_crews": available_crews,
             "available_tools": available_tools,
-            "timestamp": time.time()
+            "timestamp": time.time(),
+            "build_info": app.state.build_info
         }
     except Exception as e:
         logger.error(f"Crew health check failed: {e}")
         return {
             "status": "error",
             "error": str(e),
-            "timestamp": time.time()
+            "timestamp": time.time(),
+            "build_info": app.state.build_info
         }
 
 
@@ -337,7 +372,8 @@ async def root():
         "version": settings.app_version,
         "description": "Analyst's Augmentation Agent API",
         "docs_url": "/docs",
-        "health_check": "/health"
+        "health_check": "/health",
+        "build_info": app.state.build_info
     }
 
 

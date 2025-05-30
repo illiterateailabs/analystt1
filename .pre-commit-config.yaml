@@ -1,0 +1,74 @@
+# Pre-commit configuration for Analyst's Augmentation Agent
+# See https://pre-commit.com for more information
+
+repos:
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+    -   id: trailing-whitespace
+        name: Trim trailing whitespace
+    -   id: end-of-file-fixer
+        name: Ensure files end with newline
+    -   id: check-yaml
+        name: Check YAML syntax
+    -   id: check-json
+        name: Check JSON syntax
+    -   id: check-toml
+        name: Check TOML syntax
+    -   id: check-merge-conflict
+        name: Check for merge conflicts
+    -   id: check-added-large-files
+        name: Check for added large files
+        args: ['--maxkb=1000']
+    -   id: detect-private-key
+        name: Detect private keys
+    -   id: debug-statements
+        name: Check for debug statements
+        language_version: python3
+
+-   repo: https://github.com/psf/black
+    rev: 23.11.0
+    hooks:
+    -   id: black
+        name: Format code with Black
+        language_version: python3
+        types: [python]
+        args: ["--config=pyproject.toml"]
+
+-   repo: https://github.com/charliermarsh/ruff-pre-commit
+    rev: v0.1.5
+    hooks:
+    -   id: ruff
+        name: Lint with Ruff
+        language_version: python3
+        args: ["--fix"]
+        types: [python]
+
+-   repo: https://github.com/pycqa/isort
+    rev: 5.12.0
+    hooks:
+    -   id: isort
+        name: Sort imports with isort
+        language_version: python3
+        types: [python]
+        args: ["--profile=black", "--filter-files"]
+
+-   repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.7.1
+    hooks:
+    -   id: mypy
+        name: Type check with mypy
+        language_version: python3
+        additional_dependencies: [
+            "types-requests",
+            "types-python-dateutil",
+            "pydantic>=2.5.0",
+            "fastapi>=0.104.1"
+        ]
+        args: ["--config-file=mypy.ini"]
+        exclude: "^tests/"
+
+ci:
+    autofix_commit_msg: 'style: auto fixes from pre-commit hooks'
+    autoupdate_commit_msg: 'chore: update pre-commit hooks'
+    autoupdate_schedule: monthly
