@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  neo4j:
+    image: neo4j:5.15-community
+    container_name: analyst_agent_neo4j
+    ports:
+      - "7474:7474"  # HTTP
+      - "7687:7687"  # Bolt
+    environment:
+      - NEO4J_AUTH=neo4j/analyst123
+      - NEO4J_PLUGINS=["graph-data-science","apoc"]
+      - NEO4J_dbms_security_procedures_unrestricted=gds.*,apoc.*
+      - NEO4J_dbms_security_procedures_allowlist=gds.*,apoc.*
+      - NEO4J_dbms_memory_heap_initial__size=1G
+      - NEO4J_dbms_memory_heap_max__size=2G
+      - NEO4J_dbms_memory_pagecache_size=1G
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - neo4j_import:/var/lib/neo4j/import
+      - neo4j_plugins:/plugins
+      - ./neo4j/init:/docker-entrypoint-initdb.d
+    networks:
+      - analyst_network
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: analyst_agent_postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=analyst_agent
+      - POSTGRES_USER=analyst
+      - POSTGRES_PASSWORD=analyst123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - analyst_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: analyst_agent_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - analyst_network
+
+  # Optional: Jupyter for development and analysis
+  jupyter:
+    image: jupyter/datascience-notebook:latest
+    container_name: analyst_agent_jupyter
+    ports:
+      - "8888:8888"
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+    volumes:
+      - ./notebooks:/home/jovyan/work
+      - ./backend:/home/jovyan/work/backend
+    networks:
+      - analyst_network
+    profiles:
+      - dev
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  neo4j_import:
+  neo4j_plugins:
+  postgres_data:
+  redis_data:
+
+networks:
+  analyst_network:
+    driver: bridge
