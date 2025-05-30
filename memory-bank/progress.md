@@ -22,7 +22,8 @@ _Last updated: **30 May 2025 20:10 UTC**_
 6. **Observability** – Prometheus metrics (`crew_tasks_total`, latency histograms), log aggregation (ELK/Loki).  
 7. **Performance targets** – caching layer, parallel data fetch for real-time alert enrichment.  
 8. **Unit & integration tests** for remaining endpoints (image analysis, pattern library once ready).  
-9. **Docs & examples** – README update, Postman collection, quick-start scripts.
+9. **Docs & examples** – README update, Postman collection, quick-start scripts.  
+10. **Agent Prompt UI Access** – Expose system prompts for all agents in UI for easier testing/tuning; allow runtime prompt modification.
 
 ---
 
