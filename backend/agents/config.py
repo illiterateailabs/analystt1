@@ -1,28 +1,56 @@
 """
-Configuration management for CrewAI agents and crews.
+Configuration module for agents and crews.
 
-This module provides configuration classes and utilities for defining
-agent roles, goals, backstories, and tool access. It supports loading
-configurations from YAML files and provides defaults for all agent types.
+This module provides classes and functions for loading and managing
+agent and crew configurations from YAML files.
 """
 
 import os
 import yaml
-from typing import Dict, List, Optional, Union, Any
 from pathlib import Path
+from typing import Dict, List, Optional, Any, Union, Literal
+import logging
 from pydantic import BaseModel, Field, validator
 
-# Base directory for agent configuration files
-AGENT_CONFIG_DIR = Path("backend/agents/configs")
+# Configure logging
+logger = logging.getLogger(__name__)
+
+# Path to agent configs directory
+AGENT_CONFIGS_DIR = Path("backend/agents/configs")
+AGENT_CONFIGS_CREWS_DIR = AGENT_CONFIGS_DIR / "crews"
+DEFAULT_PROMPTS_DIR = AGENT_CONFIGS_DIR / "defaults"
+
+# Ensure directories exist
+AGENT_CONFIGS_DIR.mkdir(exist_ok=True)
+AGENT_CONFIGS_CREWS_DIR.mkdir(exist_ok=True)
+DEFAULT_PROMPTS_DIR.mkdir(exist_ok=True)
 
 
 class ToolConfig(BaseModel):
-    """Configuration for a tool that can be used by an agent."""
+    """Configuration for a tool used by an agent."""
     
-    name: str
-    description: str
-    parameters: Optional[Dict[str, Any]] = None
-    required: bool = True
+    type: str
+    timeout_seconds: Optional[int] = None
+    max_tokens: Optional[int] = None
+    
+    class Config:
+        """Pydantic config."""
+        
+        extra = "allow"  # Allow extra fields for tool-specific configuration
+
+
+class LLMConfig(BaseModel):
+    """Configuration for an LLM provider."""
+    
+    model: str
+    temperature: Optional[float] = 0.7
+    max_tokens: Optional[int] = None
+    top_p: Optional[float] = None
+    
+    class Config:
+        """Pydantic config."""
+        
+        extra = "allow"  # Allow extra fields for provider-specific configuration
 
 
 class AgentConfig(BaseModel):
@@ -31,351 +59,191 @@ class AgentConfig(BaseModel):
     id: str
     role: str
     goal: str
-    backstory: str
-    verbose: bool = False
+    backstory: Optional[str] = None
+    system_prompt: Optional[str] = None
+    tools: List[Union[str, ToolConfig]] = []
+    llm_model: Optional[str] = None
+    llm: Optional[Union[str, LLMConfig]] = None
     allow_delegation: bool = False
-    tools: List[str] = []
-    max_iter: int = 5
+    max_iter: int = 15
     max_rpm: Optional[int] = None
+    verbose: bool = True
     memory: bool = False
-    llm_model: str = "gemini-1.5-pro"
+    multimodal: bool = False
     
-    @validator('id')
-    def validate_id(cls, v):
-        """Ensure agent ID is valid."""
-        if not v or not v.strip():
-            raise ValueError("Agent ID cannot be empty")
-        return v.strip()
+    class Config:
+        """Pydantic config."""
+        
+        extra = "allow"  # Allow extra fields for future extensions
+
+
+class TaskConfig(BaseModel):
+    """Configuration for a task in a crew."""
+    
+    description: str
+    agent: str
+    expected_output: Optional[str] = None
+    context: Optional[List[str]] = None
+    async_execution: bool = False
 
 
 class CrewConfig(BaseModel):
     """Configuration for a CrewAI crew."""
     
     crew_name: str
-    process_type: str = "sequential"  # sequential or hierarchical
+    process_type: Literal["sequential", "hierarchical"] = "sequential"
     manager: Optional[str] = None
-    agents: List[str] = []
-    tasks: List[str] = []
-    verbose: bool = False
-    max_rpm: Optional[int] = None
+    agents: List[Union[str, Dict[str, Any]]]
+    tasks: Optional[List[TaskConfig]] = None
     memory: bool = False
+    verbose: bool = True
+    max_rpm: Optional[int] = None
     cache: bool = True
+    
+    @validator("process_type")
+    def validate_process_type(cls, v: str) -> str:
+        """Validate process_type is one of the allowed values."""
+        if v not in ["sequential", "hierarchical"]:
+            raise ValueError(f"process_type must be 'sequential' or 'hierarchical', got '{v}'")
+        return v
+    
+    class Config:
+        """Pydantic config."""
+        
+        extra = "allow"  # Allow extra fields for future extensions
 
 
 # Default agent configurations
-DEFAULT_AGENT_CONFIGS = {
-    "orchestrator_manager": {
-        "id": "orchestrator_manager",
-        "role": "Workflow Coordinator",
-        "goal": "Coordinate the overall analysis workflow and ensure quality results",
-        "backstory": """You are an experienced workflow coordinator with expertise in financial 
-        crime investigation. Your job is to initialize the investigation process, ensure all 
-        required inputs are validated, and coordinate the final outputs. You do not assign tasks 
-        dynamically as they follow a predefined sequence, but you ensure the overall process 
-        quality and completeness.""",
-        "tools": [],
-        "memory": True,
-        "max_iter": 3,
-    },
-    "nlq_translator": {
-        "id": "nlq_translator",
-        "role": "Natural Language to Cypher Translator",
-        "goal": "Convert natural language questions into optimized Cypher queries",
-        "backstory": """You are a specialist in translating human language into precise database 
-        queries. With deep knowledge of graph databases and the Neo4j Cypher query language, you 
-        excel at understanding analyst questions and converting them into efficient queries that 
-        extract exactly the information needed from complex financial data structures.""",
-        "tools": ["neo4j_schema_tool", "graph_query_tool"],
-        "memory": False,
-        "max_iter": 3,
-    },
-    "graph_analyst": {
-        "id": "graph_analyst",
-        "role": "Graph Data Scientist",
-        "goal": "Execute graph queries and analyze results using graph algorithms",
-        "backstory": """You are an expert graph data scientist with extensive experience in 
-        financial network analysis. You specialize in executing complex queries against graph 
-        databases, running community detection, centrality, and path-finding algorithms, and 
-        interpreting the results in the context of financial transactions and relationships.""",
-        "tools": ["graph_query_tool"],
-        "memory": True,
-        "max_iter": 5,
-    },
-    "fraud_pattern_hunter": {
-        "id": "fraud_pattern_hunter",
-        "role": "Fraud Pattern Detection Specialist",
-        "goal": "Identify known and unknown fraud patterns in financial data",
-        "backstory": """You are a seasoned financial crime investigator with a talent for 
-        spotting suspicious patterns. You've spent years studying money laundering techniques, 
-        fraud schemes, and financial crime typologies. You use a combination of known pattern 
-        templates and anomaly detection to identify potential fraud in complex financial data.""",
-        "tools": ["graph_query_tool", "pattern_library_tool"],
-        "memory": True,
-        "max_iter": 5,
-    },
-    "sandbox_coder": {
-        "id": "sandbox_coder",
-        "role": "Secure Code Generation and Execution Specialist",
-        "goal": "Generate and run Python code for data analysis in secure sandboxes",
-        "backstory": """You are an expert Python developer specializing in data analysis and 
-        machine learning. You can quickly generate efficient, secure code to analyze complex 
-        datasets, visualize results, and apply machine learning techniques. You ensure all code 
-        runs safely in isolated environments and produces reliable, reproducible results.""",
-        "tools": ["code_gen_tool", "sandbox_exec_tool"],
-        "memory": False,
-        "max_iter": 5,
-    },
-    "compliance_checker": {
-        "id": "compliance_checker",
-        "role": "AML Compliance Officer",
-        "goal": "Ensure outputs align with AML regulations and format SAR sections",
-        "backstory": """You are a compliance officer with deep knowledge of Anti-Money Laundering 
-        (AML) regulations and Suspicious Activity Report (SAR) filing requirements. You review 
-        analysis results to ensure they meet regulatory standards, identify reportable activities, 
-        and format findings appropriately for regulatory submissions.""",
-        "tools": ["policy_docs_tool"],
-        "memory": True,
-        "max_iter": 3,
-    },
-    "report_writer": {
-        "id": "report_writer",
-        "role": "Financial Intelligence Report Writer",
-        "goal": "Produce clear, actionable intelligence reports from analysis results",
-        "backstory": """You are a skilled intelligence analyst and report writer. You excel at 
-        synthesizing complex financial data and investigative findings into clear, concise, and 
-        actionable reports. You know how to present technical information to both technical and 
-        non-technical audiences, highlighting key insights and supporting evidence.""",
-        "tools": ["template_engine_tool"],
-        "memory": True,
-        "max_iter": 3,
-    },
-    "red_team_adversary": {
-        "id": "red_team_adversary",
-        "role": "Financial Crime Simulator",
-        "goal": "Simulate sophisticated financial crime scenarios to test detection systems",
-        "backstory": """You are a red team specialist who understands how financial criminals 
-        operate. Your job is to simulate realistic fraud scenarios, money laundering schemes, and 
-        other financial crimes to test and improve detection systems. You think like an adversary 
-        but work to strengthen defenses.""",
-        "tools": ["sandbox_exec_tool", "random_tx_generator_tool"],
-        "memory": True,
-        "max_iter": 5,
-    },
-    # Crypto-specific agents
-    "blockchain_detective": {
-        "id": "blockchain_detective",
-        "role": "Blockchain Transaction Investigator",
-        "goal": "Trace suspicious transactions across multiple chains and identify related addresses",
-        "backstory": """You are a specialized blockchain forensics expert with years of experience 
-        tracking illicit funds across different blockchains. You've developed techniques for 
-        identifying clusters of related addresses, detecting mixing services, and following 
-        transaction paths even when they cross multiple chains. Your attention to detail allows 
-        you to spot patterns that others miss, and you're skilled at reconstructing the full 
-        history of suspicious wallets.""",
-        "tools": ["etherscan_tool", "graph_query_tool", "dune_analytics_tool"],
-        "memory": True,
-        "max_iter": 7,
-    },
-    "defi_analyst": {
-        "id": "defi_analyst",
-        "role": "DeFi Protocol Specialist",
-        "goal": "Analyze DeFi protocols, yield opportunities, and protocol risks",
-        "backstory": """You are a DeFi expert who has been working with decentralized finance 
-        since its earliest days. You understand the mechanics of lending protocols, DEXes, 
-        yield aggregators, and other DeFi primitives. You can analyze TVL trends, identify 
-        sustainable vs unsustainable yields, and evaluate protocol risks. Your deep knowledge 
-        of smart contract interactions allows you to trace complex transaction sequences across 
-        multiple protocols.""",
-        "tools": ["defillama_tool", "dune_analytics_tool", "etherscan_tool"],
-        "memory": True,
-        "max_iter": 5,
-    },
-    "crypto_data_collector": {
-        "id": "crypto_data_collector",
-        "role": "Multi-source Blockchain Data Aggregator",
-        "goal": "Efficiently collect and normalize data from multiple blockchain data sources",
-        "backstory": """You are a data integration specialist focused on blockchain and crypto 
-        data sources. You know how to efficiently query and combine data from block explorers, 
-        analytics platforms, and specialized APIs. You understand the nuances of different data 
-        formats and can normalize timestamps, address formats, and token amounts across sources. 
-        You're meticulous about data quality and always verify information from multiple sources.""",
-        "tools": ["dune_analytics_tool", "defillama_tool", "etherscan_tool", "graph_query_tool"],
-        "memory": False,
-        "max_iter": 4,
-    },
-    "whale_tracker": {
-        "id": "whale_tracker",
-        "role": "Large Holder Movement Analyst",
-        "goal": "Track and analyze movements of large cryptocurrency holders",
-        "backstory": """You specialize in monitoring the activity of whale wallets - addresses 
-        that hold significant amounts of cryptocurrency. You've developed techniques for 
-        identifying important wallet clusters, detecting significant accumulation or distribution, 
-        and understanding the market impact of large holder movements. You can distinguish between 
-        different types of whales: exchanges, treasuries, investment funds, and individual whales, 
-        and understand their typical behavior patterns.""",
-        "tools": ["etherscan_tool", "dune_analytics_tool", "graph_query_tool"],
-        "memory": True,
-        "max_iter": 6,
-    },
-    "protocol_investigator": {
-        "id": "protocol_investigator",
-        "role": "Smart Contract Interaction Specialist",
-        "goal": "Analyze smart contract interactions and protocol behavior patterns",
-        "backstory": """You are an expert in smart contract analysis and protocol behavior. 
-        You can read contract code, understand complex interactions between multiple contracts, 
-        and identify potential vulnerabilities or unusual patterns. You've investigated numerous 
-        protocol exploits and have a deep understanding of common attack vectors in DeFi. 
-        You can trace the flow of funds through complex contract interactions and identify 
-        the root cause of protocol anomalies.""",
-        "tools": ["etherscan_tool", "dune_analytics_tool", "sandbox_exec_tool", "code_gen_tool"],
-        "memory": True,
-        "max_iter": 8,
-    },
-}
+DEFAULT_AGENT_CONFIGS: Dict[str, Dict[str, Any]] = {}
 
-
-# Default crew configurations
-DEFAULT_CREW_CONFIGS = {
-    "fraud_investigation": {
-        "crew_name": "fraud_investigation",
-        "process_type": "sequential",
-        "manager": "orchestrator_manager",
-        "agents": [
-            "nlq_translator",
-            "graph_analyst",
-            "fraud_pattern_hunter",
-            "sandbox_coder",
-            "compliance_checker",
-            "report_writer"
-        ],
-        "verbose": True,
-        "memory": True,
-        "cache": True,
-    },
-    "alert_enrichment": {
-        "crew_name": "alert_enrichment",
-        "process_type": "sequential",
-        "manager": "orchestrator_manager",
-        "agents": [
-            "nlq_translator",
-            "graph_analyst",
-            "fraud_pattern_hunter",
-            "compliance_checker",
-            "report_writer"
-        ],
-        "verbose": True,
-        "memory": False,  # Faster response for real-time alerts
-        "cache": True,
-    },
-    "red_blue_simulation": {
-        "crew_name": "red_blue_simulation",
-        "process_type": "hierarchical",  # Red team needs more autonomy
-        "manager": "orchestrator_manager",
-        "agents": [
-            "red_team_adversary",
-            "graph_analyst",
-            "fraud_pattern_hunter",
-            "report_writer"
-        ],
-        "verbose": True,
-        "memory": True,
-        "cache": False,  # Dynamic scenarios shouldn't be cached
-    },
-    "crypto_investigation": {
-        "crew_name": "crypto_investigation",
-        "process_type": "sequential",
-        "manager": "orchestrator_manager",
-        "agents": [
-            "crypto_data_collector",
-            "blockchain_detective",
-            "defi_analyst",
-            "whale_tracker",
-            "protocol_investigator",
-            "report_writer"
-        ],
-        "verbose": True,
-        "memory": True,
-        "cache": True,
-    }
-}
+# Load default agent configurations
+for config_file in DEFAULT_PROMPTS_DIR.glob("*.yaml"):
+    try:
+        with open(config_file, "r") as f:
+            config = yaml.safe_load(f)
+            if config and "id" in config:
+                DEFAULT_AGENT_CONFIGS[config["id"]] = config
+                logger.debug(f"Loaded default agent config for {config['id']}")
+    except Exception as e:
+        logger.error(f"Error loading default agent config {config_file}: {str(e)}")
 
 
 def load_agent_config(agent_id: str) -> AgentConfig:
     """
-    Load agent configuration from YAML file or use default.
+    Load an agent configuration by ID.
     
     Args:
-        agent_id: The ID of the agent to load
+        agent_id: The unique identifier for the agent
         
     Returns:
-        AgentConfig object with the agent's configuration
+        The agent configuration
+        
+    Raises:
+        ValueError: If the agent configuration is not found
     """
-    # Check if custom config file exists
-    config_path = AGENT_CONFIG_DIR / f"{agent_id}.yaml"
+    # Check custom config first
+    custom_config_path = AGENT_CONFIGS_DIR / f"{agent_id}.yaml"
+    if custom_config_path.exists():
+        try:
+            with open(custom_config_path, "r") as f:
+                config_data = yaml.safe_load(f)
+                if config_data:
+                    return AgentConfig(**config_data)
+        except Exception as e:
+            logger.error(f"Error loading custom config for {agent_id}: {str(e)}")
     
-    if config_path.exists():
-        with open(config_path, "r") as f:
-            config_data = yaml.safe_load(f)
-        return AgentConfig(**config_data)
+    # Check default config
+    default_config_path = DEFAULT_PROMPTS_DIR / f"{agent_id}.yaml"
+    if default_config_path.exists():
+        try:
+            with open(default_config_path, "r") as f:
+                config_data = yaml.safe_load(f)
+                if config_data:
+                    return AgentConfig(**config_data)
+        except Exception as e:
+            logger.error(f"Error loading default config for {agent_id}: {str(e)}")
     
-    # Fall back to default config
+    # Check in crew configs
+    for crew_file in AGENT_CONFIGS_CREWS_DIR.glob("*.yaml"):
+        try:
+            with open(crew_file, "r") as f:
+                crew_data = yaml.safe_load(f)
+                if crew_data and "agents" in crew_data:
+                    for agent in crew_data["agents"]:
+                        if isinstance(agent, dict) and agent.get("id") == agent_id:
+                            return AgentConfig(**agent)
+        except Exception as e:
+            logger.error(f"Error loading agents from crew file {crew_file}: {str(e)}")
+    
+    # Check default configs dictionary
     if agent_id in DEFAULT_AGENT_CONFIGS:
         return AgentConfig(**DEFAULT_AGENT_CONFIGS[agent_id])
     
-    raise ValueError(f"No configuration found for agent: {agent_id}")
+    # Not found
+    raise ValueError(f"Agent configuration not found: {agent_id}")
 
 
 def load_crew_config(crew_name: str) -> CrewConfig:
     """
-    Load crew configuration from YAML file or use default.
+    Load a crew configuration by name.
     
     Args:
-        crew_name: The name of the crew to load
+        crew_name: The name of the crew
         
     Returns:
-        CrewConfig object with the crew's configuration
+        The crew configuration
+        
+    Raises:
+        ValueError: If the crew configuration is not found
     """
-    # Check if custom config file exists
-    config_path = AGENT_CONFIG_DIR / "crews" / f"{crew_name}.yaml"
+    # Check crew config
+    crew_config_path = AGENT_CONFIGS_CREWS_DIR / f"{crew_name}.yaml"
+    if crew_config_path.exists():
+        try:
+            with open(crew_config_path, "r") as f:
+                config_data = yaml.safe_load(f)
+                if config_data:
+                    # Ensure crew_name is set
+                    if "crew_name" not in config_data:
+                        config_data["crew_name"] = crew_name
+                    return CrewConfig(**config_data)
+        except Exception as e:
+            logger.error(f"Error loading crew config for {crew_name}: {str(e)}")
     
-    if config_path.exists():
-        with open(config_path, "r") as f:
-            config_data = yaml.safe_load(f)
-        return CrewConfig(**config_data)
-    
-    # Fall back to default config
-    if crew_name in DEFAULT_CREW_CONFIGS:
-        return CrewConfig(**DEFAULT_CREW_CONFIGS[crew_name])
-    
-    raise ValueError(f"No configuration found for crew: {crew_name}")
+    # Not found
+    raise ValueError(f"Crew configuration not found: {crew_name}")
 
 
-def save_agent_config(config: AgentConfig) -> None:
+def get_available_crews() -> List[str]:
     """
-    Save agent configuration to YAML file.
+    Get a list of available crew names.
     
-    Args:
-        config: The AgentConfig object to save
+    Returns:
+        List of crew names
     """
-    # Ensure directory exists
-    os.makedirs(AGENT_CONFIG_DIR, exist_ok=True)
-    
-    config_path = AGENT_CONFIG_DIR / f"{config.id}.yaml"
-    with open(config_path, "w") as f:
-        yaml.dump(config.dict(), f)
+    crews = []
+    for crew_file in AGENT_CONFIGS_CREWS_DIR.glob("*.yaml"):
+        crews.append(crew_file.stem)
+    return crews
 
 
-def save_crew_config(config: CrewConfig) -> None:
+def get_available_agents() -> List[str]:
     """
-    Save crew configuration to YAML file.
+    Get a list of available agent IDs.
     
-    Args:
-        config: The CrewConfig object to save
+    Returns:
+        List of agent IDs
     """
-    # Ensure directory exists
-    crew_dir = AGENT_CONFIG_DIR / "crews"
-    os.makedirs(crew_dir, exist_ok=True)
+    agents = list(DEFAULT_AGENT_CONFIGS.keys())
     
-    config_path = crew_dir / f"{config.crew_name}.yaml"
-    with open(config_path, "w") as f:
-        yaml.dump(config.dict(), f)
+    # Add agents from custom configs
+    for agent_file in AGENT_CONFIGS_DIR.glob("*.yaml"):
+        if agent_file.stem not in agents:
+            agents.append(agent_file.stem)
+    
+    # Add agents from default configs
+    for agent_file in DEFAULT_PROMPTS_DIR.glob("*.yaml"):
+        if agent_file.stem not in agents:
+            agents.append(agent_file.stem)
+    
+    return agents

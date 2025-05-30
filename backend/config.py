@@ -12,12 +12,17 @@ class Settings(BaseSettings):
     # Application
     app_name: str = Field(default="Analyst Augmentation Agent", env="APP_NAME")
     app_version: str = Field(default="1.0.0", env="APP_VERSION")
+    VERSION: str = Field(default="0.1.0", env="VERSION")
+    ENVIRONMENT: str = Field(default="development", env="ENVIRONMENT")
+    HOST: str = Field(default="0.0.0.0", env="HOST")
+    PORT: int = Field(default=8000, env="PORT")
     debug: bool = Field(default=False, env="DEBUG")
-    log_level: str = Field(default="INFO", env="LOG_LEVEL")
+    LOG_LEVEL: str = Field(default="INFO", env="LOG_LEVEL")
+    REQUIRE_NEO4J: bool = Field(default=True, env="REQUIRE_NEO4J")
 
     # Security
     secret_key: str = Field(..., env="SECRET_KEY")
-    cors_origins: List[str] = Field(
+    CORS_ORIGINS: List[str] = Field(
         default=["http://localhost:3000", "http://localhost:8000"],
         env="CORS_ORIGINS"
     )
