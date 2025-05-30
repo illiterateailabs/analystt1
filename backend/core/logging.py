@@ -4,18 +4,19 @@ import logging
 import logging.config
 import os
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 from backend.config import settings
 
 
-def setup_logging():
+def configure_logging() -> None:
     """Setup application logging configuration."""
     
     # Create logs directory if it doesn't exist
     log_dir = Path(settings.log_file_path).parent
     log_dir.mkdir(parents=True, exist_ok=True)
     
-    logging_config = {
+    logging_config: Dict[str, Any] = {
         "version": 1,
         "disable_existing_loggers": False,
         "formatters": {
@@ -27,21 +28,17 @@ def setup_logging():
                 "format": "%(asctime)s - %(name)s - %(levelname)s - %(module)s - %(funcName)s:%(lineno)d - %(message)s",
                 "datefmt": "%Y-%m-%d %H:%M:%S",
             },
-            "json": {
-                "()": "pythonjsonlogger.jsonlogger.JsonFormatter",
-                "format": "%(asctime)s %(name)s %(levelname)s %(module)s %(funcName)s %(lineno)d %(message)s",
-            },
         },
         "handlers": {
             "console": {
                 "class": "logging.StreamHandler",
-                "level": settings.log_level,
+                "level": settings.LOG_LEVEL,
                 "formatter": "default",
                 "stream": "ext://sys.stdout",
             },
             "file": {
                 "class": "logging.handlers.RotatingFileHandler",
-                "level": settings.log_level,
+                "level": settings.LOG_LEVEL,
                 "formatter": "detailed",
                 "filename": settings.log_file_path,
                 "maxBytes": 10485760,  # 10MB
@@ -51,7 +48,7 @@ def setup_logging():
         },
         "loggers": {
             "": {  # Root logger
-                "level": settings.log_level,
+                "level": settings.LOG_LEVEL,
                 "handlers": ["console", "file"],
                 "propagate": False,
             },
@@ -91,10 +88,18 @@ def setup_logging():
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     
     logger = logging.getLogger(__name__)
-    logger.info(f"Logging configured with level: {settings.log_level}")
+    logger.info(f"Logging configured with level: {settings.LOG_LEVEL}")
     logger.info(f"Log file: {settings.log_file_path}")
 
 
 def get_logger(name: str) -> logging.Logger:
-    """Get a logger instance with the specified name."""
+    """
+    Get a logger instance with the specified name.
+    
+    Args:
+        name: The name of the logger
+        
+    Returns:
+        A configured logger instance
+    """
     return logging.getLogger(name)

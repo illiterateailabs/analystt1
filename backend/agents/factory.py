@@ -9,15 +9,60 @@ from crewai import Agent, Crew, Task, Process
 from crewai.agent import AgentConfig
 from crewai.llm import LLM
 
-from backend.agents.tools import (
-    GraphQueryTool,
-    SandboxExecTool,
-    CodeGenTool,
-    PatternLibraryTool,
-    PolicyDocsTool,
-    TemplateEngineTool,
-)
+# Import tools with graceful error handling
+# Initialize all tools to None by default
+GraphQueryTool = None
+SandboxExecTool = None
+CodeGenTool = None
+PatternLibraryTool = None
+PolicyDocsTool = None
+TemplateEngineTool = None
+Neo4jSchemaTool = None
+RandomTxGeneratorTool = None
+
+# Try to import each tool individually
+try:
+    from backend.agents.tools.graph_query_tool import GraphQueryTool
+except ImportError:
+    pass
+
+try:
+    from backend.agents.tools.sandbox_exec_tool import SandboxExecTool
+except ImportError:
+    pass
+
+try:
+    from backend.agents.tools.code_gen_tool import CodeGenTool
+except ImportError:
+    pass
+
+try:
+    from backend.agents.tools.pattern_library_tool import PatternLibraryTool
+except ImportError:
+    pass
+
+try:
+    from backend.agents.tools.policy_docs_tool import PolicyDocsTool
+except ImportError:
+    pass
+
+try:
+    from backend.agents.tools.template_engine_tool import TemplateEngineTool
+except ImportError:
+    pass
+
+try:
+    from backend.agents.tools.neo4j_schema_tool import Neo4jSchemaTool
+except ImportError:
+    pass
+
+try:
+    from backend.agents.tools.random_tx_generator_tool import RandomTxGeneratorTool
+except ImportError:
+    pass
+
 from backend.agents.llm import get_llm
+from backend.agents.config import load_agent_config, load_crew_config, get_available_crews
 from backend.integrations.neo4j_client import Neo4jClient
 from backend.integrations.e2b_client import E2BClient
 from backend.core.logging import get_logger
@@ -147,6 +192,16 @@ class CrewFactory:
             logger.info(f"Removed agent {agent_id} from cache due to prompt reset")
     
     @classmethod
+    def get_available_crews(cls) -> List[str]:
+        """
+        Get a list of available crew names.
+        
+        Returns:
+            List of crew names
+        """
+        return get_available_crews()
+    
+    @classmethod
     def create_tool(cls, tool_type: str, **kwargs) -> Any:
         """
         Create a tool instance based on the tool type.
@@ -169,19 +224,47 @@ class CrewFactory:
         tool = None
         try:
             if tool_type == "GraphQueryTool":
+                if GraphQueryTool is None:
+                    logger.warning(f"GraphQueryTool is not available")
+                    return None
                 neo4j_client = Neo4jClient()
                 tool = GraphQueryTool(neo4j_client=neo4j_client, **kwargs)
             elif tool_type == "SandboxExecTool":
+                if SandboxExecTool is None:
+                    logger.warning(f"SandboxExecTool is not available")
+                    return None
                 e2b_client = E2BClient()
                 tool = SandboxExecTool(e2b_client=e2b_client, **kwargs)
             elif tool_type == "CodeGenTool":
+                if CodeGenTool is None:
+                    logger.warning(f"CodeGenTool is not available")
+                    return None
                 tool = CodeGenTool(**kwargs)
             elif tool_type == "PatternLibraryTool":
+                if PatternLibraryTool is None:
+                    logger.warning(f"PatternLibraryTool is not available")
+                    return None
                 tool = PatternLibraryTool(**kwargs)
             elif tool_type == "PolicyDocsTool":
+                if PolicyDocsTool is None:
+                    logger.warning(f"PolicyDocsTool is not available")
+                    return None
                 tool = PolicyDocsTool(**kwargs)
             elif tool_type == "TemplateEngineTool":
+                if TemplateEngineTool is None:
+                    logger.warning(f"TemplateEngineTool is not available")
+                    return None
                 tool = TemplateEngineTool(**kwargs)
+            elif tool_type == "Neo4jSchemaTool":
+                if Neo4jSchemaTool is None:
+                    logger.warning(f"Neo4jSchemaTool is not available")
+                    return None
+                tool = Neo4jSchemaTool(**kwargs)
+            elif tool_type == "RandomTxGeneratorTool":
+                if RandomTxGeneratorTool is None:
+                    logger.warning(f"RandomTxGeneratorTool is not available")
+                    return None
+                tool = RandomTxGeneratorTool(**kwargs)
             else:
                 logger.warning(f"Unknown tool type: {tool_type}")
                 return None
