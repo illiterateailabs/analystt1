@@ -6,14 +6,16 @@ import { GraphVisualization } from '@/components/graph/GraphVisualization'
 import { AnalysisPanel } from '@/components/analysis/AnalysisPanel'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Header } from '@/components/layout/Header'
+import PromptsManager from '@/components/prompts/PromptsManager'
 import { 
   ChatBubbleLeftRightIcon, 
   ChartBarIcon, 
   CircleStackIcon,
-  CpuChipIcon 
+  CpuChipIcon,
+  PencilSquareIcon
 } from '@heroicons/react/24/outline'
 
-type ActiveView = 'chat' | 'graph' | 'analysis' | 'sandbox'
+type ActiveView = 'chat' | 'graph' | 'analysis' | 'sandbox' | 'prompts'
 
 export default function Home() {
   const [activeView, setActiveView] = useState<ActiveView>('chat')
@@ -43,6 +45,12 @@ export default function Home() {
       name: 'Sandbox',
       icon: CpuChipIcon,
       description: 'Code execution environment'
+    },
+    {
+      id: 'prompts' as const,
+      name: 'Prompts',
+      icon: PencilSquareIcon,
+      description: 'Manage agent system prompts'
     }
   ]
 
@@ -66,6 +74,8 @@ export default function Home() {
             </div>
           </div>
         )
+      case 'prompts':
+        return <PromptsManager />
       default:
         return <ChatInterface />
     }

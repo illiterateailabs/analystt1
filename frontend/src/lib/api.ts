@@ -1,187 +1,274 @@
-import axios from 'axios'
+// API client for the Analyst's Augmentation Agent
+import axios from 'axios';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+// Base API URL - configurable via environment
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
-// Create axios instance with default config
-export const api = axios.create({
+// Axios instance with default config
+const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
   },
-})
+});
 
-// Request interceptor
-api.interceptors.request.use(
+// Add request interceptor for auth token
+apiClient.interceptors.request.use(
   (config) => {
-    // Add auth token if available
-    const token = localStorage.getItem('auth_token')
+    // Get token from local storage if available
+    const token = localStorage.getItem('auth_token');
     if (token) {
-      config.headers.Authorization = `Bearer ${token}`
+      config.headers.Authorization = `Bearer ${token}`;
     }
-    return config
+    return config;
   },
-  (error) => {
-    return Promise.reject(error)
+  (error) => Promise.reject(error)
+);
+
+// Auth Types
+export interface LoginRequest {
+  username: string;
+  password: string;
+}
+
+export interface RegisterRequest {
+  username: string;
+  email: string;
+  password: string;
+  full_name?: string;
+}
+
+export interface AuthResponse {
+  access_token: string;
+  token_type: string;
+  user: {
+    id: string;
+    username: string;
+    email: string;
+    full_name?: string;
+    is_active: boolean;
+    is_superuser: boolean;
+  };
+}
+
+// Chat Types
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: string;
+}
+
+export interface ChatSession {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  messages: ChatMessage[];
+}
+
+// Graph Types
+export interface GraphNode {
+  id: string;
+  labels: string[];
+  properties: Record<string, any>;
+}
+
+export interface GraphRelationship {
+  id: string;
+  type: string;
+  startNode: string;
+  endNode: string;
+  properties: Record<string, any>;
+}
+
+export interface GraphData {
+  nodes: GraphNode[];
+  relationships: GraphRelationship[];
+}
+
+export interface GraphQueryRequest {
+  query: string;
+  parameters?: Record<string, any>;
+}
+
+export interface GraphQueryResponse {
+  data: GraphData;
+  query: string;
+  parameters?: Record<string, any>;
+  execution_time_ms: number;
+}
+
+// Crew Types
+export interface CrewRunRequest {
+  crew_name: string;
+  inputs?: Record<string, any>;
+  options?: Record<string, any>;
+}
+
+export interface CrewRunResponse {
+  success: boolean;
+  result?: any;
+  error?: string;
+  task_id?: string;
+  execution_time_ms?: number;
+}
+
+// Analysis Types
+export interface AnalysisRequest {
+  text: string;
+  options?: Record<string, any>;
+}
+
+export interface AnalysisResponse {
+  analysis: any;
+  execution_time_ms: number;
+}
+
+// Prompt Management Types
+export interface AgentListItem {
+  agent_id: string;
+  description?: string;
+  has_custom_prompt: boolean;
+}
+
+export interface PromptResponse {
+  agent_id: string;
+  system_prompt: string;
+  description?: string;
+  metadata?: Record<string, any>;
+  is_default: boolean;
+}
+
+export interface PromptUpdate {
+  system_prompt: string;
+  description?: string;
+  metadata?: Record<string, any>;
+}
+
+// Auth API
+export const login = async (data: LoginRequest): Promise<AuthResponse> => {
+  const response = await apiClient.post('/auth/login', data);
+  return response.data;
+};
+
+export const register = async (data: RegisterRequest): Promise<AuthResponse> => {
+  const response = await apiClient.post('/auth/register', data);
+  return response.data;
+};
+
+export const logout = async (): Promise<void> => {
+  localStorage.removeItem('auth_token');
+};
+
+export const getCurrentUser = async (): Promise<AuthResponse['user']> => {
+  const response = await apiClient.get('/auth/me');
+  return response.data;
+};
+
+// Chat API
+export const getChatSessions = async (): Promise<ChatSession[]> => {
+  const response = await apiClient.get('/chat/sessions');
+  return response.data;
+};
+
+export const getChatSession = async (sessionId: string): Promise<ChatSession> => {
+  const response = await apiClient.get(`/chat/sessions/${sessionId}`);
+  return response.data;
+};
+
+export const createChatSession = async (title: string): Promise<ChatSession> => {
+  const response = await apiClient.post('/chat/sessions', { title });
+  return response.data;
+};
+
+export const sendChatMessage = async (
+  sessionId: string,
+  content: string
+): Promise<ChatMessage> => {
+  const response = await apiClient.post(`/chat/sessions/${sessionId}/messages`, {
+    content,
+  });
+  return response.data;
+};
+
+// Graph API
+export const executeGraphQuery = async (
+  data: GraphQueryRequest
+): Promise<GraphQueryResponse> => {
+  const response = await apiClient.post('/graph/query', data);
+  return response.data;
+};
+
+export const getGraphSchema = async (): Promise<any> => {
+  const response = await apiClient.get('/graph/schema');
+  return response.data;
+};
+
+// Crew API
+export const runCrew = async (data: CrewRunRequest): Promise<CrewRunResponse> => {
+  const response = await apiClient.post('/crew/run', data);
+  return response.data;
+};
+
+export const getCrewStatus = async (taskId: string): Promise<any> => {
+  const response = await apiClient.get(`/crew/status/${taskId}`);
+  return response.data;
+};
+
+export const getAvailableCrews = async (): Promise<string[]> => {
+  const response = await apiClient.get('/crew/available');
+  return response.data.crews;
+};
+
+// Analysis API
+export const analyzeText = async (data: AnalysisRequest): Promise<AnalysisResponse> => {
+  const response = await apiClient.post('/analysis/text', data);
+  return response.data;
+};
+
+export const analyzeImage = async (
+  image: File,
+  options?: Record<string, any>
+): Promise<AnalysisResponse> => {
+  const formData = new FormData();
+  formData.append('image', image);
+  
+  if (options) {
+    formData.append('options', JSON.stringify(options));
   }
-)
+  
+  const response = await apiClient.post('/analysis/image', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+  
+  return response.data;
+};
 
-// Response interceptor
-api.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      // Handle unauthorized access
-      localStorage.removeItem('auth_token')
-      // Redirect to login if needed
-    }
-    return Promise.reject(error)
-  }
-)
+// Prompt Management API
+export const listAgents = async (): Promise<{ agents: AgentListItem[] }> => {
+  const response = await apiClient.get('/prompts');
+  return response.data;
+};
 
-// API endpoints
-export const chatAPI = {
-  sendMessage: (data: {
-    message: string
-    context?: string
-    conversation_id?: string
-    include_graph_data?: boolean
-  }) => api.post('/api/v1/chat/message', data),
+export const getAgentPrompt = async (agentId: string): Promise<PromptResponse> => {
+  const response = await apiClient.get(`/prompts/${agentId}`);
+  return response.data;
+};
 
-  analyzeImage: (file: File, prompt?: string, extractEntities?: boolean) => {
-    const formData = new FormData()
-    formData.append('file', file)
-    if (prompt) formData.append('prompt', prompt)
-    if (extractEntities) formData.append('extract_entities', 'true')
-    
-    return api.post('/api/v1/chat/analyze-image', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    })
-  },
+export const updateAgentPrompt = async (
+  agentId: string,
+  data: PromptUpdate
+): Promise<PromptResponse> => {
+  const response = await apiClient.put(`/prompts/${agentId}`, data);
+  return response.data;
+};
 
-  getConversation: (conversationId: string) =>
-    api.get(`/api/v1/chat/conversation/${conversationId}`),
+export const resetAgentPrompt = async (agentId: string): Promise<PromptResponse> => {
+  const response = await apiClient.post(`/prompts/${agentId}/reset`);
+  return response.data;
+};
 
-  deleteConversation: (conversationId: string) =>
-    api.delete(`/api/v1/chat/conversation/${conversationId}`),
-}
-
-export const graphAPI = {
-  getSchema: () => api.get('/api/v1/graph/schema'),
-
-  executeCypher: (query: string, parameters?: Record<string, any>) =>
-    api.post('/api/v1/graph/query/cypher', { query, parameters }),
-
-  naturalLanguageQuery: (question: string, context?: string) =>
-    api.post('/api/v1/graph/query/natural', { question, context }),
-
-  createNode: (labels: string | string[], properties: Record<string, any>) =>
-    api.post('/api/v1/graph/nodes', { labels, properties }),
-
-  createRelationship: (
-    from_node_id: number,
-    to_node_id: number,
-    relationship_type: string,
-    properties?: Record<string, any>
-  ) =>
-    api.post('/api/v1/graph/relationships', {
-      from_node_id,
-      to_node_id,
-      relationship_type,
-      properties,
-    }),
-
-  searchNodes: (
-    labels?: string | string[],
-    properties?: Record<string, any>,
-    limit?: number
-  ) =>
-    api.post('/api/v1/graph/search', { labels, properties, limit }),
-
-  calculateCentrality: (algorithm: string = 'pagerank', limit: number = 20) =>
-    api.get('/api/v1/graph/analytics/centrality', {
-      params: { algorithm, limit },
-    }),
-
-  detectCommunities: (algorithm: string = 'louvain') =>
-    api.get('/api/v1/graph/analytics/communities', {
-      params: { algorithm },
-    }),
-}
-
-export const analysisAPI = {
-  executeCode: (
-    code: string,
-    libraries?: string[],
-    timeout?: number,
-    sandbox_id?: string
-  ) =>
-    api.post('/api/v1/analysis/execute-code', {
-      code,
-      libraries,
-      timeout,
-      sandbox_id,
-    }),
-
-  performAnalysis: (
-    task_description: string,
-    data_source?: string,
-    parameters?: Record<string, any>,
-    output_format?: string
-  ) =>
-    api.post('/api/v1/analysis/analyze', {
-      task_description,
-      data_source,
-      parameters,
-      output_format,
-    }),
-
-  detectFraudPatterns: (
-    pattern_type: string = 'money_laundering',
-    limit: number = 100
-  ) =>
-    api.get('/api/v1/analysis/fraud-detection/patterns', {
-      params: { pattern_type, limit },
-    }),
-
-  listSandboxFiles: (sandbox_id: string, directory: string = '.') =>
-    api.get(`/api/v1/analysis/sandbox/${sandbox_id}/files`, {
-      params: { directory },
-    }),
-
-  downloadSandboxFile: (sandbox_id: string, file_path: string) =>
-    api.get(`/api/v1/analysis/sandbox/${sandbox_id}/download/${file_path}`),
-}
-
-export const systemAPI = {
-  healthCheck: () => api.get('/health'),
-  getRoot: () => api.get('/'),
-}
-
-// Utility functions
-export const handleAPIError = (error: any) => {
-  if (error.response) {
-    // Server responded with error status
-    return {
-      message: error.response.data?.detail || 'An error occurred',
-      status: error.response.status,
-      data: error.response.data,
-    }
-  } else if (error.request) {
-    // Request was made but no response received
-    return {
-      message: 'Network error - please check your connection',
-      status: 0,
-      data: null,
-    }
-  } else {
-    // Something else happened
-    return {
-      message: error.message || 'An unexpected error occurred',
-      status: -1,
-      data: null,
-    }
-  }
-}
-
-export default api
+export default apiClient;
