@@ -16,7 +16,7 @@ import uvicorn
 
 from backend.config import settings
 from backend.core.logging import configure_logging, get_logger
-from backend.api.v1 import auth, chat, analysis, graph, crew, prompts
+from backend.api.v1 import auth, chat, analysis, graph, crew, prompts, webhooks
 from backend.integrations.neo4j_client import Neo4jClient
 
 # Configure logging
@@ -48,6 +48,7 @@ app.include_router(analysis.router, prefix="/api/v1/analysis", tags=["Analysis"]
 app.include_router(graph.router, prefix="/api/v1/graph", tags=["Graph"])
 app.include_router(crew.router, prefix="/api/v1/crew", tags=["Crew"])
 app.include_router(prompts.router, prefix="/api/v1/prompts", tags=["Prompts"])
+app.include_router(webhooks.router, prefix="/api/v1/webhooks", tags=["Webhooks"])
 
 
 # Exception handlers

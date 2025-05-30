@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     neo4j_username: str = Field(default="neo4j", env="NEO4J_USERNAME")
     neo4j_password: str = Field(..., env="NEO4J_PASSWORD")
     neo4j_database: str = Field(default="neo4j", env="NEO4J_DATABASE")
+    NEO4J_DATABASE: str = Field(default="neo4j", env="NEO4J_DATABASE")
 
     # e2b.dev Configuration
     e2b_api_key: str = Field(..., env="E2B_API_KEY")
