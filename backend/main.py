@@ -30,6 +30,7 @@ from backend.api.v1.auth import router as auth_router
 from backend.api.v1.chat import router as chat_router
 from backend.api.v1.crew import router as crew_router
 from backend.api.v1.graph import router as graph_router
+from backend.api.v1.prompts import router as prompts_router
 
 # Import clients
 from backend.integrations.neo4j_client import Neo4jClient
@@ -271,6 +272,7 @@ api_router.include_router(auth_router, prefix="/auth", tags=["Authentication"])
 api_router.include_router(chat_router, prefix="/chat", tags=["Chat"])
 api_router.include_router(crew_router, prefix="/crew", tags=["Crew"])
 api_router.include_router(graph_router, prefix="/graph", tags=["Graph"])
+api_router.include_router(prompts_router, prefix="/prompts", tags=["Prompts"])
 
 app.include_router(api_router)
 

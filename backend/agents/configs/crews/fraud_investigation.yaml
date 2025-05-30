@@ -1,0 +1,86 @@
+# Fraud Investigation Crew Configuration
+# This crew performs end-to-end fraud investigation using a sequential process
+# for maximum auditability and reproducibility.
+
+crew_name: fraud_investigation
+process_type: sequential
+memory: true
+max_rpm: 10  # Rate limit to control API costs
+
+# Agents in this crew
+agents:
+  - id: nlq_translator
+    role: Natural Language Query Translator
+    goal: Convert natural language questions into precise Neo4j Cypher queries
+    tools:
+      - type: Neo4jSchemaTool
+      - type: GraphQueryTool
+    allow_delegation: false
+    max_iter: 3
+    
+  - id: graph_analyst
+    role: Graph Data Analyst
+    goal: Execute Cypher queries, run graph algorithms, and return structured results
+    tools:
+      - type: GraphQueryTool
+    allow_delegation: false
+    max_iter: 5
+    
+  - id: fraud_pattern_hunter
+    role: Fraud Pattern Detection Specialist
+    goal: Identify known fraud patterns and anomalous behaviors in transaction data
+    tools:
+      - type: PatternLibraryTool
+      - type: GraphQueryTool
+      - type: SandboxExecTool
+        timeout_seconds: 30
+    allow_delegation: true  # Can delegate to sandbox_coder for complex ML
+    max_iter: 8
+    
+  - id: compliance_checker
+    role: Regulatory Compliance Officer
+    goal: Ensure outputs align with AML regulations and format SAR sections
+    tools:
+      - type: PolicyDocsTool
+    allow_delegation: false
+    max_iter: 3
+    
+  - id: report_writer
+    role: Financial Crime Report Writer
+    goal: Produce executive narratives, markdown reports, and visual summaries
+    tools:
+      - type: TemplateEngineTool
+    allow_delegation: false
+    max_iter: 4
+
+# Tasks define the workflow sequence
+tasks:
+  - description: Translate user query into Cypher
+    agent: nlq_translator
+    expected_output: Executable Cypher query and explanation
+    
+  - description: Execute graph query and analyze results
+    agent: graph_analyst
+    expected_output: Structured graph data with initial analysis
+    context:
+      - Translate user query into Cypher
+    
+  - description: Detect fraud patterns and anomalies
+    agent: fraud_pattern_hunter
+    expected_output: Identified patterns, anomalies, and risk assessment
+    context:
+      - Execute graph query and analyze results
+    
+  - description: Verify compliance with regulations
+    agent: compliance_checker
+    expected_output: Compliance assessment and SAR recommendations
+    context:
+      - Detect fraud patterns and anomalies
+    
+  - description: Generate comprehensive investigation report
+    agent: report_writer
+    expected_output: Markdown report with executive summary, findings, and visualizations
+    context:
+      - Execute graph query and analyze results
+      - Detect fraud patterns and anomalies
+      - Verify compliance with regulations
