@@ -6,8 +6,15 @@ pydantic-settings==2.1.0
 python-multipart==0.0.6
 slowapi==0.1.8
 
+# Multi-Agent Framework
+crewai[tools]==0.121.1
+crewai-tools==0.12.0
+redis==5.0.1
+chromadb==0.4.18
+jinja2==3.1.2
+
 # Google Gemini Integration
-google-generativeai==0.3.2
+google-genai>=1.17.0
 google-cloud-aiplatform==1.38.1
 
 # Neo4j Integration

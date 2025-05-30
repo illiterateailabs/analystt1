@@ -167,11 +167,13 @@ from backend.api.v1.chat import router as chat_router
 from backend.api.v1.analysis import router as analysis_router
 from backend.api.v1.graph import router as graph_router
 from backend.api.v1.auth import router as auth_router
+from backend.api.v1.crew import router as crew_router
 
 app.include_router(chat_router, prefix="/api/v1/chat", tags=["chat"])
 app.include_router(analysis_router, prefix="/api/v1/analysis", tags=["analysis"])
 app.include_router(graph_router, prefix="/api/v1/graph", tags=["graph"])
 app.include_router(auth_router, prefix="/api/v1/auth", tags=["auth"])
+app.include_router(crew_router, prefix="/api/v1/crew", tags=["crew"])
 
 
 if __name__ == "__main__":

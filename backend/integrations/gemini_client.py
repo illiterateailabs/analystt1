@@ -6,8 +6,8 @@ import base64
 import io
 from PIL import Image
 
-import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
+from google import genai
+from google.genai.types import HarmCategory, HarmBlockThreshold
 
 from backend.config import GeminiConfig
 
@@ -48,7 +48,9 @@ class GeminiClient:
         self,
         prompt: str,
         context: Optional[str] = None,
-        system_instruction: Optional[str] = None
+        system_instruction: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
     ) -> str:
         """Generate text response from Gemini."""
         try:
@@ -59,7 +61,19 @@ class GeminiClient:
             if system_instruction:
                 full_prompt = f"System: {system_instruction}\n\n{full_prompt}"
             
-            response = await self.model.generate_content_async(full_prompt)
+            # Use custom parameters if provided, otherwise use defaults
+            generation_config = None
+            if temperature is not None or max_output_tokens is not None:
+                generation_config = genai.types.GenerationConfig(
+                    temperature=temperature if temperature is not None else self.config.TEMPERATURE,
+                    max_output_tokens=max_output_tokens if max_output_tokens is not None else self.config.MAX_OUTPUT_TOKENS,
+                )
+            
+            # Generate content
+            response = await self.model.generate_content_async(
+                full_prompt,
+                generation_config=generation_config
+            )
             
             if response.text:
                 logger.debug(f"Generated text response: {response.text[:100]}...")
@@ -70,6 +84,36 @@ class GeminiClient:
                 
         except Exception as e:
             logger.error(f"Error generating text with Gemini: {e}")
+            raise
+    
+    async def generate_text_with_tools(
+        self,
+        prompt: str,
+        tools: List[Any],
+        temperature: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+    ) -> Any:
+        """Generate text with tool calling capabilities."""
+        try:
+            # Use custom parameters if provided, otherwise use defaults
+            generation_config = None
+            if temperature is not None or max_output_tokens is not None:
+                generation_config = genai.types.GenerationConfig(
+                    temperature=temperature if temperature is not None else self.config.TEMPERATURE,
+                    max_output_tokens=max_output_tokens if max_output_tokens is not None else self.config.MAX_OUTPUT_TOKENS,
+                )
+            
+            # Generate content with tools
+            response = await self.model.generate_content_async(
+                prompt,
+                tools=tools,
+                generation_config=generation_config
+            )
+            
+            return response
+                
+        except Exception as e:
+            logger.error(f"Error generating text with tools: {e}")
             raise
     
     async def analyze_image(
