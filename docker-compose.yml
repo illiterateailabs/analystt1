@@ -23,6 +23,11 @@ services:
       - ./neo4j/init:/docker-entrypoint-initdb.d
     networks:
       - analyst_network
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "analyst123", "RETURN 1;"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   postgres:
     image: postgres:15-alpine
@@ -37,6 +42,11 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - analyst_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U analyst"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
@@ -47,6 +57,78 @@ services:
       - redis_data:/data
     networks:
       - analyst_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend API service
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: analyst_agent_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_NAME=Analyst Augmentation Agent
+      - APP_VERSION=1.0.0
+      - DEBUG=true
+      - LOG_LEVEL=INFO
+      - SECRET_KEY=${SECRET_KEY:-analyst_agent_secret_key_change_in_production}
+      - CORS_ORIGINS=http://localhost:3000,http://frontend:3000,http://localhost:8000
+      - JWT_ALGORITHM=HS256
+      - JWT_EXPIRATION_MINUTES=60
+      - JWT_REFRESH_EXPIRATION_MINUTES=10080
+      - JWT_AUDIENCE=analyst-agent-api
+      - JWT_ISSUER=analyst-agent
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GEMINI_MODEL=gemini-1.5-pro
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USERNAME=neo4j
+      - NEO4J_PASSWORD=analyst123
+      - NEO4J_DATABASE=neo4j
+      - E2B_API_KEY=${E2B_API_KEY}
+      - E2B_TEMPLATE_ID=python-data-science
+      - DATABASE_URL=postgresql://analyst:analyst123@postgres:5432/analyst_agent
+    volumes:
+      - ./backend:/app/backend
+      - ./logs:/app/logs
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - analyst_network
+    profiles:
+      - dev
+      - prod
+
+  # Frontend service
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: analyst_agent_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NODE_ENV=development
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - analyst_network
+    profiles:
+      - dev
+      - prod
 
   # Optional: Jupyter for development and analysis
   jupyter:
