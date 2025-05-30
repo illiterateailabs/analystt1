@@ -1,0 +1,37 @@
+# Ruff configuration for Analyst's Augmentation Agent
+
+# Same as Black.
+line-length = 88
+
+# Python version target
+target-version = "py39"
+
+# Rules to check
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # isort
+    "W",    # pycodestyle warnings
+]
+
+# Rules to ignore
+ignore = [
+    "E501",  # line too long (handled by black)
+    "F401",  # unused imports (common in __init__.py files)
+    "F403",  # star imports
+    "F405",  # may be undefined, or defined from star imports
+]
+
+# Allow unused imports in these files
+[per-file-ignores]
+"__init__.py" = ["F401", "F403"]
+"backend/agents/tools/__init__.py" = ["F401", "F403"]
+"backend/agents/tools/crypto/__init__.py" = ["F401", "F403"]
+"tests/*.py" = ["F401"]
+
+# Allow these names which would normally be flagged
+[flake8-builtins]
+builtins-ignorelist = ["id", "type"]
+
+[isort]
+known-first-party = ["backend"]

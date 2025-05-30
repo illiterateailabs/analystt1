@@ -14,7 +14,7 @@ chromadb==0.4.18
 jinja2==3.1.2
 
 # Google Gemini Integration
-google-genai>=1.17.0
+google-generativeai>=0.3.0
 google-cloud-aiplatform==1.38.1
 
 # Neo4j Integration
@@ -97,7 +97,6 @@ transformers==4.36.2
 statsmodels==0.14.0
 
 # Async & Concurrency
-asyncio==3.4.3
 aiofiles==23.2.1
 
 # Utilities

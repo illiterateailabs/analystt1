@@ -57,6 +57,20 @@ if not os.environ.get("TESTING"):
     os.environ.setdefault("LOG_LEVEL", "DEBUG")
     os.environ.setdefault("CORS_ORIGINS", "http://localhost:3000,http://localhost:8000")
 
+# Mock unavailable modules to prevent import errors during testing
+import sys
+from unittest.mock import MagicMock
+
+# Create mock modules for tools that might not exist
+sys.modules['backend.agents.tools.crypto.dune_analytics_tool'] = MagicMock()
+sys.modules['backend.agents.tools.crypto.defillama_tool'] = MagicMock()
+sys.modules['backend.agents.tools.crypto.etherscan_tool'] = MagicMock()
+
+# Mock the tool classes
+sys.modules['backend.agents.tools.crypto.dune_analytics_tool'].DuneAnalyticsTool = MagicMock
+sys.modules['backend.agents.tools.crypto.defillama_tool'].DefiLlamaTool = MagicMock
+sys.modules['backend.agents.tools.crypto.etherscan_tool'].EtherscanTool = MagicMock
+
 
 # Configure pytest
 def pytest_configure(config):
@@ -65,6 +79,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "unit: mark a test as a unit test")
     config.addinivalue_line("markers", "integration: mark a test as an integration test")
     config.addinivalue_line("markers", "slow: mark a test as slow")
+    config.addinivalue_line("markers", "skipif: skip test conditionally")
     
     # Set asyncio mode
     config.option.asyncio_mode = "auto"

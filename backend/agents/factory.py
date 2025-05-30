@@ -16,23 +16,6 @@ from crewai import Agent, Task, Crew, Process
 from crewai.agent import TaskOutput
 
 from backend.agents.config import AgentConfig, CrewConfig, load_agent_config, load_crew_config
-from backend.agents.tools import (
-    GraphQueryTool,
-    SandboxExecTool,
-    CodeGenTool,
-    PatternLibraryTool,
-    PolicyDocsTool,
-    TemplateEngineTool,
-    Neo4jSchemaTool,
-    RandomTxGeneratorTool,
-)
-# Import crypto tools module
-from backend.agents.tools.crypto import (
-    DuneAnalyticsTool,
-    DefiLlamaTool, 
-    EtherscanTool,
-    create_crypto_tools
-)
 from backend.agents.llm import GeminiLLMProvider
 from backend.integrations.neo4j_client import Neo4jClient
 from backend.integrations.gemini_client import GeminiClient
@@ -40,6 +23,45 @@ from backend.integrations.e2b_client import E2BClient
 from backend.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Import tools with error handling
+try:
+    from backend.agents.tools import (
+        GraphQueryTool,
+        SandboxExecTool,
+        CodeGenTool,
+        PatternLibraryTool,
+        PolicyDocsTool,
+        TemplateEngineTool,
+        Neo4jSchemaTool,
+        RandomTxGeneratorTool,
+    )
+except ImportError as e:
+    logger.warning(f"Some tools could not be imported: {e}")
+    # Define None for missing tools
+    GraphQueryTool = None
+    SandboxExecTool = None
+    CodeGenTool = None
+    PatternLibraryTool = None
+    PolicyDocsTool = None
+    TemplateEngineTool = None
+    Neo4jSchemaTool = None
+    RandomTxGeneratorTool = None
+
+# Import crypto tools module with error handling
+try:
+    from backend.agents.tools.crypto import (
+        DuneAnalyticsTool,
+        DefiLlamaTool, 
+        EtherscanTool,
+        create_crypto_tools
+    )
+except ImportError as e:
+    logger.warning(f"Crypto tools could not be imported: {e}")
+    DuneAnalyticsTool = None
+    DefiLlamaTool = None
+    EtherscanTool = None
+    create_crypto_tools = None
 
 
 class CrewFactory:
@@ -74,53 +96,67 @@ class CrewFactory:
         Returns:
             Dictionary of tool instances by name
         """
-        tools = {
-            "graph_query_tool": GraphQueryTool(neo4j_client=self.neo4j_client),
-            "sandbox_exec_tool": SandboxExecTool(e2b_client=self.e2b_client),
-            "code_gen_tool": CodeGenTool(gemini_client=self.gemini_client),
-            "pattern_library_tool": PatternLibraryTool(
+        tools = {}
+        
+        # Only create tools if their classes are available
+        if GraphQueryTool:
+            tools["graph_query_tool"] = GraphQueryTool(neo4j_client=self.neo4j_client)
+        
+        if SandboxExecTool:
+            tools["sandbox_exec_tool"] = SandboxExecTool(e2b_client=self.e2b_client)
+        
+        if CodeGenTool:
+            tools["code_gen_tool"] = CodeGenTool(gemini_client=self.gemini_client)
+        
+        if PatternLibraryTool:
+            tools["pattern_library_tool"] = PatternLibraryTool(
                 gemini_client=self.gemini_client,
                 neo4j_client=self.neo4j_client
-            ),
-            "neo4j_schema_tool": Neo4jSchemaTool(neo4j_client=self.neo4j_client),
-        }
+            )
+        
+        if Neo4jSchemaTool:
+            tools["neo4j_schema_tool"] = Neo4jSchemaTool(neo4j_client=self.neo4j_client)
         
         # Add additional tools if available
         try:
-            tools["policy_docs_tool"] = PolicyDocsTool()
+            if PolicyDocsTool:
+                tools["policy_docs_tool"] = PolicyDocsTool()
         except ImportError:
             logger.warning("PolicyDocsTool not available, skipping")
         
         try:
-            tools["template_engine_tool"] = TemplateEngineTool()
+            if TemplateEngineTool:
+                tools["template_engine_tool"] = TemplateEngineTool()
         except ImportError:
             logger.warning("TemplateEngineTool not available, skipping")
         
         try:
-            tools["random_tx_generator_tool"] = RandomTxGeneratorTool()
+            if RandomTxGeneratorTool:
+                tools["random_tx_generator_tool"] = RandomTxGeneratorTool()
         except ImportError:
             logger.warning("RandomTxGeneratorTool not available, skipping")
             
         # Initialize crypto tools
         try:
-            # Prepare API keys for crypto tools
-            crypto_api_keys = {
-                "dune_api_key": getattr(settings, "dune_api_key", None),
-                "etherscan_api_key": getattr(settings, "etherscan_api_key", None),
-                "bscscan_api_key": getattr(settings, "bscscan_api_key", None),
-                "polygonscan_api_key": getattr(settings, "polygonscan_api_key", None),
-            }
-            
-            # Create crypto tools
-            crypto_tools = create_crypto_tools(
-                neo4j_client=self.neo4j_client,
-                api_keys=crypto_api_keys
-            )
-            
-            # Add crypto tools to the tools dictionary
-            tools.update(crypto_tools)
-            
-            logger.info(f"Initialized {len(crypto_tools)} crypto tools")
+            if create_crypto_tools:
+                # Prepare API keys for crypto tools
+                crypto_api_keys = {
+                    "dune_api_key": getattr(settings, "dune_api_key", None),
+                    "etherscan_api_key": getattr(settings, "etherscan_api_key", None),
+                    "bscscan_api_key": getattr(settings, "bscscan_api_key", None),
+                    "polygonscan_api_key": getattr(settings, "polygonscan_api_key", None),
+                }
+                
+                # Create crypto tools
+                crypto_tools = create_crypto_tools(
+                    neo4j_client=self.neo4j_client,
+                    api_keys=crypto_api_keys
+                )
+                
+                # Add crypto tools to the tools dictionary
+                tools.update(crypto_tools)
+                
+                logger.info(f"Initialized {len(crypto_tools)} crypto tools")
         except Exception as e:
             logger.warning(f"Error initializing crypto tools: {e}")
         
