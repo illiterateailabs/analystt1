@@ -1,0 +1,260 @@
+# Structuring Patterns
+# Financial crime patterns related to structuring (breaking transactions into smaller amounts)
+# to avoid regulatory reporting thresholds
+
+patterns:
+  # Basic Structuring Pattern
+  - metadata:
+      id: "STRUCT_001"
+      name: "Basic Structuring - Multiple Transactions Below Reporting Threshold"
+      description: "Multiple cash transactions just below the reporting threshold (e.g., $10,000 in the US) from the same source within a short time period."
+      category: "STRUCTURING"
+      risk_level: "HIGH"
+      regulatory_implications:
+        - "SAR filing required"
+        - "BSA/AML violation"
+      tags:
+        - "cash_transactions"
+        - "money_laundering"
+        - "tax_evasion"
+    
+    detection:
+      graph_pattern:
+        nodes:
+          - id: "source"
+            labels: ["Person", "Entity"]
+            properties: {}
+          - id: "account"
+            labels: ["Account"]
+            properties: {}
+          - id: "transactions"
+            labels: ["Transaction"]
+            properties:
+              amount: { $gte: 8000, $lt: 10000 }  # Just below $10,000
+      
+        relationships:
+          - source: "source"
+            target: "account"
+            type: "OWNS"
+            direction: "OUTGOING"
+            properties: {}
+          - source: "account"
+            target: "transactions"
+            type: "SENT"
+            direction: "OUTGOING"
+            properties: {}
+      
+      temporal_constraints:
+        - type: "TIME_WINDOW"
+          node_id: "transactions"
+          property: "timestamp"
+          parameters:
+            window: "P7D"  # 7-day period
+      
+      aggregation_rules:
+        - type: "COUNT"
+          group_by: ["source.id"]
+          having:
+            count: { $gte: 3 }  # At least 3 transactions
+          window:
+            duration: "P7D"  # 7-day period
+    
+    cypher_template: |
+      MATCH (source)-[:OWNS]->(account:Account)-[:SENT]->(tx:Transaction)
+      WHERE tx.amount >= $min_amount AND tx.amount < $threshold
+      AND tx.timestamp > datetime() - duration($time_window)
+      WITH source, count(tx) as txCount, sum(tx.amount) as total
+      WHERE txCount >= $min_transactions
+      RETURN source, txCount, total
+      ORDER BY txCount DESC
+    
+    response_actions:
+      - action: "ALERT"
+        priority: "HIGH"
+        details: "Multiple transactions below reporting threshold detected"
+      - action: "REPORT"
+        priority: "HIGH"
+        details: "File SAR within 30 days"
+
+  # Smurfing Pattern
+  - metadata:
+      id: "STRUCT_002"
+      name: "Smurfing - Multiple Accounts/Individuals"
+      description: "Using multiple accounts or individuals ('smurfs') to deposit small amounts that collectively exceed reporting thresholds."
+      category: "SMURFING"
+      risk_level: "HIGH"
+      regulatory_implications:
+        - "SAR filing required"
+        - "BSA/AML violation"
+        - "Potential conspiracy charges"
+      tags:
+        - "money_laundering"
+        - "organized_activity"
+        - "coordinated_deposits"
+    
+    detection:
+      graph_pattern:
+        nodes:
+          - id: "sources"
+            labels: ["Person"]
+            properties: {}
+          - id: "accounts"
+            labels: ["Account"]
+            properties: {}
+          - id: "transactions"
+            labels: ["Transaction"]
+            properties:
+              amount: { $lt: 10000 }  # Below reporting threshold
+          - id: "destination"
+            labels: ["Account"]
+            properties: {}
+      
+        relationships:
+          - source: "sources"
+            target: "accounts"
+            type: "OWNS"
+            direction: "OUTGOING"
+            properties: {}
+          - source: "accounts"
+            target: "transactions"
+            type: "SENT"
+            direction: "OUTGOING"
+            properties: {}
+          - source: "transactions"
+            target: "destination"
+            type: "RECEIVED_BY"
+            direction: "OUTGOING"
+            properties: {}
+      
+      temporal_constraints:
+        - type: "TIME_WINDOW"
+          node_id: "transactions"
+          property: "timestamp"
+          parameters:
+            window: "P14D"  # 14-day period
+      
+      aggregation_rules:
+        - type: "COUNT"
+          group_by: ["destination.id"]
+          having:
+            count: { $gte: 5 }  # At least 5 different sources
+          window:
+            duration: "P14D"
+        - type: "SUM"
+          group_by: ["destination.id"]
+          having:
+            sum: { $gte: 20000 }  # Total exceeds reporting threshold
+          window:
+            duration: "P14D"
+    
+    cypher_template: |
+      MATCH (source:Person)-[:OWNS]->(account:Account)-[:SENT]->(tx:Transaction)-[:RECEIVED_BY]->(dest:Account)
+      WHERE tx.amount < $threshold
+      AND tx.timestamp > datetime() - duration($time_window)
+      WITH dest, count(DISTINCT source) as sourceCount, count(tx) as txCount, sum(tx.amount) as total
+      WHERE sourceCount >= $min_sources AND total >= $min_total
+      RETURN dest, sourceCount, txCount, total
+      ORDER BY total DESC
+    
+    response_actions:
+      - action: "ALERT"
+        priority: "HIGH"
+        details: "Coordinated smurfing pattern detected"
+      - action: "INVESTIGATE"
+        priority: "HIGH"
+        details: "Investigate relationship between source individuals"
+      - action: "REPORT"
+        priority: "HIGH"
+        details: "File SAR within 30 days"
+
+  # Reverse Structuring Pattern
+  - metadata:
+      id: "STRUCT_003"
+      name: "Reverse Structuring - Small Deposits, Large Withdrawal"
+      description: "Multiple small deposits into an account followed by a large withdrawal or transfer, often used to layer and integrate illicit funds."
+      category: "STRUCTURING"
+      risk_level: "HIGH"
+      regulatory_implications:
+        - "SAR filing required"
+        - "Money laundering red flag"
+      tags:
+        - "money_laundering"
+        - "integration"
+        - "layering"
+    
+    detection:
+      graph_pattern:
+        nodes:
+          - id: "account"
+            labels: ["Account"]
+            properties: {}
+          - id: "deposits"
+            labels: ["Transaction"]
+            properties:
+              type: { $eq: "DEPOSIT" }
+              amount: { $lt: 10000 }  # Small deposits
+          - id: "withdrawal"
+            labels: ["Transaction"]
+            properties:
+              type: { $eq: "WITHDRAWAL" }
+              amount: { $gte: 10000 }  # Large withdrawal
+      
+        relationships:
+          - source: "deposits"
+            target: "account"
+            type: "RECEIVED_BY"
+            direction: "OUTGOING"
+            properties: {}
+          - source: "account"
+            target: "withdrawal"
+            type: "SENT"
+            direction: "OUTGOING"
+            properties: {}
+      
+      temporal_constraints:
+        - type: "TIME_WINDOW"
+          node_id: "deposits"
+          property: "timestamp"
+          parameters:
+            window: "P30D"  # 30-day period for deposits
+        - type: "SEQUENCE"
+          node_id: "withdrawal"
+          property: "timestamp"
+          parameters:
+            after_node_id: "deposits"  # Withdrawal after deposits
+      
+      aggregation_rules:
+        - type: "COUNT"
+          group_by: ["account.id"]
+          having:
+            count: { $gte: 5 }  # At least 5 small deposits
+          window:
+            duration: "P30D"
+        - type: "SUM"
+          group_by: ["account.id"]
+          having:
+            sum: { $gte: 10000 }  # Total deposits significant
+          window:
+            duration: "P30D"
+    
+    cypher_template: |
+      MATCH (dep:Transaction {type: 'DEPOSIT'})-[:RECEIVED_BY]->(account:Account)-[:SENT]->(with:Transaction {type: 'WITHDRAWAL'})
+      WHERE dep.amount < $deposit_threshold
+      AND with.amount >= $withdrawal_threshold
+      AND dep.timestamp > datetime() - duration($time_window)
+      AND with.timestamp > dep.timestamp
+      WITH account, collect(dep) as deposits, with, count(dep) as depCount, sum(dep.amount) as depTotal
+      WHERE depCount >= $min_deposits AND depTotal >= $min_total_deposits
+      RETURN account, deposits, with, depCount, depTotal, with.amount as withdrawalAmount
+      ORDER BY depCount DESC
+    
+    response_actions:
+      - action: "ALERT"
+        priority: "HIGH"
+        details: "Reverse structuring pattern detected"
+      - action: "INVESTIGATE"
+        priority: "HIGH"
+        details: "Investigate source of deposits and destination of withdrawal"
+      - action: "REPORT"
+        priority: "HIGH"
+        details: "File SAR within 30 days"
