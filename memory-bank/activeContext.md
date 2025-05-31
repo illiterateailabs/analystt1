@@ -1,85 +1,53 @@
-# activeContext.md – Current Working Context  
-*(Last updated: **30 May 2025 20:05 UTC**)*
+# activeContext.md – Live Session Log  
+
+**Session:** 31 May 2025 · 12:45 UTC  
+**Droid:** Factory assistant (`illiterate ai`)  
+**Active branch:** `droid/complete-implementation-gaps`  
+**Goal:** Close Phase-2 MVP implementation gaps so the stack runs end-to-end with ≥ 50 % test coverage.
 
 ---
 
-## 1. Current Work Focus
-| Area | Details |
-|------|---------|
-| **CI / CD Stabilisation** | Resolve remaining dependency-install failures (pip) so GitHub Actions passes (lint ➜ mypy ➜ pytest ➜ docker-build). |
-| **Memory Bank Consolidation** | Build full core file set (projectbrief, productContext done). ActiveContext, systemPatterns, techContext, progress pending. |
-| **Phase 2 “Quick-Wins”** | Ensure the newly added lint/type/test pipeline, Makefile, Docker compose prod, health-build headers work end-to-end. |
-| **Dependency Hygiene** | Maintain compatible versions: `crewai[tools]==0.5.0`, `chromadb>=0.5.23`, `google-generativeai>=0.3.0`, `python-json-logger==2.0.7`. |
-| **GeminiLLMProvider R&D (up-next)** | Design custom `BaseLLM` subclass for Gemini function-calling. |
+## 🏗️ Work in Progress (WIP)
+| Area | Action | Status |
+|------|--------|--------|
+| Agent YAMLs | Add `graph_analyst`, `compliance_checker`, `report_writer`, crypto agents | ⏳ drafting |
+| Tools | Implement `TemplateEngineTool`, `PolicyDocsTool`; finish `CodeGenTool` execution path | ⏳ scaffolding |
+| RBAC/Auth | Protect `/crew/run`, `/analysis/*`; unit-test 401/403/200 flows | ⏳ not started |
+| Tests | Extend to HITL, tools edge-cases, front-end graph schema | ⏳ test stubs |
+| Docs | Align README / ROADMAP with real status | ✅ progress.md updated |
 
 ---
 
-## 2. Recent Changes (30 May 2025)
-* Added **CI pipeline** (`.github/workflows/ci.yml`) with lint (ruff), mypy, pytest matrix, docker-build, coverage upload.  
-* Injected **tests** for all API endpoints + CrewFactory; coverage ≥ 30 %.  
-* **Makefile** extended (lint-fix, type-check, test-coverage, ci, pre-commit).  
-* **Production docker-compose** file created with secure settings & resource limits.  
-* **backend/main.py** enhanced: build info (git SHA, timestamp), `REQUIRE_NEO4J` guard.  
-* **requirements.txt** cleaned — fixed `python-json-logger`, removed stray `asyncio`, aligned crewai/chromadb versions.  
-* **Factory.py** now uses try/except imports so missing optional tools don’t break runtime/tests.  
-* Initial **Memory Bank**: `projectbrief.md`, `productContext.md` authored.  
-* CI currently re-running after dependency conflict fix.
+## 🚀 Next Immediate Tasks (P0 / next 4 h)
+1. **Write missing agent YAMLs** in `backend/agents/configs/defaults/` (graph_analyst, compliance_checker, report_writer).  
+2. **Code & unit-test `TemplateEngineTool`** – must render Markdown using Jinja2 templates.  
+3. **Add RBAC decorator** utility and guard `/api/v1/crew/run`.  
+4. **Expand test coverage to ≥ 45 %** by adding tool tests (TemplateEngineTool success + failure).  
+5. Commit & push → open PR draft for review.
 
 ---
 
-## 3. Next Steps
-1. **Monitor CI run** – merge or patch until pipeline green.  
-2. **Complete Memory Bank** – write `systemPatterns.md`, `techContext.md`, `progress.md`.  
-3. **Configure Gemini in CrewAI** – Set MODEL & GEMINI_API_KEY in .env; test with `LLM()` class..  
-4. **PatternLibrary PoC** – decide LLM-vs-code conversion of YAML motifs → Cypher.  
-5. **Design HITL Workflow** – compliance_checker pause / webhook / resume endpoints.  
-6. **Performance metrics** – add Prometheus latency histograms; target < 5 s enrichment.  
-7. **Frontend hookup** – serve graph visual JSON to Next.js component (later).
+## 📝 Recent Decisions & Context
+* Keep **sequential crew pattern** for auditability.  
+* CI fixed via `constraints.txt`; pipeline now green.  
+* Prometheus metrics integrated; cost counters exposed.  
+* Docker **prod profile** still WIP – moved to P1 after core gaps filled.  
 
 ---
 
-## 4. Active Decisions & Considerations
-| Decision | Rationale |
-|----------|-----------|
-| **Use sequential crew for MVP** | Provides deterministic, auditable task order required by regulators. |
-| **crewai 0.5.0 + chromadb ≥0.5.23** | Latest stable versions without dependency conflict. |
-| **Try/except import guards in tools/factory** | Allows tests & CI to run even if optional crypto tools absent. |
-| **Skip tests when API module missing** | Keeps pipeline green until image analysis & other endpoints delivered. |
-| **Structured logging (structlog + python-json-logger)** | JSON logs ready for ELK / Loki aggregation. |
-| **Environment-driven config (Pydantic Settings)** | Twelve-factor compliance; Docker secrets friendly. |
-| **Native Gemini Support in CrewAI** | CrewAI 0.5.0+ has built-in Gemini support via `LLM(model="gemini/...", api_key=...)`. No custom provider needed! |
+## 🔧 Critical Issues Being Addressed
+* Runtime falls back to default prompts due to **missing agent configs** → breaks role-aligned reasoning.  
+* `TemplateEngineTool` & `PolicyDocsTool` exist only as stubs → report generation & compliance checks fail.  
+* RBAC only guards `/prompts` & `/graph` → potential security hole on `/crew/run`.  
+* Test coverage at **≈ 40 %**; CI gating requires ≥ 50 % before Phase-2 sign-off.
 
 ---
 
-## 5. Important Patterns & Preferences
-* **Explicit Context Passing** – use `Task.context` to feed prior outputs; avoid hidden dependencies.  
-* **Tool Abstraction** – every external system wrapped as CrewAI `BaseTool` (Neo4j, e2b, PolicyDocs).  
-* **LLM Prompt Discipline** – concise, deterministic prompts; leverage Gemini function-calls for tools.  
-* **Security First** – e2b sandbox for any dynamic code, HITL for compliance text; secrets via env.  
-* **CI Fast-Fail** – lint & dependency install first to cut waiting time.
+## ⛔ Blockers / Dependencies
+* **Frontend auth flow** missing – JWT must be crafted manually; not blocking backend tests but needed for E2E.  
+* **Redis persistence** for rate-limit store not configured – defer to infra hardening after core gaps.  
+* **Time** – tight window before Phase-2 review tomorrow; focus strictly on P0 tasks.
 
 ---
 
-## 6. Learnings & Insights
-* **Dependency conflicts are the #1 CI pain** – pin compatible versions early, add constraints file if needed.  
-* **Ruff + pytest-env** drastically reduce “it works on my machine” issues.  
-* **Memory Bank is critical** – every reset requires re-reading; keep docs concise, single source of truth.  
-* **Factory import guards** prevent flaky pipelines when optional crypto tool files not yet implemented.  
-* **LLM cost visibility** must be integrated (AgentOps / Langtrace) before production.  
-* **Gemini 2.x models are current** – 1.5 models deprecated; use 2.5-flash for speed, 2.5-pro for reasoning, 2.0-flash for streaming..
-
----
-
-## 7. Current CI/CD Status
-| Job | Status (as of 20:05 UTC) | Notes |
-|-----|--------------------------|-------|
-| **Install dependencies** | 🟡 *Running (~16 min)* | Retesting after crewai/chromadb fix. |
-| **Lint (ruff)** | ⏳ pending (runs after deps) | Last run failed due to missing package. |
-| **Type-check (mypy)** | ⏳ pending | Expect fewer import errors; ruff ignores inits. |
-| **Pytest 3.9 / 3.10 / 3.11** | ⏳ pending | Previous failures caused by pip; should execute now. |
-| **Docker build** | ⏳ pending | Will test new requirements set. |
-| **Coverage upload** | – | Runs post-tests. |
-
-*Next review at CI completion; patch quickly if new errors surface.*
-
----
+_If you pick up this branch, start with Task #1 above. Update this file after each material change. Keep entries concise – aim for ≤ 150 lines._  
