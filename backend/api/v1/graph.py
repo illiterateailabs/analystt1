@@ -7,10 +7,11 @@ from pydantic import BaseModel, Field
 
 from backend.integrations.neo4j_client import Neo4jClient
 from backend.integrations.gemini_client import GeminiClient
+from backend.auth.dependencies import require_analyst
 
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_analyst)])
 
 
 # Request/Response Models
