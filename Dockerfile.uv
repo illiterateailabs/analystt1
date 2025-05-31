@@ -1,5 +1,5 @@
-# Analyst's Augmentation Agent - Backend Dockerfile
-# Multi-stage build for a smaller final image
+# Analyst's Augmentation Agent - Backend Dockerfile (UV Version)
+# Multi-stage build using UV package manager for faster, more reliable dependency resolution
 
 # Build stage
 FROM python:3.11-slim AS builder
@@ -7,36 +7,33 @@ FROM python:3.11-slim AS builder
 # Set working directory
 WORKDIR /app
 
-# Add build-time ARG for pip options to allow debugging
-ARG PIP_EXTRA_OPTS=""
-
-# Configure pip to increase resolver backtracking limit and use new resolver
-RUN pip config set global.use-feature 2020-resolver && \
-    pip config set global.no-cache-dir true && \
-    pip config set global.timeout 180 && \
-    pip config set global.extra-index-url https://pypi.org/simple && \
-    pip config set global.retries 10 && \
-    echo "[global]\nbacktrack-limit = 5000" > /etc/pip.conf
-
-# Install system dependencies
+# Install system dependencies including UV prerequisites
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
+    curl \
     python3-dev \
+    git \
     && rm -rf /var/lib/apt/lists/*
+
+# Install UV - the faster Python package installer with better dependency resolution
+RUN curl -sSf https://astral.sh/uv/install.sh | sh
 
 # Copy requirements and constraints files
 COPY requirements.txt constraints.txt ./
 
-# Install Python dependencies with improved strategy
-# First upgrade pip
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+# Install Python dependencies with UV (faster and more reliable than pip)
+# First upgrade setuptools and wheel
+RUN /root/.cargo/bin/uv pip install --upgrade setuptools wheel
 
-# First install packages without dependencies to avoid conflicts
-RUN pip install --no-cache-dir --no-deps --constraint constraints.txt ${PIP_EXTRA_OPTS} -r requirements.txt
-
-# Then install all dependencies
-RUN pip install --no-cache-dir --constraint constraints.txt ${PIP_EXTRA_OPTS} -r requirements.txt
+# Install all dependencies with UV - it handles dependency resolution better than pip
+RUN /root/.cargo/bin/uv pip install \
+    --system \
+    --no-cache \
+    --requirement requirements.txt \
+    # UV doesn't have a direct equivalent to pip's constraints file, but we can use
+    # the constraints.txt file to guide UV's dependency resolution
+    $(cat constraints.txt | grep -v "#" | sed 's/$/,/g' | tr -d '\n' | sed 's/,$//g')
 
 # Final stage
 FROM python:3.11-slim

@@ -16,7 +16,7 @@ Ask for clarifications if needed.
 
 ---
 
-## 1 · Session Summary (30-31 May 2025, UTC 14:00-04:30)  
+## 1 · Session Summary (30-31 May 2025, UTC 14:00-06:00)  
 | Time | Accomplishment |
 |------|----------------|
 | 14:00-17:30 | Implemented **Agent Prompt Management** (CRUD API `/api/v1/prompts`, React UI, hot-reload). PR #15 merged. |
@@ -24,9 +24,10 @@ Ask for clarifications if needed.
 | 21:10-22:30 | Added **Gemini 2.5 Testing Framework** (Flash vs Pro benchmark, multimodal demo, token/cost tracking). |
 | 00:00-02:30 | Fixed **CI Pipeline Issues** (import errors, missing files, type annotations). |
 | 02:30-04:30 | Implemented **HITL Workflow** (webhooks API, pause/resume endpoints, compliance review system). PR #18 created. |
-| 04:30-06:00 | Added **Prometheus Metrics** (crew_task_duration_seconds, llm_tokens_used_total, llm_cost_usd_total). |
+| 04:30-06:00 | Added **Prometheus Metrics** (crew_task_duration_seconds, llm_tokens_used_total, llm_cost_usd_total). PR #19 created. |
+| 06:00-07:30 | Fixed **CI Dependency Resolution** (constraints.txt for transitive deps, improved Docker build process). PR #20 created. |
 
-Coverage climbed to ≈ 35 %, CI pipeline now green on main branch, all P0/P1 features implemented.
+Coverage climbed to ≈ 35 %, CI pipeline improvements in progress, all P0/P1 features implemented.
 
 ---
 
@@ -41,7 +42,7 @@ Gemini Integration | 🟢 Flash & Pro tested | Testing script in `scripts/`
 HITL Workflow | 🟢 implemented | Pause/resume endpoints, webhooks  
 Prometheus Metrics | 🟢 implemented | Task duration, token usage, cost tracking  
 Frontend UI | 🟡 skeleton | Chat, graph panes empty; Prompt editor done  
-CI Pipeline | 🟢 passing | Green on main branch  
+CI Pipeline | 🟡 partial | Fixing dependency resolution issues  
 Test Coverage | 35 % | Target ≥ 50 % before Phase-2 close  
 
 ---
@@ -68,6 +69,7 @@ P2 | **Production Observability** — Loki/Sentry integration, SSE streaming | 2
 6. **Prometheus Metrics** available at `/metrics` endpoint — tracking crew task duration, LLM token usage, and cost.
 7. CI uses matrix (py39-41) + docker build; lint/mypy are strict (ruff / mypy --strict).  
 8. Environment vars: `REQUIRE_NEO4J=true` in prod; dev can run without Neo4j.
+9. **Dependency Management** uses constraints.txt to pin transitive dependencies and avoid "resolution-too-deep" errors; alternative Dockerfile.uv provided for faster/more reliable builds.
 
 ---
 
@@ -80,6 +82,8 @@ P2 | **Production Observability** — Loki/Sentry integration, SSE streaming | 2
 - [x] Docker prod compose still builds after merges.
 - [ ] HITL workflow with webhooks sends notifications correctly.
 - [ ] Prometheus metrics show up at `/metrics` endpoint.
+- [ ] CI pipeline builds successfully with new constraints.txt and improved Dockerfile.
+- [ ] Test alternative Dockerfile.uv if pip still has resolution issues.
 
 ---
 
