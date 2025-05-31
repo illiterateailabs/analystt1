@@ -1,370 +1,359 @@
-"""Authentication API endpoints for the Analyst's Augmentation Agent.
+"""
+Authentication API endpoints for user registration, login, and token management.
 
-This module provides routes for user authentication, registration, token refresh,
-and user profile management.
+This module provides FastAPI routes for:
+- User registration (POST /register)
+- User login and JWT token generation (POST /login)
+- JWT token refreshing (POST /refresh)
+- User logout (POST /logout)
+- Retrieving current user information (GET /me)
 """
 
 import logging
-from datetime import datetime
-from typing import Dict, List, Optional, Any
+from datetime import datetime, timedelta
+from typing import Dict, Any, Optional, Union
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Body
-from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel, EmailStr, Field, validator
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
+from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
+from pydantic import BaseModel, Field, EmailStr
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+import uuid
 
-from backend.auth.dependencies import (
-    get_current_user, 
-    get_optional_user,
-    require_admin,
-    auth_rate_limit,
-    UserRole
-)
-from backend.auth.jwt_handler import JWTHandler
+from backend.database import get_db
+from backend.models.user import User
+from backend.auth.jwt_handler import create_access_token, decode_token
+from backend.auth.dependencies import get_current_user
+from backend.config import settings
 
-# Setup router
-router = APIRouter()
-
-# Get logger
 logger = logging.getLogger(__name__)
 
+router = APIRouter()
 
-# ---- Pydantic Models ----
+# OAuth2 scheme for token authentication
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
+# In-memory token blacklist (for demonstration)
+# In production, use Redis or another persistent store
+token_blacklist = set()
+
+
+# Pydantic models for request/response validation
 class UserCreate(BaseModel):
-    """User registration request model."""
-    email: EmailStr
-    password: str = Field(..., min_length=8)
-    full_name: str = Field(..., min_length=2, max_length=100)
-    role: UserRole = Field(default=UserRole.ANALYST)
-    
-    @validator('password')
-    def password_strength(cls, v):
-        """Validate password strength."""
-        if len(v) < 8:
-            raise ValueError('Password must be at least 8 characters')
-        if not any(char.isdigit() for char in v):
-            raise ValueError('Password must contain at least one digit')
-        if not any(char.isupper() for char in v):
-            raise ValueError('Password must contain at least one uppercase letter')
-        if not any(char.islower() for char in v):
-            raise ValueError('Password must contain at least one lowercase letter')
-        return v
+    """Request model for user registration."""
+    email: EmailStr = Field(..., description="User's email address")
+    password: str = Field(..., min_length=8, description="User's password")
+    name: str = Field(..., description="User's full name")
+    role: str = Field("analyst", description="User's role (admin, analyst, compliance)")
 
 
 class UserResponse(BaseModel):
-    """User response model."""
+    """Response model for user information."""
     id: str
-    email: EmailStr
-    full_name: str
-    role: UserRole
+    email: str
+    name: str
+    role: str
+    is_active: bool
     created_at: datetime
-    last_login: Optional[datetime] = None
+    updated_at: datetime
 
-
-class UserUpdate(BaseModel):
-    """User update request model."""
-    full_name: Optional[str] = Field(None, min_length=2, max_length=100)
-    email: Optional[EmailStr] = None
-
-
-class PasswordChange(BaseModel):
-    """Password change request model."""
-    current_password: str
-    new_password: str = Field(..., min_length=8)
-    
-    @validator('new_password')
-    def password_strength(cls, v):
-        """Validate password strength."""
-        if len(v) < 8:
-            raise ValueError('Password must be at least 8 characters')
-        if not any(char.isdigit() for char in v):
-            raise ValueError('Password must contain at least one digit')
-        if not any(char.isupper() for char in v):
-            raise ValueError('Password must contain at least one uppercase letter')
-        if not any(char.islower() for char in v):
-            raise ValueError('Password must contain at least one lowercase letter')
-        return v
+    class Config:
+        from_attributes = True  # Enable ORM mode for Pydantic
 
 
 class TokenResponse(BaseModel):
-    """Token response model."""
+    """Response model for authentication tokens."""
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
-    expires_in: int
+    expires_in: int  # Seconds until token expires
 
 
 class RefreshRequest(BaseModel):
-    """Token refresh request model."""
+    """Request model for token refresh."""
     refresh_token: str
 
 
-# ---- Routes ----
+class LogoutRequest(BaseModel):
+    """Request model for logout."""
+    refresh_token: Optional[str] = None
 
-@router.post("/token", response_model=TokenResponse)
-async def login(
-    request: Request,
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    _: bool = Depends(auth_rate_limit)
+
+class MessageResponse(BaseModel):
+    """Generic message response."""
+    message: str
+
+
+@router.post(
+    "/register",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Register a new user account"
+)
+async def register_user(
+    user_data: UserCreate,
+    db: AsyncSession = Depends(get_db)
 ):
     """
-    Authenticate user and issue JWT tokens.
+    Register a new user account.
     
-    This endpoint follows the OAuth2 password flow standard.
+    Creates a new user with the provided email, password, name, and role.
+    The password is hashed before storage.
     """
-    # In a real application, you would validate against a database
-    # This is a simplified example with hardcoded users for demonstration
+    # Check if email already exists
+    result = await db.execute(select(User).where(User.email == user_data.email))
+    existing_user = result.scalar_one_or_none()
     
-    # Mock user database - replace with actual database in production
-    users = {
-        "admin@example.com": {
-            "id": "1",
-            "email": "admin@example.com",
-            "full_name": "Admin User",
-            "password": "Admin123!",  # In production, store hashed passwords
-            "role": UserRole.ADMIN,
-            "created_at": datetime.utcnow()
-        },
-        "analyst@example.com": {
-            "id": "2",
-            "email": "analyst@example.com",
-            "full_name": "Analyst User",
-            "password": "Analyst123!",
-            "role": UserRole.ANALYST,
-            "created_at": datetime.utcnow()
-        }
-    }
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="User with this email already exists"
+        )
+    
+    # Create new user with hashed password
+    hashed_password = User.hash_password(user_data.password)
+    
+    new_user = User(
+        id=uuid.uuid4(),
+        email=user_data.email,
+        hashed_password=hashed_password,
+        name=user_data.name,
+        role=user_data.role.lower(),
+        is_active=True,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow()
+    )
+    
+    db.add(new_user)
+    await db.commit()
+    await db.refresh(new_user)
+    
+    logger.info(f"New user registered: {new_user.email} with role {new_user.role}")
+    return new_user
+
+
+@router.post(
+    "/login",
+    response_model=TokenResponse,
+    summary="Login and get access tokens"
+)
+async def login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Authenticate a user and return JWT tokens.
+    
+    Verifies the user's credentials and returns an access token and refresh token
+    if authentication is successful.
+    """
+    # Find user by email
+    result = await db.execute(select(User).where(User.email == form_data.username))
+    user = result.scalar_one_or_none()
     
     # Check if user exists and password is correct
-    user = users.get(form_data.username)
-    if not user or user["password"] != form_data.password:
-        logger.warning(f"Failed login attempt for user: {form_data.username}")
+    if not user or not User.verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # Create user data for token
-    user_data = {
-        "email": user["email"],
-        "full_name": user["full_name"],
-        "role": user["role"]
-    }
+    # Check if user is active
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is disabled",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     
-    # Generate tokens
-    access_token = JWTHandler.create_access_token(
-        subject=user["id"],
-        user_data=user_data
+    # Generate access token
+    access_token_expires = timedelta(minutes=settings.JWT_EXPIRATION_MINUTES)
+    access_token = create_access_token(
+        data={
+            "sub": user.email,
+            "role": user.role,
+            "name": user.name,
+            "id": str(user.id),
+            "type": "access"
+        },
+        expires_delta=access_token_expires
     )
     
-    refresh_token = JWTHandler.create_refresh_token(
-        subject=user["id"]
+    # Generate refresh token with longer expiration
+    refresh_token_expires = timedelta(minutes=settings.JWT_REFRESH_EXPIRATION_MINUTES)
+    refresh_token = create_access_token(
+        data={
+            "sub": user.email,
+            "id": str(user.id),
+            "type": "refresh"
+        },
+        expires_delta=refresh_token_expires
     )
     
-    logger.info(f"User logged in: {user['email']}")
+    logger.info(f"User logged in: {user.email}")
     
     # Return tokens
     return {
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
-        "expires_in": 60 * 60  # 1 hour in seconds
+        "expires_in": settings.JWT_EXPIRATION_MINUTES * 60  # Convert to seconds
     }
 
 
-@router.post("/refresh", response_model=TokenResponse)
+@router.post(
+    "/refresh",
+    response_model=TokenResponse,
+    summary="Refresh access token"
+)
 async def refresh_token(
-    request: Request,
-    refresh_data: RefreshRequest,
-    _: bool = Depends(auth_rate_limit)
+    refresh_request: RefreshRequest,
+    db: AsyncSession = Depends(get_db)
 ):
     """
-    Refresh access token using a valid refresh token.
+    Refresh an access token using a refresh token.
+    
+    Validates the refresh token and returns a new access token and refresh token
+    if the refresh token is valid.
     """
+    refresh_token = refresh_request.refresh_token
+    
+    # Check if token is blacklisted
+    if refresh_token in token_blacklist:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
     try:
-        # Generate new tokens
-        access_token, refresh_token = JWTHandler.refresh_tokens(
-            refresh_token=refresh_data.refresh_token
+        # Decode and validate the refresh token
+        payload = decode_token(refresh_token)
+        
+        # Check if token is a refresh token
+        if payload.get("type") != "refresh":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token type",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        # Get user from token
+        email = payload.get("sub")
+        if not email:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        # Find user in database
+        result = await db.execute(select(User).where(User.email == email))
+        user = result.scalar_one_or_none()
+        
+        if not user or not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found or inactive",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        # Generate new access token
+        access_token_expires = timedelta(minutes=settings.JWT_EXPIRATION_MINUTES)
+        access_token = create_access_token(
+            data={
+                "sub": user.email,
+                "role": user.role,
+                "name": user.name,
+                "id": str(user.id),
+                "type": "access"
+            },
+            expires_delta=access_token_expires
         )
         
+        # Generate new refresh token
+        refresh_token_expires = timedelta(minutes=settings.JWT_REFRESH_EXPIRATION_MINUTES)
+        new_refresh_token = create_access_token(
+            data={
+                "sub": user.email,
+                "id": str(user.id),
+                "type": "refresh"
+            },
+            expires_delta=refresh_token_expires
+        )
+        
+        logger.info(f"Token refreshed for user: {user.email}")
+        
+        # Return new tokens
         return {
             "access_token": access_token,
-            "refresh_token": refresh_token,
+            "refresh_token": new_refresh_token,
             "token_type": "bearer",
-            "expires_in": 60 * 60  # 1 hour in seconds
+            "expires_in": settings.JWT_EXPIRATION_MINUTES * 60  # Convert to seconds
         }
         
-    except HTTPException as e:
-        # Re-raise the exception from the JWT handler
-        raise e
     except Exception as e:
-        logger.error(f"Error refreshing token: {str(e)}")
+        logger.error(f"Token refresh error: {str(e)}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error refreshing token"
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def register_user(
-    request: Request,
-    user_data: UserCreate,
-    current_user: Optional[Dict] = Depends(get_optional_user),
-    _: bool = Depends(auth_rate_limit)
-):
-    """
-    Register a new user.
-    
-    Admin role can only be assigned by an existing admin.
-    """
-    # In a real application, you would store in a database
-    # This is a simplified example for demonstration
-    
-    # Check if trying to create admin user
-    if user_data.role == UserRole.ADMIN:
-        # Only admins can create other admins
-        if not current_user or current_user.get("role") != UserRole.ADMIN:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only admins can create admin users"
-            )
-    
-    # Mock user creation - replace with database in production
-    new_user = {
-        "id": "3",  # In production, generate a unique ID
-        "email": user_data.email,
-        "full_name": user_data.full_name,
-        "role": user_data.role,
-        "created_at": datetime.utcnow(),
-        "last_login": None
-    }
-    
-    logger.info(f"User registered: {new_user['email']}")
-    
-    return new_user
-
-
-@router.post("/logout")
+@router.post(
+    "/logout",
+    response_model=MessageResponse,
+    summary="Logout and invalidate tokens"
+)
 async def logout(
-    request: Request,
-    current_user: Dict = Depends(get_current_user)
+    logout_request: LogoutRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
-    Logout current user.
+    Logout a user by invalidating their tokens.
     
-    Note: JWT tokens cannot be invalidated without a token blacklist.
-    This endpoint is mostly for client-side cleanup.
+    Adds the refresh token to a blacklist to prevent it from being used again.
+    In a production environment, this would use a persistent store like Redis.
     """
-    # In a production system, you might add the token to a blacklist
-    # stored in Redis or another fast database
+    # Add refresh token to blacklist if provided
+    if logout_request.refresh_token:
+        token_blacklist.add(logout_request.refresh_token)
     
-    logger.info(f"User logged out: {current_user.get('email', current_user.get('id'))}")
+    logger.info(f"User logged out: {current_user.get('sub')}")
     
-    return {"detail": "Successfully logged out"}
+    return {"message": "Successfully logged out"}
 
 
-@router.get("/me", response_model=UserResponse)
-async def get_user_profile(
-    request: Request,
-    current_user: Dict = Depends(get_current_user)
+@router.get(
+    "/me",
+    response_model=Dict[str, Any],
+    summary="Get current user information"
+)
+async def get_current_user_info(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """
-    Get current user profile.
-    """
-    # In a real application, you would fetch from a database
-    # This is a simplified example with mock data
+    Get information about the currently authenticated user.
     
-    # Mock user data - replace with database lookup in production
-    user = {
-        "id": current_user["id"],
-        "email": current_user.get("email", "user@example.com"),
-        "full_name": current_user.get("full_name", "User"),
-        "role": current_user.get("role", UserRole.ANALYST),
-        "created_at": datetime.utcnow(),  # In production, fetch from DB
-        "last_login": datetime.utcnow()  # In production, fetch from DB
+    Returns user details based on the JWT token.
+    """
+    # Get user from database for most up-to-date information
+    result = await db.execute(select(User).where(User.email == current_user.get("sub")))
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "name": user.name,
+        "role": user.role,
+        "is_active": user.is_active
     }
-    
-    return user
-
-
-@router.put("/me", response_model=UserResponse)
-async def update_user_profile(
-    request: Request,
-    user_update: UserUpdate,
-    current_user: Dict = Depends(get_current_user)
-):
-    """
-    Update current user profile.
-    """
-    # In a real application, you would update in a database
-    # This is a simplified example with mock data
-    
-    # Mock updated user - replace with database update in production
-    updated_user = {
-        "id": current_user["id"],
-        "email": user_update.email or current_user.get("email", "user@example.com"),
-        "full_name": user_update.full_name or current_user.get("full_name", "User"),
-        "role": current_user.get("role", UserRole.ANALYST),
-        "created_at": datetime.utcnow(),  # In production, fetch from DB
-        "last_login": datetime.utcnow()  # In production, fetch from DB
-    }
-    
-    logger.info(f"User profile updated: {updated_user['email']}")
-    
-    return updated_user
-
-
-@router.post("/change-password")
-async def change_password(
-    request: Request,
-    password_data: PasswordChange,
-    current_user: Dict = Depends(get_current_user),
-    _: bool = Depends(auth_rate_limit)
-):
-    """
-    Change user password.
-    """
-    # In a real application, you would validate against stored hash
-    # and update in a database. This is a simplified example.
-    
-    # Mock password validation - replace with actual validation in production
-    # Pretend current password is correct
-    
-    logger.info(f"Password changed for user: {current_user.get('email', current_user.get('id'))}")
-    
-    return {"detail": "Password successfully changed"}
-
-
-@router.get("/users", response_model=List[UserResponse])
-async def list_users(
-    request: Request,
-    current_user: Dict = Depends(require_admin)
-):
-    """
-    List all users (admin only).
-    """
-    # In a real application, you would fetch from a database
-    # This is a simplified example with mock data
-    
-    # Mock user list - replace with database query in production
-    users = [
-        {
-            "id": "1",
-            "email": "admin@example.com",
-            "full_name": "Admin User",
-            "role": UserRole.ADMIN,
-            "created_at": datetime.utcnow(),
-            "last_login": datetime.utcnow()
-        },
-        {
-            "id": "2",
-            "email": "analyst@example.com",
-            "full_name": "Analyst User",
-            "role": UserRole.ANALYST,
-            "created_at": datetime.utcnow(),
-            "last_login": datetime.utcnow()
-        }
-    ]
-    
-    return users
