@@ -10,7 +10,6 @@ import json
 import logging
 from typing import Any, Dict, List, Optional, Union
 
-from crewai_tools import BaseTool
 from pydantic import BaseModel, Field
 
 from backend.integrations.gemini_client import GeminiClient
@@ -43,7 +42,7 @@ class CodeGenerationInput(BaseModel):
     )
 
 
-class CodeGenTool(BaseTool):
+class CodeGenerationTool:
     """
     Tool for generating Python code using Gemini AI.
     
@@ -53,62 +52,46 @@ class CodeGenTool(BaseTool):
     well-commented, and ready for execution in sandboxed environments.
     """
     
-    name: str = "code_gen_tool"
-    description: str = """
-    Generate Python code for data analysis, machine learning, and visualization tasks.
-    
-    Use this tool when you need to:
-    - Create data processing and transformation scripts
-    - Develop machine learning models or analysis algorithms
-    - Generate data visualization code
-    - Implement statistical analysis functions
-    - Create utility functions for specific computational tasks
-    
-    The tool will generate secure, well-commented Python code that follows best practices
-    and is ready for execution in sandboxed environments. You can specify required libraries,
-    provide context about the data, and set code style preferences.
-    
-    Example usage:
-    - Generate code to analyze transaction patterns in financial data
-    - Create a script to visualize network connections between entities
-    - Develop a clustering algorithm for customer segmentation
-    - Implement a time-series forecasting model for risk prediction
-    """
-    args_schema: type[BaseModel] = CodeGenerationInput
-    
     def __init__(self, gemini_client: Optional[GeminiClient] = None):
         """
-        Initialize the CodeGenTool.
+        Initialize the CodeGenerationTool.
         
         Args:
             gemini_client: Optional GeminiClient instance. If not provided,
                           a new client will be created.
         """
-        super().__init__()
         self.gemini_client = gemini_client or GeminiClient()
     
-    async def _arun(
-        self,
-        task_description: str,
-        libraries: Optional[List[str]] = None,
-        context: Optional[str] = None,
-        code_style: str = "standard",
-        security_level: str = "high"
-    ) -> str:
+    def run(self, **kwargs) -> str:
         """
-        Generate Python code asynchronously.
+        Generate Python code based on the provided parameters.
         
         Args:
-            task_description: Description of the task the code should perform
-            libraries: Optional list of Python libraries to use
-            context: Additional context for code generation
-            code_style: Preferred code style
-            security_level: Security level for generated code
+            **kwargs: Keyword arguments matching CodeGenerationInput fields
+                task_description: Description of the task the code should perform
+                libraries: Optional list of Python libraries to use
+                context: Additional context for code generation
+                code_style: Preferred code style
+                security_level: Security level for generated code
             
         Returns:
-            Generated Python code as a string
+            JSON string containing the generated code and metadata
         """
         try:
+            # Extract parameters
+            task_description = kwargs.get("task_description")
+            libraries = kwargs.get("libraries")
+            context = kwargs.get("context")
+            code_style = kwargs.get("code_style", "standard")
+            security_level = kwargs.get("security_level", "high")
+            
+            if not task_description:
+                return json.dumps({
+                    "success": False,
+                    "error": "Task description is required",
+                    "code": "# Error: No task description provided"
+                })
+            
             # Prepare the full context for code generation
             full_context = f"""
 Task: {task_description}
@@ -165,9 +148,9 @@ The code should be ready to run in an isolated sandbox environment and should be
 """
             
             # Generate the code
-            code = await self.gemini_client.generate_python_code(
+            code = self.gemini_client.generate_python_code(
                 task_description=full_context,
-                context=None,  # Already included in full_context
+                system_instruction=system_instruction,
                 libraries=libraries
             )
             
@@ -189,36 +172,6 @@ The code should be ready to run in an isolated sandbox environment and should be
                 "error": str(e),
                 "code": "# Error generating code"
             })
-    
-    def _run(
-        self,
-        task_description: str,
-        libraries: Optional[List[str]] = None,
-        context: Optional[str] = None,
-        code_style: str = "standard",
-        security_level: str = "high"
-    ) -> str:
-        """
-        Synchronous wrapper for _arun.
-        
-        This method exists for compatibility with synchronous CrewAI operations.
-        It should not be called directly in an async context.
-        """
-        import asyncio
-        
-        # Create a new event loop if needed
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_closed():
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        
-        return loop.run_until_complete(
-            self._arun(task_description, libraries, context, code_style, security_level)
-        )
     
     def _apply_security_checks(self, code: str, security_level: str) -> str:
         """

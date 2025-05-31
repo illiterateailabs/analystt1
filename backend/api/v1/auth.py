@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field, EmailStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import uuid
+import aioredis
 
 from backend.database import get_db
 from backend.models.user import User
@@ -33,9 +34,17 @@ router = APIRouter()
 # OAuth2 scheme for token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
-# In-memory token blacklist (for demonstration)
-# In production, use Redis or another persistent store
-token_blacklist = set()
+# Redis client for token blacklist
+redis_client: Optional[aioredis.Redis] = None
+
+async def get_redis():
+    global redis_client
+    if not redis_client:
+        redis_client = await aioredis.create_redis_pool(
+            settings.REDIS_URL or 'redis://redis:6379',
+            encoding='utf-8'
+        )
+    return redis_client
 
 
 # Pydantic models for request/response validation
@@ -220,7 +229,10 @@ async def refresh_token(
     refresh_token = refresh_request.refresh_token
     
     # Check if token is blacklisted
-    if refresh_token in token_blacklist:
+    redis = await get_redis()
+    is_blacklisted = await redis.exists(f"blacklist:{refresh_token}")
+    
+    if is_blacklisted:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has been revoked",
@@ -315,11 +327,18 @@ async def logout(
     Logout a user by invalidating their tokens.
     
     Adds the refresh token to a blacklist to prevent it from being used again.
-    In a production environment, this would use a persistent store like Redis.
+    Uses Redis for persistent token blacklisting.
     """
     # Add refresh token to blacklist if provided
     if logout_request.refresh_token:
-        token_blacklist.add(logout_request.refresh_token)
+        redis = await get_redis()
+        # Set expiration to match JWT refresh token expiration (or slightly longer)
+        # This prevents the blacklist from growing indefinitely
+        await redis.setex(
+            f"blacklist:{logout_request.refresh_token}", 
+            int(settings.JWT_REFRESH_EXPIRATION_MINUTES * 60),  # Convert to seconds
+            "1"
+        )
     
     logger.info(f"User logged out: {current_user.get('sub')}")
     
@@ -357,3 +376,14 @@ async def get_current_user_info(
         "role": user.role,
         "is_active": user.is_active
     }
+
+
+@router.on_event("shutdown")
+async def shutdown_event():
+    """Close Redis connection on application shutdown."""
+    global redis_client
+    if redis_client is not None:
+        redis_client.close()
+        await redis_client.wait_closed()
+        redis_client = None
+        logger.info("Redis connection closed")
