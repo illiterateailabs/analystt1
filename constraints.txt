@@ -40,6 +40,7 @@ grpcio~=1.62.2
 grpcio-status~=1.62.2
 langchain-core~=0.1.52
 langchain-community~=0.0.38
+langsmith~=0.0.92
 huggingface-hub~=0.20.3
 googleapis-common-protos~=1.69.0
 # Pinning protobuf as it's a common source of conflict with google libraries
