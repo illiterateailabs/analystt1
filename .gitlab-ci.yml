@@ -9,7 +9,11 @@ variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
 
 cache:
-  key: "$CI_COMMIT_REF_SLUG-$PYTHON_VERSION"
+  key:
+    files:
+      - requirements.txt
+      - constraints.txt
+    prefix: files-$CI_COMMIT_REF_SLUG-$PYTHON_VERSION
   paths:
     - .cache/pip/
   policy: pull-push
@@ -22,6 +26,7 @@ cache:
 lint:
   stage: lint
   image: python:$PYTHON_VERSION-slim-buster
+  timeout: 30m # Added timeout
   <<: *install_dependencies
   script:
     - ruff check --output-format=gitlab backend tests
@@ -63,9 +68,10 @@ test:
   parallel:
     matrix:
       - PYTHON_VERSION: ["3.9", "3.10", "3.11"]
-  script:
+  before_script: # Moved dependency installation here
     - python -m pip install --upgrade pip setuptools wheel
     - pip install --constraint constraints.txt -r requirements.txt
+  script:
     - pytest --cov=backend --cov-report=xml -v
   coverage: '/^TOTAL.*\s+(\d+\%)$/' # Regex to extract coverage percentage
   artifacts:

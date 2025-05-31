@@ -32,3 +32,15 @@ spacy-legacy>=3.0.8,<3.1.0
 spacy-loggers>=1.0.0,<2.0.0
 murmurhash>=1.0.0,<1.1.0
 preshed>=3.0.2,<3.1.0
+
+# Constraints added to mitigate pip backtracking issues observed in CI (May 31, 2025)
+# These help stabilize the dependency resolution for complex packages like
+# google-cloud-aiplatform, langchain, crewai, and transformers.
+grpcio~=1.62.2
+grpcio-status~=1.62.2
+langchain-core~=0.1.52
+langchain-community~=0.0.38
+huggingface-hub~=0.20.3
+googleapis-common-protos~=1.69.0
+# Pinning protobuf as it's a common source of conflict with google libraries
+protobuf~=4.25.0
