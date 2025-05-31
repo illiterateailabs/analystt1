@@ -1,0 +1,878 @@
+# Crypto Fraud Patterns
+# This file defines common cryptocurrency fraud patterns for detection in graph databases
+# Each pattern includes detection logic, risk levels, and thresholds
+
+version: "1.0"
+last_updated: "2025-05-31"
+author: "Analyst Agent"
+description: "Cryptocurrency fraud detection patterns for Neo4j graph database"
+
+patterns:
+  # ============================================================
+  # WASH TRADING PATTERNS
+  # ============================================================
+  - id: "WASH_TRADING_CIRCULAR"
+    name: "Circular Wash Trading"
+    category: "WASH_TRADING"
+    description: "Circular pattern of transactions between related addresses to artificially inflate trading volume"
+    risk_level: "HIGH"
+    applicable_to: ["CRYPTO"]
+    detection:
+      type: "CYPHER"
+      query: |
+        MATCH path = (a:Address)-[:TRANSFERS*2..5]->(a)
+        WHERE all(r IN relationships(path) WHERE r.timestamp >= datetime() - duration('P7D'))
+        WITH a, path, 
+             [n IN nodes(path) | n.address] AS addresses,
+             [r IN relationships(path) | r.value] AS values
+        WHERE size(apoc.coll.toSet(addresses)) <= size(addresses)
+        AND (
+          // Check if values are similar (balanced trading)
+          apoc.coll.variance(values) / apoc.coll.avg(values) < 0.3
+          OR
+          // Check if the total value flowing in each direction is similar
+          abs(apoc.coll.sum(values) / size(values) - values[0]) < values[0] * 0.2
+        )
+        RETURN a.address AS suspicious_address,
+               size(addresses) AS cycle_length,
+               apoc.coll.sum(values) AS total_volume,
+               [r IN relationships(path) | {from: startNode(r).address, to: endNode(r).address, value: r.value, timestamp: r.timestamp}] AS transactions,
+               "WASH_TRADING_CIRCULAR" AS pattern_id,
+               "HIGH" AS risk_level
+      thresholds:
+        min_cycle_length: 2
+        max_cycle_length: 5
+        min_cycle_value: 1000
+        max_variance_ratio: 0.3
+        max_time_window_days: 7
+
+  - id: "WASH_TRADING_SELF_DEALING"
+    name: "Self-Dealing Wash Trading"
+    category: "WASH_TRADING"
+    description: "Trading between addresses controlled by the same entity to create fake volume"
+    risk_level: "HIGH"
+    applicable_to: ["CRYPTO"]
+    detection:
+      type: "CYPHER"
+      query: |
+        MATCH (a1:Address)-[t1:TRANSFERS]->(a2:Address)
+        MATCH (a2)-[t2:TRANSFERS]->(a1)
+        WHERE t1.timestamp >= datetime() - duration('P14D')
+        AND t2.timestamp >= datetime() - duration('P14D')
+        AND abs(t1.timestamp.epochMillis - t2.timestamp.epochMillis) < 86400000 // Within 24 hours
+        AND abs(t1.value - t2.value) / t1.value < 0.1 // Values within 10% of each other
+        RETURN a1.address AS address1,
+               a2.address AS address2,
+               t1.value AS value1,
+               t2.value AS value2,
+               t1.timestamp AS timestamp1,
+               t2.timestamp AS timestamp2,
+               abs(t1.timestamp.epochMillis - t2.timestamp.epochMillis) / 3600000 AS hours_between,
+               "WASH_TRADING_SELF_DEALING" AS pattern_id,
+               "HIGH" AS risk_level
+      thresholds:
+        min_value: 500
+        max_value_difference_pct: 10
+        max_time_difference_hours: 24
+        time_window_days: 14
+
+  - id: "WASH_TRADING_VOLUME_MANIPULATION"
+    name: "Token Volume Manipulation"
+    category: "WASH_TRADING"
+    description: "Artificially inflating token trading volume through wash trading"
+    risk_level: "MEDIUM"
+    applicable_to: ["CRYPTO"]
+    detection:
+      type: "CYPHER"
+      query: |
+        MATCH (token:Token)<-[:TRADES]-(trader:Address)
+        WITH token, trader, count(trader) AS trade_count
+        WHERE trade_count > 50
+        WITH token, trader
+        MATCH (trader)-[t1:TRADES]->(dex:DEX)
+        WHERE t1.token_bought = token.address OR t1.token_sold = token.address
+        WITH token, trader, collect(t1) AS trades
+        WITH token, trader, trades,
+             [t IN trades WHERE t.token_bought = token.address | t.amount_bought] AS buy_amounts,
+             [t IN trades WHERE t.token_sold = token.address | t.amount_sold] AS sell_amounts
+        WHERE size(buy_amounts) > 10 AND size(sell_amounts) > 10
+        AND abs(apoc.coll.sum(buy_amounts) - apoc.coll.sum(sell_amounts)) / apoc.coll.sum(buy_amounts) < 0.1
+        RETURN token.address AS token_address,
+               token.symbol AS token_symbol,
+               trader.address AS trader_address,
+               size(trades) AS trade_count,
+               apoc.coll.sum(buy_amounts) AS total_bought,
+               apoc.coll.sum(sell_amounts) AS total_sold,
+               "WASH_TRADING_VOLUME_MANIPULATION" AS pattern_id,
+               "MEDIUM" AS risk_level
+      thresholds:
+        min_trade_count: 50
+        min_buy_trades: 10
+        min_sell_trades: 10
+        max_net_position_pct: 10
+        time_window_days: 30
+
+  # ============================================================
+  # PUMP AND DUMP PATTERNS
+  # ============================================================
+  - id: "PUMP_AND_DUMP_PRICE_SPIKE"
+    name: "Token Price Pump and Dump"
+    category: "PUMP_AND_DUMP"
+    description: "Rapid price increase followed by sharp decline, indicating potential pump and dump scheme"
+    risk_level: "HIGH"
+    applicable_to: ["CRYPTO"]
+    detection:
+      type: "CYPHER"
+      query: |
+        MATCH (token:Token)
+        // Find price data points (from trades)
+        MATCH (token)<-[trade:TRADES]-()
+        WHERE trade.timestamp >= datetime() - duration('P30D')
+        WITH token, trade ORDER BY trade.timestamp
+        WITH token, collect({price: trade.price, timestamp: trade.timestamp, volume: trade.amount_bought}) AS price_points
+        // Calculate daily averages
+        WITH token, price_points,
+             apoc.date.convert(price_points[0].timestamp, 'ms', 'days') AS start_day,
+             apoc.date.convert(price_points[-1].timestamp, 'ms', 'days') AS end_day
+        UNWIND range(start_day, end_day) AS day
+        WITH token, price_points, day
+        WITH token, day,
+             [p IN price_points WHERE apoc.date.convert(p.timestamp, 'ms', 'days') = day] AS day_points
+        WHERE size(day_points) > 0
+        WITH token, day, 
+             apoc.coll.avg([p IN day_points | p.price]) AS avg_price,
+             apoc.coll.sum([p IN day_points | p.volume]) AS daily_volume
+        WITH token, collect({day: day, price: avg_price, volume: daily_volume}) AS daily_prices
+        // Detect pump and dump pattern
+        WITH token, daily_prices,
+             apoc.coll.max([d IN daily_prices | d.price]) AS peak_price,
+             apoc.coll.min([d IN daily_prices | d.price]) AS min_price
+        WHERE peak_price > min_price * 2 // At least 100% increase
+        WITH token, daily_prices, peak_price, min_price
+        // Find the peak day
+        WITH token, daily_prices, peak_price, min_price,
+             [d IN daily_prices WHERE d.price = peak_price | d.day][0] AS peak_day
+        // Check for dump after peak
+        WITH token, daily_prices, peak_price, min_price, peak_day,
+             [d IN daily_prices WHERE d.day > peak_day | d.price] AS post_peak_prices
+        WHERE size(post_peak_prices) > 0
+        AND apoc.coll.min(post_peak_prices) < peak_price * 0.7 // At least 30% decrease after peak
+        RETURN token.address AS token_address,
+               token.symbol AS token_symbol,
+               min_price AS initial_price,
+               peak_price AS peak_price,
+               apoc.coll.min(post_peak_prices) AS post_dump_price,
+               (peak_price / min_price) * 100 - 100 AS pump_percentage,
+               (1 - (apoc.coll.min(post_peak_prices) / peak_price)) * 100 AS dump_percentage,
+               "PUMP_AND_DUMP_PRICE_SPIKE" AS pattern_id,
+               "HIGH" AS risk_level
+      thresholds:
+        min_pump_percentage: 100
+        min_dump_percentage: 30
+        max_pump_duration_days: 7
+        min_price_points: 20
+        time_window_days: 30
+
+  - id: "PUMP_AND_DUMP_COORDINATED_BUYING"
+    name: "Coordinated Token Buying"
+    category: "PUMP_AND_DUMP"
+    description: "Coordinated buying activity from multiple addresses in a short time period"
+    risk_level: "MEDIUM"
+    applicable_to: ["CRYPTO"]
+    detection:
+      type: "CYPHER"
+      query: |
+        MATCH (token:Token)
+        // Find buy transactions in a short time window
+        MATCH (buyer:Address)-[trade:TRADES]->(dex:DEX)
+        WHERE trade.token_bought = token.address
+        AND trade.timestamp >= datetime() - duration('P14D')
+        // Group by 1-hour time windows
+        WITH token, apoc.date.format(trade.timestamp, 'ms', 'YYYY-MM-DD-HH') AS hour_window, 
+             count(DISTINCT buyer) AS unique_buyers,
+             sum(trade.amount_bought) AS buy_volume
+        // Find windows with abnormal buying activity
+        WITH token, hour_window, unique_buyers, buy_volume
+        ORDER BY unique_buyers DESC
+        LIMIT 10
+        // Get token details and return results
+        WITH token, collect({window: hour_window, buyers: unique_buyers, volume: buy_volume}) AS suspicious_windows
+        WHERE size(suspicious_windows) > 0 AND suspicious_windows[0].buyers >= 10
+        RETURN token.address AS token_address,
+               token.symbol AS token_symbol,
+               suspicious_windows AS suspicious_activity_windows,
+               suspicious_windows[0].buyers AS max_unique_buyers,
+               suspicious_windows[0].volume AS highest_volume,
+               "PUMP_AND_DUMP_COORDINATED_BUYING" AS pattern_id,
+               "MEDIUM" AS risk_level
+      thresholds:
+        min_unique_buyers: 10
+        min_volume_increase_pct: 200
+        max_time_window_hours: 1
+        observation_window_days: 14
+
+  - id: "PUMP_AND_DUMP_INSIDER_SELLING"
+    name: "Insider Selling During Pump"
+    category: "PUMP_AND_DUMP"
+    description: "Early token holders selling during price pump phase"
+    risk_level: "HIGH"
+    applicable_to: ["CRYPTO"]
+    detection:
+      type: "CYPHER"
+      query: |
+        MATCH (token:Token)
+        // Find early holders (got tokens before most)
+        MATCH (early:Address)<-[early_transfer:TRANSFERS]-()
+        WHERE early_transfer.token_address = token.address
+        AND early_transfer.timestamp < datetime() - duration('P60D')
+        WITH token, early
+        // Find selling activity during price increase
+        MATCH (early)-[sell:TRADES]->(dex:DEX)
+        WHERE sell.token_sold = token.address
+        AND sell.timestamp >= datetime() - duration('P30D')
+        // Get price data to identify pump period
+        WITH token, early, sell
+        MATCH (token)<-[price_data:TRADES]-()
+        WHERE price_data.timestamp >= datetime() - duration('P30D')
+        WITH token, early, sell, price_data
+        ORDER BY price_data.timestamp
+        WITH token, early, sell, collect(price_data) AS price_history
+        // Identify pump period (when price increased rapidly)
+        WITH token, early, sell, price_history,
+             [p IN price_history | p.price] AS prices
+        WHERE size(prices) > 10
+        AND apoc.coll.max(prices) > apoc.coll.min(prices) * 2 // At least 100% increase
+        // Check if selling happened during pump
+        WITH token, early, sell, price_history,
+             apoc.coll.max(prices) AS peak_price,
+             [p IN price_history WHERE p.price > apoc.coll.min(prices) * 1.5 | p.timestamp] AS pump_period
+        WHERE size(pump_period) > 0
+        AND sell.timestamp >= pump_period[0]
+        AND sell.timestamp <= pump_period[-1]
+        // Group by early holder
+        WITH token, early, collect(sell) AS sells
+        RETURN token.address AS token_address,
+               token.symbol AS token_symbol,
+               early.address AS early_holder_address,
+               size(sells) AS sell_count,
+               apoc.coll.sum([s IN sells | s.amount_sold]) AS total_amount_sold,
+               "PUMP_AND_DUMP_INSIDER_SELLING" AS pattern_id,
+               "HIGH" AS risk_level
+      thresholds:
+        min_price_increase_pct: 100
+        min_early_holder_age_days: 60
+        min_sell_amount: 1000
+        time_window_days: 30
+
+  # ============================================================
+  # RUG PULL PATTERNS
+  # ============================================================
+  - id: "RUG_PULL_LIQUIDITY_REMOVAL"
+    name: "Sudden Liquidity Pool Removal"
+    category: "RUG_PULL"
+    description: "Sudden removal of a significant portion of liquidity from a token's liquidity pool"
+    risk_level: "CRITICAL"
+    applicable_to: ["CRYPTO"]
+    detection:
+      type: "CYPHER"
+      query: |
+        MATCH (token:Token)
+        // Find liquidity pool transactions
+        MATCH (lp:Address)-[liquidity:TRANSFERS]->(pool:Address)
+        WHERE liquidity.token_address = token.address
+        AND pool.is_liquidity_pool = true
+        AND liquidity.timestamp >= datetime() - duration('P30D')
+        // Group by day to track liquidity changes
+        WITH token, pool, apoc.date.format(liquidity.timestamp, 'ms', 'YYYY-MM-DD') AS day,
+             sum(CASE WHEN startNode(liquidity) = pool THEN -liquidity.value ELSE liquidity.value END) AS daily_liquidity_change
+        ORDER BY day
+        // Calculate cumulative liquidity
+        WITH token, pool, collect({day: day, change: daily_liquidity_change}) AS daily_changes
+        UNWIND range(0, size(daily_changes)-1) AS i
+        WITH token, pool, daily_changes, i,
+             daily_changes[i].day AS current_day,
+             daily_changes[i].change AS current_change,
+             CASE WHEN i = 0 THEN 0 ELSE apoc.coll.sum([daily_changes[j].change WHERE j < i | daily_changes[j].change]) END AS previous_liquidity
+        WITH token, pool, current_day, current_change, previous_liquidity,
+             previous_liquidity + current_change AS current_liquidity
+        // Detect sudden large liquidity removal
+        WHERE previous_liquidity > 0
+        AND current_change < 0
+        AND abs(current_change) > previous_liquidity * 0.5 // At least 50% of liquidity removed
+        RETURN token.address AS token_address,
+               token.symbol AS token_symbol,
+               pool.address AS liquidity_pool,
+               previous_liquidity AS liquidity_before_removal,
+               current_liquidity AS liquidity_after_removal,
+               abs(current_change) AS amount_removed,
+               (abs(current_change) / previous_liquidity) * 100 AS percentage_removed,
+               current_day AS removal_date,
+               "RUG_PULL_LIQUIDITY_REMOVAL" AS pattern_id,
+               "CRITICAL" AS risk_level
+      thresholds:
+        min_liquidity_removal_pct: 50
+        min_initial_liquidity: 1000
+        max_time_window_hours: 24
+        observation_window_days: 30
+
+  - id: "RUG_PULL_ABANDONED_PROJECT"
+    name: "Abandoned Token Project"
+    category: "RUG_PULL"
+    description: "Token project showing signs of abandonment after significant fundraising"
+    risk_level: "HIGH"
+    applicable_to: ["CRYPTO"]
+    detection:
+      type: "CYPHER"
+      query: |
+        MATCH (token:Token)
+        // Find tokens with significant initial activity
+        MATCH (buyer:Address)-[purchase:TRADES]->(dex:DEX)
+        WHERE purchase.token_bought = token.address
+        AND purchase.timestamp >= datetime() - duration('P90D')
+        AND purchase.timestamp <= datetime() - duration('P14D')
+        WITH token, count(purchase) AS initial_purchase_count,
+             sum(purchase.amount_bought) AS initial_purchase_volume
+        WHERE initial_purchase_count > 50
+        // Check for recent activity
+        OPTIONAL MATCH (recent_buyer:Address)-[recent_purchase:TRADES]->(dex:DEX)
+        WHERE recent_purchase.token_bought = token.address
+        AND recent_purchase.timestamp > datetime() - duration('P14D')
+        WITH token, initial_purchase_count, initial_purchase_volume,
+             count(recent_purchase) AS recent_purchase_count
+        // Check for dev wallet emptying
+        MATCH (dev:Address)<-[dev_transfer:TRANSFERS]-()
+        WHERE dev_transfer.token_address = token.address
+        AND dev.is_dev = true
+        WITH token, initial_purchase_count, initial_purchase_volume, recent_purchase_count,
+             dev, collect(dev_transfer) AS dev_transfers
+        ORDER BY dev_transfer.timestamp
+        WITH token, initial_purchase_count, initial_purchase_volume, recent_purchase_count,
+             dev, dev_transfers,
+             dev_transfers[-1].timestamp AS last_dev_activity
+        WHERE last_dev_activity < datetime() - duration('P14D')
+        AND recent_purchase_count < initial_purchase_count * 0.1 // Activity dropped by 90%
+        RETURN token.address AS token_address,
+               token.symbol AS token_symbol,
+               dev.address AS dev_wallet,
+               initial_purchase_count AS initial_activity,
+               recent_purchase_count AS recent_activity,
+               initial_purchase_volume AS initial_volume,
+               last_dev_activity AS last_developer_activity,
+               "RUG_PULL_ABANDONED_PROJECT" AS pattern_id,
+               "HIGH" AS risk_level
+      thresholds:
+        min_initial_purchases: 50
+        max_recent_activity_pct: 10
+        min_dev_inactivity_days: 14
+        observation_window_days: 90
+
+  - id: "RUG_PULL_TEAM_TOKEN_DUMP"
+    name: "Team Token Dump"
+    category: "RUG_PULL"
+    description: "Project team members selling large amounts of tokens"
+    risk_level: "HIGH"
+    applicable_to: ["CRYPTO"]
+    detection:
+      type: "CYPHER"
+      query: |
+        MATCH (token:Token)
+        // Find team wallets
+        MATCH (team:Address)
+        WHERE team.is_team = true OR team.is_dev = true
+        // Find large sell transactions from team wallets
+        MATCH (team)-[sell:TRADES]->(dex:DEX)
+        WHERE sell.token_sold = token.address
+        AND sell.timestamp >= datetime() - duration('P30D')
+        // Calculate total token supply and team selling percentage
+        WITH token, team, collect(sell) AS sells,
+             sum(sell.amount_sold) AS total_sold
+        MATCH (supply:TokenSupply)-[:OF_TOKEN]->(token)
+        WITH token, team, sells, total_sold, supply.total_supply AS total_supply
+        WHERE total_sold > total_supply * 0.05 // Team sold more than 5% of supply
+        RETURN token.address AS token_address,
+               token.symbol AS token_symbol,
+               team.address AS team_wallet,
+               total_sold AS amount_sold,
+               total_supply AS token_supply,
+               (total_sold / total_supply) * 100 AS percentage_sold,
+               [s IN sells | {amount: s.amount_sold, timestamp: s.timestamp}] AS sell_transactions,
+               "RUG_PULL_TEAM_TOKEN_DUMP" AS pattern_id,
+               "HIGH" AS risk_level
+      thresholds:
+        min_token_percentage_sold: 5
+        min_sell_transactions: 3
+        time_window_days: 30
+
+  # ============================================================
+  # FLASH LOAN ATTACK PATTERNS
+  # ============================================================
+  - id: "FLASH_LOAN_ATTACK"
+    name: "Flash Loan Attack Pattern"
+    category: "FLASH_LOAN_ATTACK"
+    description: "Pattern of transactions consistent with flash loan exploitation"
+    risk_level: "CRITICAL"
+    applicable_to: ["CRYPTO"]
+    detection:
+      type: "CYPHER"
+      query: |
+        MATCH (attacker:Address)-[borrow:TRANSFERS]->(lending_pool:Address)
+        WHERE borrow.timestamp >= datetime() - duration('P30D')
+        AND borrow.value > 100000 // Large loan
+        // Find repayment (must happen in same transaction/block)
+        MATCH (lending_pool)-[repay:TRANSFERS]->(attacker)
+        WHERE repay.timestamp = borrow.timestamp
+        AND repay.block_number = borrow.block_number
+        // Find transactions between borrow and repay
+        MATCH (attacker)-[exploit:TRANSFERS]->(victim:Address)
+        WHERE exploit.timestamp = borrow.timestamp
+        AND exploit.block_number = borrow.block_number
+        AND exploit.transaction_index > borrow.transaction_index
+        AND exploit.transaction_index < repay.transaction_index
+        // Calculate profit
+        WITH attacker, borrow, repay, collect(exploit) AS exploits,
+             sum(exploit.value) AS exploit_value
+        WHERE repay.value >= borrow.value // Loan was repaid
+        AND exploit_value > 0 // Profit was made
+        RETURN attacker.address AS attacker_address,
+               lending_pool.address AS lending_pool,
+               borrow.value AS borrowed_amount,
+               exploit_value AS profit_amount,
+               borrow.timestamp AS attack_timestamp,
+               borrow.transaction_hash AS transaction_hash,
+               "FLASH_LOAN_ATTACK" AS pattern_id,
+               "CRITICAL" AS risk_level
+      thresholds:
+        min_borrow_amount: 100000
+        min_profit_amount: 1000
+        max_transactions_between: 20
+        time_window_days: 30
+
+  - id: "FLASH_LOAN_PRICE_MANIPULATION"
+    name: "Flash Loan Price Manipulation"
+    category: "FLASH_LOAN_ATTACK"
+    description: "Using flash loans to manipulate asset prices for profit"
+    risk_level: "CRITICAL"
+    applicable_to: ["CRYPTO"]
+    detection:
+      type: "CYPHER"
+      query: |
+        MATCH (attacker:Address)-[borrow:TRANSFERS]->(lending_pool:Address)
+        WHERE borrow.timestamp >= datetime() - duration('P30D')
+        AND borrow.value > 50000 // Large loan
+        // Find repayment
+        MATCH (lending_pool)-[repay:TRANSFERS]->(attacker)
+        WHERE repay.timestamp = borrow.timestamp
+        AND repay.block_number = borrow.block_number
+        // Find price-impacting trades between borrow and repay
+        MATCH (attacker)-[trade1:TRADES]->(dex1:DEX)
+        MATCH (attacker)-[trade2:TRADES]->(dex2:DEX)
+        WHERE trade1.timestamp = borrow.timestamp
+        AND trade2.timestamp = borrow.timestamp
+        AND trade1.block_number = borrow.block_number
+        AND trade2.block_number = borrow.block_number
+        AND trade1.transaction_index > borrow.transaction_index
+        AND trade1.transaction_index < repay.transaction_index
+        AND trade2.transaction_index > trade1.transaction_index
+        AND trade2.transaction_index < repay.transaction_index
+        // Check for opposite trades (buy then sell or sell then buy)
+        AND (
+          (trade1.token_bought = trade2.token_sold AND trade1.token_sold = trade2.token_bought)
+          OR
+          (trade1.token_sold = trade2.token_bought AND trade1.token_bought = trade2.token_sold)
+        )
+        // Calculate profit
+        WITH attacker, borrow, trade1, trade2,
+             CASE WHEN trade1.token_bought = trade2.token_sold
+                  THEN trade2.amount_bought - trade1.amount_sold
+                  ELSE trade1.amount_bought - trade2.amount_sold
+             END AS profit
+        WHERE profit > 0 // Made a profit
+        RETURN attacker.address AS attacker_address,
+               borrow.value AS flash_loan_amount,
+               trade1.token_bought AS token1,
+               trade2.token_bought AS token2,
+               profit AS estimated_profit,
+               borrow.timestamp AS attack_timestamp,
+               borrow.transaction_hash AS transaction_hash,
+               "FLASH_LOAN_PRICE_MANIPULATION" AS pattern_id,
+               "CRITICAL" AS risk_level
+      thresholds:
+        min_flash_loan_amount: 50000
+        min_profit_amount: 500
+        max_time_between_trades_seconds: 60
+        time_window_days: 30
+
+  # ============================================================
+  # SANDWICH ATTACK PATTERNS
+  # ============================================================
+  - id: "SANDWICH_ATTACK"
+    name: "DEX Sandwich Attack"
+    category: "SANDWICH_ATTACK"
+    description: "Front-running and back-running user trades on DEXs for profit"
+    risk_level: "HIGH"
+    applicable_to: ["CRYPTO"]
+    detection:
+      type: "CYPHER"
+      query: |
+        MATCH (attacker:Address)-[front_run:TRADES]->(dex:DEX)
+        MATCH (victim:Address)-[victim_trade:TRADES]->(dex)
+        MATCH (attacker)-[back_run:TRADES]->(dex)
+        // Ensure proper sequence
+        WHERE front_run.block_number = victim_trade.block_number
+        AND back_run.block_number = victim_trade.block_number
+        AND front_run.transaction_index < victim_trade.transaction_index
+        AND back_run.transaction_index > victim_trade.transaction_index
+        // Check for same tokens
+        AND front_run.token_bought = victim_trade.token_bought
+        AND front_run.token_sold = victim_trade.token_sold
+        AND back_run.token_bought = victim_trade.token_sold
+        AND back_run.token_sold = victim_trade.token_bought
+        // Calculate profit
+        WITH attacker, victim, front_run, victim_trade, back_run,
+             back_run.amount_bought - front_run.amount_sold AS profit_token1,
+             front_run.amount_bought - back_run.amount_sold AS profit_token2
+        WHERE profit_token1 > 0 OR profit_token2 > 0 // Made a profit
+        RETURN attacker.address AS attacker_address,
+               victim.address AS victim_address,
+               front_run.token_bought AS target_token,
+               front_run.token_sold AS base_token,
+               profit_token1 AS profit_in_base_token,
+               profit_token2 AS profit_in_target_token,
+               front_run.block_number AS block_number,
+               front_run.timestamp AS attack_timestamp,
+               "SANDWICH_ATTACK" AS pattern_id,
+               "HIGH" AS risk_level
+      thresholds:
+        min_profit_amount: 10
+        max_transactions_between: 5
+        time_window_days: 30
+
+  - id: "SANDWICH_ATTACK_REPEAT_OFFENDER"
+    name: "Repeat Sandwich Attack Offender"
+    category: "SANDWICH_ATTACK"
+    description: "Address repeatedly performing sandwich attacks"
+    risk_level: "HIGH"
+    applicable_to: ["CRYPTO"]
+    detection:
+      type: "CYPHER"
+      query: |
+        // Find addresses with multiple sandwich patterns
+        MATCH (attacker:Address)-[front_run:TRADES]->(dex:DEX)
+        MATCH (victim:Address)-[victim_trade:TRADES]->(dex)
+        MATCH (attacker)-[back_run:TRADES]->(dex)
+        // Ensure proper sequence
+        WHERE front_run.block_number = victim_trade.block_number
+        AND back_run.block_number = victim_trade.block_number
+        AND front_run.transaction_index < victim_trade.transaction_index
+        AND back_run.transaction_index > victim_trade.transaction_index
+        // Check for same tokens
+        AND front_run.token_bought = victim_trade.token_bought
+        AND front_run.token_sold = victim_trade.token_sold
+        AND back_run.token_bought = victim_trade.token_sold
+        AND back_run.token_sold = victim_trade.token_bought
+        AND front_run.timestamp >= datetime() - duration('P30D')
+        // Group by attacker
+        WITH attacker, count(DISTINCT victim) AS victim_count,
+             collect(DISTINCT victim.address) AS victims,
+             count(DISTINCT front_run) AS attack_count
+        WHERE attack_count >= 5 // At least 5 sandwich attacks
+        RETURN attacker.address AS attacker_address,
+               attack_count AS sandwich_attack_count,
+               victim_count AS unique_victims_count,
+               victims AS victim_addresses,
+               "SANDWICH_ATTACK_REPEAT_OFFENDER" AS pattern_id,
+               "HIGH" AS risk_level
+      thresholds:
+        min_attack_count: 5
+        min_victim_count: 3
+        time_window_days: 30
+
+  # ============================================================
+  # ADDRESS POISONING PATTERNS
+  # ============================================================
+  - id: "ADDRESS_POISONING"
+    name: "Address Poisoning Attack"
+    category: "ADDRESS_POISONING"
+    description: "Sending dust amounts to create similar address in transaction history"
+    risk_level: "MEDIUM"
+    applicable_to: ["CRYPTO"]
+    detection:
+      type: "CYPHER"
+      query: |
+        // Find addresses with similar patterns to known addresses
+        MATCH (sender:Address)-[dust:TRANSFERS]->(victim:Address)
+        WHERE dust.timestamp >= datetime() - duration('P90D')
+        AND dust.value < 0.001 // Dust amount
+        // Check for address similarity
+        WITH sender, victim, dust,
+             apoc.text.levenshteinSimilarity(sender.address, victim.address) AS address_similarity
+        WHERE address_similarity > 0.7 // Addresses are very similar
+        // Check for follow-up transactions
+        OPTIONAL MATCH (victim)-[victim_tx:TRANSFERS]->(sender)
+        WHERE victim_tx.timestamp > dust.timestamp
+        RETURN sender.address AS poisoning_address,
+               victim.address AS victim_address,
+               address_similarity AS similarity_score,
+               dust.value AS dust_amount,
+               dust.timestamp AS poisoning_timestamp,
+               count(victim_tx) > 0 AS successful_attack,
+               "ADDRESS_POISONING" AS pattern_id,
+               "MEDIUM" AS risk_level
+      thresholds:
+        max_dust_value: 0.001
+        min_address_similarity: 0.7
+        time_window_days: 90
+
+  - id: "ADDRESS_POISONING_CAMPAIGN"
+    name: "Widespread Address Poisoning Campaign"
+    category: "ADDRESS_POISONING"
+    description: "Address sending dust to many victims with similar addresses"
+    risk_level: "HIGH"
+    applicable_to: ["CRYPTO"]
+    detection:
+      type: "CYPHER"
+      query: |
+        // Find addresses sending dust to many victims
+        MATCH (sender:Address)-[dust:TRANSFERS]->(victim:Address)
+        WHERE dust.timestamp >= datetime() - duration('P90D')
+        AND dust.value < 0.001 // Dust amount
+        // Group by sender
+        WITH sender, collect(victim) AS victims, count(dust) AS dust_tx_count
+        WHERE dust_tx_count >= 10 // Sent to at least 10 victims
+        // Check for address similarity with victims
+        UNWIND victims AS victim
+        WITH sender, victim,
+             apoc.text.levenshteinSimilarity(sender.address, victim.address) AS address_similarity
+        WHERE address_similarity > 0.7 // Addresses are very similar
+        // Group again to count similar addresses
+        WITH sender, count(victim) AS similar_address_count
+        WHERE similar_address_count >= 5 // At least 5 similar addresses
+        RETURN sender.address AS poisoning_address,
+               similar_address_count AS similar_victim_count,
+               dust_tx_count AS total_dust_transactions,
+               "ADDRESS_POISONING_CAMPAIGN" AS pattern_id,
+               "HIGH" AS risk_level
+      thresholds:
+        max_dust_value: 0.001
+        min_address_similarity: 0.7
+        min_victim_count: 10
+        min_similar_addresses: 5
+        time_window_days: 90
+
+  # ============================================================
+  # HONEYPOT TOKEN PATTERNS
+  # ============================================================
+  - id: "HONEYPOT_TOKEN"
+    name: "Honeypot Token"
+    category: "HONEYPOT_TOKEN"
+    description: "Token that can be bought but not sold due to malicious contract code"
+    risk_level: "HIGH"
+    applicable_to: ["CRYPTO"]
+    detection:
+      type: "CYPHER"
+      query: |
+        MATCH (token:Token)
+        // Find buy transactions
+        MATCH (buyer:Address)-[buy:TRADES]->(dex:DEX)
+        WHERE buy.token_bought = token.address
+        AND buy.timestamp >= datetime() - duration('P30D')
+        // Count unique buyers and total buy volume
+        WITH token, count(DISTINCT buyer) AS unique_buyers, sum(buy.amount_bought) AS buy_volume
+        WHERE unique_buyers >= 10 // At least 10 different buyers
+        // Find sell transactions
+        OPTIONAL MATCH (seller:Address)-[sell:TRADES]->(dex:DEX)
+        WHERE sell.token_sold = token.address
+        AND sell.timestamp >= datetime() - duration('P30D')
+        // Count unique sellers and total sell volume
+        WITH token, unique_buyers, buy_volume,
+             count(DISTINCT seller) AS unique_sellers,
+             sum(sell.amount_sold) AS sell_volume
+        // Check for honeypot pattern
+        WHERE unique_buyers >= 10
+        AND (unique_sellers = 0 OR sell_volume < buy_volume * 0.1) // No one can sell or very little selling
+        RETURN token.address AS token_address,
+               token.symbol AS token_symbol,
+               unique_buyers AS buyer_count,
+               unique_sellers AS seller_count,
+               buy_volume AS total_buy_volume,
+               sell_volume AS total_sell_volume,
+               CASE WHEN unique_sellers = 0 THEN 100
+                    ELSE (1 - (sell_volume / buy_volume)) * 100
+               END AS trapped_percentage,
+               "HONEYPOT_TOKEN" AS pattern_id,
+               "HIGH" AS risk_level
+      thresholds:
+        min_unique_buyers: 10
+        max_sell_ratio: 0.1
+        min_buy_volume: 1000
+        time_window_days: 30
+
+  - id: "HONEYPOT_TOKEN_FAILED_SELLS"
+    name: "Honeypot Token with Failed Sell Attempts"
+    category: "HONEYPOT_TOKEN"
+    description: "Token with many failed sell transaction attempts"
+    risk_level: "HIGH"
+    applicable_to: ["CRYPTO"]
+    detection:
+      type: "CYPHER"
+      query: |
+        MATCH (token:Token)
+        // Find buy transactions
+        MATCH (buyer:Address)-[buy:TRADES]->(dex:DEX)
+        WHERE buy.token_bought = token.address
+        AND buy.timestamp >= datetime() - duration('P30D')
+        // Count unique buyers
+        WITH token, count(DISTINCT buyer) AS unique_buyers
+        WHERE unique_buyers >= 5 // At least 5 different buyers
+        // Find failed sell attempts
+        MATCH (seller:Address)-[failed:FAILED_TRANSACTION]->()
+        WHERE failed.token_address = token.address
+        AND failed.transaction_type = 'SELL'
+        AND failed.timestamp >= datetime() - duration('P30D')
+        // Count failed sells by unique addresses
+        WITH token, unique_buyers, count(DISTINCT seller) AS failed_sellers,
+             collect(failed) AS failed_attempts
+        WHERE failed_sellers >= 3 // At least 3 different addresses tried to sell and failed
+        RETURN token.address AS token_address,
+               token.symbol AS token_symbol,
+               unique_buyers AS buyer_count,
+               failed_sellers AS failed_seller_count,
+               size(failed_attempts) AS failed_sell_attempts,
+               "HONEYPOT_TOKEN_FAILED_SELLS" AS pattern_id,
+               "HIGH" AS risk_level
+      thresholds:
+        min_unique_buyers: 5
+        min_failed_sellers: 3
+        min_failed_attempts: 5
+        time_window_days: 30
+
+  # ============================================================
+  # TIME-BASED ANOMALY PATTERNS
+  # ============================================================
+  - id: "VELOCITY_ATTACK"
+    name: "Transaction Velocity Attack"
+    category: "TIME_BASED_ANOMALY"
+    description: "Abnormally high transaction frequency in a short time period"
+    risk_level: "MEDIUM"
+    applicable_to: ["CRYPTO"]
+    detection:
+      type: "CYPHER"
+      query: |
+        MATCH (address:Address)
+        // Find all transactions in the last 7 days
+        MATCH (address)-[tx:TRANSFERS]->()
+        WHERE tx.timestamp >= datetime() - duration('P7D')
+        // Group by hour
+        WITH address, apoc.date.format(tx.timestamp, 'ms', 'YYYY-MM-DD-HH') AS hour,
+             count(tx) AS hourly_tx_count
+        // Find the maximum hourly transaction count
+        WITH address, collect({hour: hour, count: hourly_tx_count}) AS hourly_counts,
+             max(hourly_tx_count) AS max_hourly_count
+        // Get the address's average hourly transaction count
+        WITH address, hourly_counts, max_hourly_count,
+             apoc.coll.avg([h IN hourly_counts | h.count]) AS avg_hourly_count
+        // Check for significant spike
+        WHERE max_hourly_count > 20 // At least 20 transactions in an hour
+        AND max_hourly_count > avg_hourly_count * 5 // At least 5x the average
+        // Get the hour with the maximum count
+        WITH address, hourly_counts, max_hourly_count, avg_hourly_count,
+             [h IN hourly_counts WHERE h.count = max_hourly_count | h.hour][0] AS peak_hour
+        RETURN address.address AS address,
+               max_hourly_count AS peak_transaction_count,
+               avg_hourly_count AS average_transaction_count,
+               peak_hour AS peak_activity_hour,
+               max_hourly_count / avg_hourly_count AS velocity_ratio,
+               "VELOCITY_ATTACK" AS pattern_id,
+               "MEDIUM" AS risk_level
+      thresholds:
+        min_transactions_per_hour: 20
+        min_velocity_ratio: 5
+        time_window_days: 7
+
+  - id: "RAPID_TOKEN_MOVEMENT"
+    name: "Rapid Token Movement"
+    category: "TIME_BASED_ANOMALY"
+    description: "Tokens moving through multiple addresses in rapid succession"
+    risk_level: "HIGH"
+    applicable_to: ["CRYPTO"]
+    detection:
+      type: "CYPHER"
+      query: |
+        MATCH path = (start:Address)-[:TRANSFERS*3..10]->(end:Address)
+        WHERE all(r IN relationships(path) WHERE r.timestamp >= datetime() - duration('P7D'))
+        AND start <> end // Not a circular path
+        // Check that transfers happen in rapid succession
+        WITH path, 
+             [r IN relationships(path) | r.timestamp] AS timestamps
+        ORDER BY timestamps
+        WITH path, timestamps,
+             timestamps[0] AS first_timestamp,
+             timestamps[-1] AS last_timestamp
+        WHERE duration.between(first_timestamp, last_timestamp).minutes < 60 // All transfers within 60 minutes
+        // Check that the same token is being moved
+        WITH path, first_timestamp, last_timestamp,
+             [r IN relationships(path) | r.token_address] AS token_addresses
+        WHERE size(apoc.coll.toSet(token_addresses)) = 1 // Same token throughout
+        // Extract addresses in the path
+        WITH path, first_timestamp, last_timestamp,
+             [n IN nodes(path) | n.address] AS addresses,
+             token_addresses[0] AS token_address
+        // Get token details
+        MATCH (token:Token {address: token_address})
+        RETURN token.address AS token_address,
+               token.symbol AS token_symbol,
+               addresses AS path_addresses,
+               size(addresses) AS path_length,
+               first_timestamp AS start_time,
+               last_timestamp AS end_time,
+               duration.between(first_timestamp, last_timestamp).minutes AS minutes_elapsed,
+               "RAPID_TOKEN_MOVEMENT" AS pattern_id,
+               "HIGH" AS risk_level
+      thresholds:
+        min_path_length: 3
+        max_path_length: 10
+        max_minutes_elapsed: 60
+        time_window_days: 7
+
+  - id: "ABNORMAL_TRANSACTION_TIMING"
+    name: "Abnormal Transaction Timing"
+    category: "TIME_BASED_ANOMALY"
+    description: "Transactions occurring at unusual times compared to historical patterns"
+    risk_level: "LOW"
+    applicable_to: ["CRYPTO", "TRADFI"]
+    detection:
+      type: "CYPHER"
+      query: |
+        MATCH (address:Address)
+        // Find all transactions in the last 30 days
+        MATCH (address)-[tx:TRANSFERS]->()
+        WHERE tx.timestamp >= datetime() - duration('P30D')
+        // Extract hour of day for each transaction
+        WITH address, tx, apoc.date.format(tx.timestamp, 'ms', 'HH') AS hour_of_day
+        // Group by hour of day to find normal pattern
+        WITH address, hour_of_day, count(tx) AS tx_count
+        ORDER BY tx_count DESC
+        // Get top 3 most common hours (normal activity hours)
+        WITH address, collect({hour: hour_of_day, count: tx_count}) AS hourly_pattern
+        WITH address, hourly_pattern,
+             [h IN hourly_pattern ORDER BY h.count DESC LIMIT 3 | h.hour] AS common_hours
+        // Find recent transactions outside normal hours
+        MATCH (address)-[recent_tx:TRANSFERS]->()
+        WHERE recent_tx.timestamp >= datetime() - duration('P1D')
+        WITH address, common_hours, recent_tx,
+             apoc.date.format(recent_tx.timestamp, 'ms', 'HH') AS recent_hour
+        WHERE NOT recent_hour IN common_hours // Transaction outside normal hours
+        // Group by address to count abnormal transactions
+        WITH address, count(recent_tx) AS abnormal_tx_count,
+             collect(recent_tx) AS abnormal_txs
+        WHERE abnormal_tx_count >= 5 // At least 5 abnormal transactions
+        RETURN address.address AS address,
+               abnormal_tx_count AS abnormal_transaction_count,
+               common_hours AS normal_activity_hours,
+               [tx IN abnormal_txs | {timestamp: tx.timestamp, hour: apoc.date.format(tx.timestamp, 'ms', 'HH')}] AS abnormal_transactions,
+               "ABNORMAL_TRANSACTION_TIMING" AS pattern_id,
+               "LOW" AS risk_level
+      thresholds:
+        min_abnormal_transactions: 5
+        historical_window_days: 30
+        recent_window_days: 1

@@ -1,620 +1,521 @@
 """
-CrewFactory for creating and managing CrewAI crews.
+CrewFactory for creating and managing AI crews with different agent configurations.
 
-This module provides the CrewFactory class, which is responsible for
-building and managing CrewAI crews, including agent creation, tool
-assignment, task definition, and crew orchestration.
+This module provides a factory class for creating and managing CrewAI crews
+with different agent configurations, tools, and tasks. It handles caching,
+configuration loading, and crew execution.
 """
 
-import asyncio
+import os
 import json
 import logging
-import os
+import yaml
+from typing import Dict, List, Optional, Any, Union, Tuple
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast
+import time
+from datetime import datetime
 
 from crewai import Agent, Task, Crew, Process
-from crewai.agent import TaskOutput
+from crewai.tools import Tool
 
-from backend.agents.config import (
-    load_agent_config, 
-    load_crew_config,
-    AgentConfig,
-    CrewConfig,
-    DEFAULT_CREW_CONFIGS
-)
-from backend.agents.llm import GeminiLLMProvider
-from backend.agents.tools import (
-    GraphQueryTool,
-    SandboxExecTool,
-    CodeGenTool,
-    PatternLibraryTool,
-    Neo4jSchemaTool,
-    TemplateEngineTool,
-    PolicyDocsTool,
-    FraudMLTool
-)
+from backend.agents.config import AgentConfig, TaskConfig
+from backend.agents.tools.graph_query_tool import GraphQueryTool
+from backend.agents.tools.neo4j_schema_tool import Neo4jSchemaTool
+from backend.agents.tools.pattern_library_tool import PatternLibraryTool
+from backend.agents.tools.code_gen_tool import CodeGenerationTool
+from backend.agents.tools.sandbox_exec_tool import SandboxExecutionTool
+from backend.agents.tools.template_engine_tool import TemplateEngineTool
+from backend.agents.tools.policy_docs_tool import PolicyDocsTool
+from backend.agents.tools.random_tx_generator_tool import RandomTransactionGeneratorTool
+from backend.agents.tools.fraud_ml_tool import FraudMLTool
+from backend.agents.tools.crypto_anomaly_tool import CryptoAnomalyTool
+from backend.agents.tools.crypto_csv_loader_tool import CryptoCSVLoaderTool
+
+from backend.core.metrics import increment_counter, observe_value
 from backend.integrations.neo4j_client import Neo4jClient
-from backend.integrations.gemini_client import GeminiClient
 from backend.integrations.e2b_client import E2BClient
-from backend.core.metrics import (
-    crew_task_duration_seconds,
-    llm_tokens_used_total,
-    llm_cost_usd_total
-)
-
-logger = logging.getLogger(__name__)
-
-
-def create_crypto_tools() -> Dict[str, Any]:
-    """
-    Create cryptocurrency-specific tools.
-    
-    This function is separated to handle optional dependencies gracefully.
-    If crypto-related packages are not installed, it returns empty tools.
-    
-    Returns:
-        Dictionary of crypto tools
-    """
-    crypto_tools = {}
-    
-    try:
-        from backend.agents.tools.crypto.dune_analytics_tool import DuneAnalyticsTool
-        crypto_tools["dune_analytics_tool"] = DuneAnalyticsTool()
-    except (ImportError, ModuleNotFoundError):
-        logger.warning("DuneAnalyticsTool not available - skipping initialization")
-    
-    try:
-        from backend.agents.tools.crypto.defillama_tool import DefiLlamaTool
-        crypto_tools["defillama_tool"] = DefiLlamaTool()
-    except (ImportError, ModuleNotFoundError):
-        logger.warning("DefiLlamaTool not available - skipping initialization")
-    
-    try:
-        from backend.agents.tools.crypto.etherscan_tool import EtherscanTool
-        crypto_tools["etherscan_tool"] = EtherscanTool()
-    except (ImportError, ModuleNotFoundError):
-        logger.warning("EtherscanTool not available - skipping initialization")
-    
-    return crypto_tools
+from backend.integrations.gemini_client import GeminiClient
 
 
 class CrewFactory:
     """
-    Factory for creating and managing CrewAI crews.
+    Factory for creating and managing AI crews with different agent configurations.
     
-    This class is responsible for building and managing CrewAI crews,
-    including agent creation, tool assignment, task definition, and
-    crew orchestration. It also handles caching of agents and crews
-    to avoid recreating them unnecessarily.
+    This class handles the creation and management of CrewAI crews, including
+    loading agent configurations, initializing tools, and executing crews.
+    It also manages caching of agents and crews for better performance.
     """
     
-    def __init__(self):
-        """Initialize the CrewFactory with necessary clients and tools."""
-        # Initialize clients
-        self.neo4j_client = Neo4jClient()
-        self.gemini_client = GeminiClient()
-        self.e2b_client = E2BClient()
-        self.llm_provider = GeminiLLMProvider()
+    # Default agent configuration directories
+    DEFAULT_CONFIG_DIR = Path(__file__).parent / "configs"
+    DEFAULT_AGENT_CONFIG_DIR = DEFAULT_CONFIG_DIR / "defaults"
+    DEFAULT_CREW_CONFIG_DIR = DEFAULT_CONFIG_DIR / "crews"
+    DEFAULT_PATTERN_DIR = Path(__file__).parent / "patterns"
+    
+    # Default agent types
+    AGENT_TYPE_NLQ_TRANSLATOR = "nlq_translator"
+    AGENT_TYPE_GRAPH_ANALYST = "graph_analyst"
+    AGENT_TYPE_FRAUD_PATTERN_HUNTER = "fraud_pattern_hunter"
+    AGENT_TYPE_COMPLIANCE_CHECKER = "compliance_checker"
+    AGENT_TYPE_REPORT_WRITER = "report_writer"
+    
+    def __init__(
+        self,
+        config_dir: Optional[str] = None,
+        agent_config_dir: Optional[str] = None,
+        crew_config_dir: Optional[str] = None,
+        pattern_dir: Optional[str] = None,
+        neo4j_client: Optional[Neo4jClient] = None,
+        e2b_client: Optional[E2BClient] = None,
+        gemini_client: Optional[GeminiClient] = None,
+        cache_agents: bool = True,
+        cache_crews: bool = True,
+        verbose: bool = False
+    ):
+        """
+        Initialize the CrewFactory.
         
-        # Initialize tools
-        self.tools = self._initialize_tools()
+        Args:
+            config_dir: Directory containing all configuration files
+            agent_config_dir: Directory containing agent configuration files
+            crew_config_dir: Directory containing crew configuration files
+            pattern_dir: Directory containing pattern library files
+            neo4j_client: Neo4j client for database access
+            e2b_client: E2B client for sandbox execution
+            gemini_client: Gemini client for LLM access
+            cache_agents: Whether to cache agent instances
+            cache_crews: Whether to cache crew instances
+            verbose: Whether to enable verbose logging
+        """
+        # Set configuration directories
+        self.config_dir = Path(config_dir) if config_dir else self.DEFAULT_CONFIG_DIR
+        self.agent_config_dir = Path(agent_config_dir) if agent_config_dir else (
+            self.config_dir / "defaults" if config_dir else self.DEFAULT_AGENT_CONFIG_DIR
+        )
+        self.crew_config_dir = Path(crew_config_dir) if crew_config_dir else (
+            self.config_dir / "crews" if config_dir else self.DEFAULT_CREW_CONFIG_DIR
+        )
+        self.pattern_dir = Path(pattern_dir) if pattern_dir else self.DEFAULT_PATTERN_DIR
+        
+        # Set clients
+        self.neo4j_client = neo4j_client or Neo4jClient()
+        self.e2b_client = e2b_client or E2BClient()
+        self.gemini_client = gemini_client or GeminiClient()
+        
+        # Set caching and logging options
+        self.cache_agents = cache_agents
+        self.cache_crews = cache_crews
+        self.verbose = verbose
+        self.logger = logging.getLogger(__name__)
         
         # Initialize caches
-        self.agents_cache = {}
-        self.crews_cache = {}
-    
-    def _initialize_tools(self) -> Dict[str, Any]:
-        """
-        Initialize all available tools.
+        self._agent_cache = {}
+        self._crew_cache = {}
+        self._config_cache = {}
         
+        # Initialize tools
+        self.graph_query_tool = Tool(
+            name="graph_query",
+            description="Execute Cypher queries against the Neo4j graph database",
+            func=lambda query: GraphQueryTool(self.neo4j_client).run(query)
+        )
+        
+        self.neo4j_schema_tool = Tool(
+            name="neo4j_schema",
+            description="Get information about the Neo4j database schema",
+            func=lambda query: Neo4jSchemaTool(self.neo4j_client).run(**json.loads(query))
+        )
+        
+        self.pattern_library_tool = Tool(
+            name="pattern_library",
+            description="Access and use fraud detection patterns from the pattern library",
+            func=lambda query: PatternLibraryTool(self.neo4j_client, self.pattern_dir).run(**json.loads(query))
+        )
+        
+        self.code_generation_tool = Tool(
+            name="code_generation",
+            description="Generate Python code for data analysis and visualization",
+            func=lambda query: CodeGenerationTool(self.gemini_client).run(**json.loads(query))
+        )
+        
+        self.sandbox_execution_tool = Tool(
+            name="sandbox_execution",
+            description="Execute Python code in a secure sandbox environment",
+            func=lambda query: SandboxExecutionTool(self.e2b_client).run(**json.loads(query))
+        )
+        
+        self.template_engine_tool = Tool(
+            name="template_engine",
+            description="Render templates using Jinja2 for report generation",
+            func=lambda query: TemplateEngineTool().run(**json.loads(query))
+        )
+        
+        self.policy_docs_tool = Tool(
+            name="policy_docs",
+            description="Access and search compliance policy documents",
+            func=lambda query: PolicyDocsTool().run(**json.loads(query))
+        )
+        
+        self.random_tx_generator_tool = Tool(
+            name="random_tx_generator",
+            description="Generate random transaction data for testing",
+            func=lambda query: RandomTransactionGeneratorTool().run(**json.loads(query))
+        )
+        
+        self.fraud_ml_tool = Tool(
+            name="fraud_ml",
+            description="Use machine learning models for fraud detection",
+            func=lambda query: FraudMLTool(self.neo4j_client).run(**json.loads(query))
+        )
+        
+        self.crypto_anomaly_tool = Tool(
+            name="crypto_anomaly_detection",
+            description="Detect various anomalies in cryptocurrency transactions including wash trading, pump-and-dump, and time-series anomalies",
+            func=lambda query: CryptoAnomalyTool(self.neo4j_client).run(**json.loads(query))
+        )
+
+        self.crypto_csv_loader = Tool(
+            name="crypto_csv_loader",
+            description="Load cryptocurrency transaction data from CSV files into Neo4j graph database",
+            func=lambda query: CryptoCSVLoaderTool(self.neo4j_client).run(**json.loads(query))
+        )
+    
+    def get_agent_config(self, agent_type: str) -> AgentConfig:
+        """
+        Get the configuration for a specific agent type.
+        
+        Args:
+            agent_type: Type of agent to get configuration for
+            
         Returns:
-            Dictionary of tools by name
-        """
-        tools = {}
-        
-        # Core tools
-        tools["graph_query_tool"] = GraphQueryTool(neo4j_client=self.neo4j_client)
-        tools["sandbox_exec_tool"] = SandboxExecTool(e2b_client=self.e2b_client)
-        tools["code_gen_tool"] = CodeGenTool(gemini_client=self.gemini_client)
-        tools["pattern_library_tool"] = PatternLibraryTool(neo4j_client=self.neo4j_client)
-        tools["neo4j_schema_tool"] = Neo4jSchemaTool(neo4j_client=self.neo4j_client)
-        tools["template_engine_tool"] = TemplateEngineTool()
-        tools["policy_docs_tool"] = PolicyDocsTool(gemini_client=self.gemini_client)
-        tools["fraud_ml_tool"] = FraudMLTool(neo4j_client=self.neo4j_client)
-        
-        # Add crypto tools if available
-        crypto_tools = create_crypto_tools()
-        tools.update(crypto_tools)
-        
-        return tools
-    
-    async def connect(self):
-        """
-        Connect to external services.
-        
-        This method establishes connections to Neo4j and other services
-        that require explicit connection.
-        
+            Agent configuration
+            
         Raises:
-            Exception: If connection to any service fails
+            ValueError: If agent type is not supported or configuration file is not found
         """
-        try:
-            # Connect to Neo4j
-            await self.neo4j_client.connect()
-            
-            # Other connections can be added here
-            
-            logger.info("Connected to external services")
-        except Exception as e:
-            logger.error(f"Error connecting to external services: {e}")
-            raise
-    
-    async def close(self):
-        """
-        Close connections to external services.
+        # Check cache first
+        if agent_type in self._config_cache:
+            return self._config_cache[agent_type]
         
-        This method should be called when the factory is no longer needed
-        to ensure proper cleanup of resources.
-        """
+        # Look for configuration file
+        config_path = self.agent_config_dir / f"{agent_type}.yaml"
+        if not config_path.exists():
+            config_path = self.agent_config_dir / f"{agent_type}.yml"
+        
+        if not config_path.exists():
+            raise ValueError(f"Configuration file for agent type '{agent_type}' not found")
+        
+        # Load configuration
         try:
-            # Close Neo4j connection
-            if hasattr(self.neo4j_client, "driver") and self.neo4j_client.driver:
-                await self.neo4j_client.close()
+            with open(config_path, "r") as f:
+                config_data = yaml.safe_load(f)
             
-            # Close E2B sandboxes
-            await self.e2b_client.close_all_sandboxes()
+            config = AgentConfig(**config_data)
             
-            logger.info("Closed connections to external services")
+            # Cache configuration
+            self._config_cache[agent_type] = config
+            
+            return config
         except Exception as e:
-            logger.error(f"Error closing connections: {e}")
+            self.logger.error(f"Error loading agent configuration: {str(e)}")
+            raise ValueError(f"Error loading configuration for agent type '{agent_type}': {str(e)}")
     
-    def get_tool(self, tool_name: str) -> Optional[Any]:
+    def create_agent(self, agent_type: str, override_config: Optional[Dict[str, Any]] = None) -> Agent:
         """
-        Get a tool by name.
+        Create an agent of the specified type.
         
         Args:
-            tool_name: Name of the tool to get
-            
-        Returns:
-            Tool instance or None if not found
-        """
-        return self.tools.get(tool_name)
-    
-    def create_agent(self, agent_id: str) -> Agent:
-        """
-        Create a CrewAI agent from configuration.
-        
-        This method loads the agent configuration from YAML files and
-        creates a CrewAI agent with the specified tools.
-        
-        Args:
-            agent_id: ID of the agent to create
+            agent_type: Type of agent to create
+            override_config: Optional configuration overrides
             
         Returns:
             CrewAI Agent instance
+            
+        Raises:
+            ValueError: If agent type is not supported
         """
-        # Check if agent is already cached
-        if agent_id in self.agents_cache:
-            return self.agents_cache[agent_id]
+        # Check cache first if enabled
+        cache_key = f"{agent_type}_{json.dumps(override_config or {})}"
+        if self.cache_agents and cache_key in self._agent_cache:
+            return self._agent_cache[cache_key]
         
-        # Load agent configuration
-        config = load_agent_config(agent_id)
+        # Get agent configuration
+        config = self.get_agent_config(agent_type)
         
-        # Get tools for agent
-        agent_tools = []
-        for tool_name in config.tools:
-            tool = self.get_tool(tool_name)
-            if tool:
-                agent_tools.append(tool)
-            else:
-                logger.warning(f"Tool '{tool_name}' not found for agent '{agent_id}'")
+        # Apply overrides if provided
+        if override_config:
+            # Create a copy of the configuration
+            config_dict = config.dict()
+            # Apply overrides
+            config_dict.update(override_config)
+            # Create new configuration
+            config = AgentConfig(**config_dict)
+        
+        # Get tools for this agent
+        tools = self._get_tools_for_agent(agent_type)
         
         # Create agent
         agent = Agent(
-            id=config.id,
             role=config.role,
             goal=config.goal,
             backstory=config.backstory,
-            verbose=config.verbose,
-            allow_delegation=config.allow_delegation,
-            tools=agent_tools,
-            llm=self.llm_provider,
-            max_iter=config.max_iter,
-            max_rpm=config.max_rpm if hasattr(config, "max_rpm") else None,
-            memory=config.memory if hasattr(config, "memory") else False
+            verbose=self.verbose,
+            llm=self.gemini_client.get_llm(model=config.llm_model),
+            tools=tools,
+            allow_delegation=config.allow_delegation
         )
         
-        # Cache agent
-        self.agents_cache[agent_id] = agent
+        # Cache agent if enabled
+        if self.cache_agents:
+            self._agent_cache[cache_key] = agent
         
-        logger.info(f"Created agent '{agent_id}' with {len(agent_tools)} tools")
         return agent
     
-    def create_tasks(self, crew_name: str, agents: Dict[str, Agent]) -> List[Task]:
+    def _get_tools_for_agent(self, agent_type: str) -> List[Tool]:
         """
-        Create tasks for a crew.
+        Get the tools for a specific agent type.
         
-        This method creates CrewAI tasks for the specified crew based on
-        predefined task templates.
+        Args:
+            agent_type: Type of agent to get tools for
+            
+        Returns:
+            List of tools for the agent
+        """
+        # Common tools for all agents
+        common_tools = []
+        
+        # Agent-specific tools
+        if agent_type == self.AGENT_TYPE_NLQ_TRANSLATOR:
+            return common_tools + [
+                self.neo4j_schema_tool
+            ]
+        
+        elif agent_type == self.AGENT_TYPE_GRAPH_ANALYST:
+            return common_tools + [
+                self.graph_query_tool,
+                self.neo4j_schema_tool,
+                self.code_generation_tool,
+                self.sandbox_execution_tool
+            ]
+        
+        elif agent_type == self.AGENT_TYPE_FRAUD_PATTERN_HUNTER:
+            return common_tools + [
+                self.graph_query_tool,
+                self.neo4j_schema_tool,
+                self.pattern_library_tool,
+                self.code_generation_tool,
+                self.sandbox_execution_tool,
+                self.fraud_ml_tool,
+                self.crypto_anomaly_tool,
+                self.crypto_csv_loader
+            ]
+        
+        elif agent_type == self.AGENT_TYPE_COMPLIANCE_CHECKER:
+            return common_tools + [
+                self.graph_query_tool,
+                self.policy_docs_tool
+            ]
+        
+        elif agent_type == self.AGENT_TYPE_REPORT_WRITER:
+            return common_tools + [
+                self.graph_query_tool,
+                self.template_engine_tool,
+                self.code_generation_tool,
+                self.sandbox_execution_tool
+            ]
+        
+        # Default: return common tools only
+        return common_tools
+    
+    def create_crew(
+        self,
+        crew_name: str,
+        agents: Optional[List[Agent]] = None,
+        tasks: Optional[List[Task]] = None,
+        process: Optional[Process] = None,
+        verbose: Optional[bool] = None
+    ) -> Crew:
+        """
+        Create a crew with the specified agents and tasks.
         
         Args:
             crew_name: Name of the crew
-            agents: Dictionary of agents by ID
-            
-        Returns:
-            List of CrewAI Task instances
-        """
-        tasks = []
-        
-        # Create tasks based on crew type
-        if crew_name == "fraud_investigation":
-            # NLQ translator task
-            if "nlq_translator" in agents:
-                tasks.append(Task(
-                    description="Translate user query into Cypher",
-                    agent=agents["nlq_translator"],
-                    expected_output="Executable Cypher query and explanation"
-                ))
-            
-            # Graph analyst task
-            if "graph_analyst" in agents:
-                tasks.append(Task(
-                    description="Execute graph query and analyze results",
-                    agent=agents["graph_analyst"],
-                    expected_output="Structured graph data with initial analysis",
-                    context=["Translate user query into Cypher"]
-                ))
-            
-            # Fraud pattern hunter task
-            if "fraud_pattern_hunter" in agents:
-                tasks.append(Task(
-                    description="Detect fraud patterns and anomalies",
-                    agent=agents["fraud_pattern_hunter"],
-                    expected_output="Identified patterns, anomalies, and risk assessment",
-                    context=["Execute graph query and analyze results"]
-                ))
-            
-            # Sandbox coder task (optional)
-            if "sandbox_coder" in agents:
-                tasks.append(Task(
-                    description="Generate and execute code for advanced analysis",
-                    agent=agents["sandbox_coder"],
-                    expected_output="Code execution results and insights",
-                    context=["Execute graph query and analyze results", "Detect fraud patterns and anomalies"]
-                ))
-            
-            # Compliance checker task
-            if "compliance_checker" in agents:
-                tasks.append(Task(
-                    description="Verify compliance with regulations",
-                    agent=agents["compliance_checker"],
-                    expected_output="Compliance assessment and SAR recommendations",
-                    context=["Detect fraud patterns and anomalies"]
-                ))
-            
-            # Report writer task
-            if "report_writer" in agents:
-                tasks.append(Task(
-                    description="Generate comprehensive investigation report",
-                    agent=agents["report_writer"],
-                    expected_output="Markdown report with executive summary, findings, and visualizations",
-                    context=[
-                        "Execute graph query and analyze results",
-                        "Detect fraud patterns and anomalies",
-                        "Verify compliance with regulations"
-                    ]
-                ))
-        
-        elif crew_name == "alert_enrichment":
-            # NLQ translator task
-            if "nlq_translator" in agents:
-                tasks.append(Task(
-                    description="Translate alert data into Cypher",
-                    agent=agents["nlq_translator"],
-                    expected_output="Executable Cypher query for alert context"
-                ))
-            
-            # Graph analyst task
-            if "graph_analyst" in agents:
-                tasks.append(Task(
-                    description="Enrich alert with graph context",
-                    agent=agents["graph_analyst"],
-                    expected_output="Alert context with related entities and transactions",
-                    context=["Translate alert data into Cypher"]
-                ))
-            
-            # Fraud pattern hunter task
-            if "fraud_pattern_hunter" in agents:
-                tasks.append(Task(
-                    description="Apply pattern detection to alert",
-                    agent=agents["fraud_pattern_hunter"],
-                    expected_output="Pattern matches and anomaly scores",
-                    context=["Enrich alert with graph context"]
-                ))
-            
-            # Compliance checker task
-            if "compliance_checker" in agents:
-                tasks.append(Task(
-                    description="Assess regulatory implications",
-                    agent=agents["compliance_checker"],
-                    expected_output="Regulatory assessment and recommendations",
-                    context=["Apply pattern detection to alert"]
-                ))
-            
-            # Report writer task
-            if "report_writer" in agents:
-                tasks.append(Task(
-                    description="Generate alert enrichment report",
-                    agent=agents["report_writer"],
-                    expected_output="Structured alert report with findings and recommendations",
-                    context=[
-                        "Enrich alert with graph context",
-                        "Apply pattern detection to alert",
-                        "Assess regulatory implications"
-                    ]
-                ))
-        
-        elif crew_name == "red_blue_simulation":
-            # Red team adversary task
-            if "red_team_adversary" in agents:
-                tasks.append(Task(
-                    description="Generate synthetic fraud scenario",
-                    agent=agents["red_team_adversary"],
-                    expected_output="Synthetic transaction data and ground truth"
-                ))
-                
-                # Additional red team task
-                tasks.append(Task(
-                    description="Execute synthetic transactions",
-                    agent=agents["red_team_adversary"],
-                    expected_output="Executed transaction graph with obfuscation",
-                    context=["Generate synthetic fraud scenario"]
-                ))
-            
-            # Graph analyst task
-            if "graph_analyst" in agents:
-                tasks.append(Task(
-                    description="Analyze transaction graph",
-                    agent=agents["graph_analyst"],
-                    expected_output="Graph analysis and initial findings",
-                    context=["Execute synthetic transactions"]
-                ))
-            
-            # Fraud pattern hunter task
-            if "fraud_pattern_hunter" in agents:
-                tasks.append(Task(
-                    description="Detect patterns in synthetic data",
-                    agent=agents["fraud_pattern_hunter"],
-                    expected_output="Detected patterns and anomalies",
-                    context=["Analyze transaction graph"]
-                ))
-            
-            # Report writer task
-            if "report_writer" in agents:
-                tasks.append(Task(
-                    description="Generate simulation report",
-                    agent=agents["report_writer"],
-                    expected_output="Simulation report with detection effectiveness",
-                    context=[
-                        "Generate synthetic fraud scenario",
-                        "Analyze transaction graph",
-                        "Detect patterns in synthetic data"
-                    ]
-                ))
-        
-        elif crew_name == "crypto_investigation":
-            # Crypto data collector task
-            if "crypto_data_collector" in agents:
-                tasks.append(Task(
-                    description="Collect on-chain and off-chain data",
-                    agent=agents["crypto_data_collector"],
-                    expected_output="Structured crypto data from multiple sources"
-                ))
-            
-            # Blockchain detective task
-            if "blockchain_detective" in agents:
-                tasks.append(Task(
-                    description="Trace on-chain transactions",
-                    agent=agents["blockchain_detective"],
-                    expected_output="Transaction flow and entity identification",
-                    context=["Collect on-chain and off-chain data"]
-                ))
-            
-            # DeFi analyst task
-            if "defi_analyst" in agents:
-                tasks.append(Task(
-                    description="Analyze DeFi protocol interactions",
-                    agent=agents["defi_analyst"],
-                    expected_output="DeFi protocol analysis and risk assessment",
-                    context=["Collect on-chain and off-chain data", "Trace on-chain transactions"]
-                ))
-            
-            # Whale tracker task
-            if "whale_tracker" in agents:
-                tasks.append(Task(
-                    description="Identify and analyze whale activity",
-                    agent=agents["whale_tracker"],
-                    expected_output="Whale activity patterns and impact analysis",
-                    context=["Trace on-chain transactions"]
-                ))
-            
-            # Protocol investigator task
-            if "protocol_investigator" in agents:
-                tasks.append(Task(
-                    description="Investigate protocol-specific risks",
-                    agent=agents["protocol_investigator"],
-                    expected_output="Protocol risk assessment and security analysis",
-                    context=["Analyze DeFi protocol interactions"]
-                ))
-            
-            # Report writer task
-            if "report_writer" in agents:
-                tasks.append(Task(
-                    description="Generate crypto investigation report",
-                    agent=agents["report_writer"],
-                    expected_output="Comprehensive crypto investigation report",
-                    context=[
-                        "Trace on-chain transactions",
-                        "Analyze DeFi protocol interactions",
-                        "Identify and analyze whale activity",
-                        "Investigate protocol-specific risks"
-                    ]
-                ))
-        
-        # If no tasks were created, log a warning
-        if not tasks:
-            logger.warning(f"No tasks created for crew '{crew_name}'")
-        
-        return tasks
-    
-    async def create_crew(self, crew_name: str) -> Crew:
-        """
-        Create a CrewAI crew from configuration.
-        
-        This method loads the crew configuration from YAML files and
-        creates a CrewAI crew with the specified agents and tasks.
-        
-        Args:
-            crew_name: Name of the crew to create
+            agents: List of agents for the crew
+            tasks: List of tasks for the crew
+            process: Process for the crew
+            verbose: Whether to enable verbose logging
             
         Returns:
             CrewAI Crew instance
         """
-        # Check if crew is already cached
-        if crew_name in self.crews_cache:
-            return self.crews_cache[crew_name]
+        # Check cache first if enabled
+        if self.cache_crews and crew_name in self._crew_cache:
+            return self._crew_cache[crew_name]
         
-        # Load crew configuration
-        config = load_crew_config(crew_name)
-        
-        # Create agents
-        agents = {}
-        for agent_id in config.agents:
-            agents[agent_id] = self.create_agent(agent_id)
-        
-        # Create tasks
-        tasks = self.create_tasks(crew_name, agents)
-        
-        # Determine process type
-        process = Process.sequential
-        if config.process_type == "hierarchical":
-            process = Process.hierarchical
+        # Use provided values or defaults
+        agents = agents or []
+        tasks = tasks or []
+        process = process or Process.sequential
+        verbose = verbose if verbose is not None else self.verbose
         
         # Create crew
         crew = Crew(
-            agents=list(agents.values()),
+            agents=agents,
             tasks=tasks,
             process=process,
-            verbose=config.verbose,
-            max_rpm=config.max_rpm if hasattr(config, "max_rpm") else None,
-            memory=config.memory if hasattr(config, "memory") else False,
-            cache=config.cache if hasattr(config, "cache") else False,
-            manager_llm=self.llm_provider if process == Process.hierarchical else None,
-            manager=agents.get(config.manager) if hasattr(config, "manager") and config.manager else None
+            verbose=verbose
         )
         
-        # Cache crew
-        self.crews_cache[crew_name] = crew
+        # Cache crew if enabled
+        if self.cache_crews:
+            self._crew_cache[crew_name] = crew
         
-        logger.info(f"Created crew '{crew_name}' with {len(agents)} agents and {len(tasks)} tasks")
         return crew
     
-    async def run_crew(
-        self, 
-        crew_name: str, 
-        inputs: Optional[Dict[str, Any]] = None,
-        task_id: Optional[str] = None,
-        resume: bool = False
-    ) -> Dict[str, Any]:
+    def create_default_crew(self) -> Crew:
         """
-        Run a CrewAI crew.
+        Create the default crew with all standard agents and tasks.
         
-        This method creates and runs a CrewAI crew with the specified inputs.
-        
-        Args:
-            crew_name: Name of the crew to run
-            inputs: Input data for the crew
-            task_id: Optional task ID for tracking
-            resume: Whether this is resuming a paused execution
-            
-        Returns:
-            Dictionary with execution results
-        """
-        try:
-            # Create crew
-            crew = await self.create_crew(crew_name)
-            
-            # Prepare inputs
-            crew_inputs = inputs or {}
-            
-            # Add task_id to inputs if provided
-            if task_id:
-                crew_inputs["task_id"] = task_id
-            
-            # Add resume flag to inputs if provided
-            if resume:
-                crew_inputs["resume"] = True
-            
-            # Start timer for metrics
-            start_time = asyncio.get_event_loop().time()
-            
-            # Run crew
-            result = crew.kickoff(inputs=crew_inputs)
-            
-            # Record metrics
-            duration = asyncio.get_event_loop().time() - start_time
-            crew_task_duration_seconds.labels(crew=crew_name).observe(duration)
-            
-            # Process result
-            if isinstance(result, TaskOutput):
-                return {
-                    "success": True,
-                    "result": result.raw_output,
-                    "task_id": result.task_id,
-                    "agent_id": result.agent_id
-                }
-            else:
-                # Handle string or other result types
-                return {
-                    "success": True,
-                    "result": result
-                }
-        
-        except Exception as e:
-            logger.exception(f"Error running crew '{crew_name}': {e}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
-        finally:
-            # Close connections
-            await self.close()
-    
-    @staticmethod
-    async def load(crew_name: str) -> Crew:
-        """
-        Load a crew by name.
-        
-        This static method creates a CrewFactory, connects to external services,
-        and creates a crew with the specified name.
-        
-        Args:
-            crew_name: Name of the crew to load
-            
         Returns:
             CrewAI Crew instance
         """
-        factory = CrewFactory()
-        await factory.connect()
-        return await factory.create_crew(crew_name)
-    
-    @staticmethod
-    def get_available_crews() -> List[str]:
-        """
-        Get a list of available crew names.
+        # Create agents
+        nlq_translator = self.create_agent(self.AGENT_TYPE_NLQ_TRANSLATOR)
+        graph_analyst = self.create_agent(self.AGENT_TYPE_GRAPH_ANALYST)
+        fraud_pattern_hunter = self.create_agent(self.AGENT_TYPE_FRAUD_PATTERN_HUNTER)
+        compliance_checker = self.create_agent(self.AGENT_TYPE_COMPLIANCE_CHECKER)
+        report_writer = self.create_agent(self.AGENT_TYPE_REPORT_WRITER)
         
-        Returns:
-            List of crew names
+        # Create tasks
+        tasks = [
+            Task(
+                description="Translate natural language query to Cypher",
+                expected_output="Cypher query",
+                agent=nlq_translator
+            ),
+            Task(
+                description="Analyze graph data and identify patterns",
+                expected_output="Graph analysis results",
+                agent=graph_analyst
+            ),
+            Task(
+                description="Detect fraud patterns in the data",
+                expected_output="Fraud detection results",
+                agent=fraud_pattern_hunter
+            ),
+            Task(
+                description="Check compliance with regulations",
+                expected_output="Compliance report",
+                agent=compliance_checker
+            ),
+            Task(
+                description="Generate final report",
+                expected_output="Final report",
+                agent=report_writer
+            )
+        ]
+        
+        # Create crew
+        return self.create_crew(
+            crew_name="default_crew",
+            agents=[nlq_translator, graph_analyst, fraud_pattern_hunter, compliance_checker, report_writer],
+            tasks=tasks,
+            process=Process.sequential
+        )
+    
+    def run_crew(
+        self,
+        crew: Crew,
+        inputs: Optional[Dict[str, Any]] = None,
+        callbacks: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """
-        return list(DEFAULT_CREW_CONFIGS.keys())
+        Run a crew with the specified inputs and callbacks.
+        
+        Args:
+            crew: CrewAI Crew instance
+            inputs: Inputs for the crew
+            callbacks: Callbacks for the crew
+            
+        Returns:
+            Results from the crew execution
+        """
+        # Initialize metrics
+        start_time = time.time()
+        token_count_before = self.gemini_client.get_token_count()
+        cost_before = self.gemini_client.get_cost()
+        
+        # Run crew
+        try:
+            result = crew.kickoff(inputs=inputs or {})
+            
+            # Calculate metrics
+            duration = time.time() - start_time
+            token_count_after = self.gemini_client.get_token_count()
+            cost_after = self.gemini_client.get_cost()
+            
+            tokens_used = token_count_after - token_count_before
+            cost_incurred = cost_after - cost_before
+            
+            # Record metrics
+            observe_value("crew_task_duration_seconds", duration)
+            increment_counter("llm_tokens_used_total", tokens_used)
+            increment_counter("llm_cost_usd_total", cost_incurred)
+            
+            self.logger.info(f"Crew execution completed in {duration:.2f} seconds")
+            self.logger.info(f"Tokens used: {tokens_used}, Cost: ${cost_incurred:.4f}")
+            
+            return {
+                "result": result,
+                "metrics": {
+                    "duration_seconds": duration,
+                    "tokens_used": tokens_used,
+                    "cost_usd": cost_incurred
+                }
+            }
+        
+        except Exception as e:
+            self.logger.error(f"Error running crew: {str(e)}")
+            
+            # Calculate metrics even on error
+            duration = time.time() - start_time
+            token_count_after = self.gemini_client.get_token_count()
+            cost_after = self.gemini_client.get_cost()
+            
+            tokens_used = token_count_after - token_count_before
+            cost_incurred = cost_after - cost_before
+            
+            # Record metrics
+            observe_value("crew_task_duration_seconds", duration)
+            increment_counter("llm_tokens_used_total", tokens_used)
+            increment_counter("llm_cost_usd_total", cost_incurred)
+            
+            return {
+                "error": str(e),
+                "metrics": {
+                    "duration_seconds": duration,
+                    "tokens_used": tokens_used,
+                    "cost_usd": cost_incurred
+                }
+            }
+    
+    def clear_cache(self, clear_agents: bool = True, clear_crews: bool = True, clear_configs: bool = True) -> None:
+        """
+        Clear the agent and crew caches.
+        
+        Args:
+            clear_agents: Whether to clear the agent cache
+            clear_crews: Whether to clear the crew cache
+            clear_configs: Whether to clear the config cache
+        """
+        if clear_agents:
+            self._agent_cache.clear()
+            self.logger.info("Agent cache cleared")
+        
+        if clear_crews:
+            self._crew_cache.clear()
+            self.logger.info("Crew cache cleared")
+        
+        if clear_configs:
+            self._config_cache.clear()
+            self.logger.info("Config cache cleared")
