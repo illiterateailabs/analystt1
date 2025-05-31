@@ -1,136 +1,190 @@
-# Crypto-Analysis Feature Pack
+# Crypto Fraud Detection Features
 
-Welcome to the **Crypto Feature Pack** – a turnkey extension that transforms the Analyst-Augmentation Agent into a **multi-chain crypto / DeFi investigation platform**.
-
----
-
-## 1. What’s Inside 🚀
-
-| Layer | New Item | Purpose |
-|-------|----------|---------|
-| **Tools** | `dune_analytics_tool`, `defillama_tool`, `etherscan_tool` | Connect to the major public data platforms for on-chain analytics, DeFi metrics and block-explorer look-ups |
-| **Agents** | `crypto_data_collector`, `blockchain_detective`, `defi_analyst`, `whale_tracker`, `protocol_investigator` | Specialist LLM agents that leverage the new tools |
-| **Crew** | `crypto_investigation` | End-to-end workflow that orchestrates all crypto agents and produces a markdown report |
-| **Config** | `CryptoConfig` & extensive `.env.example` additions | Centralised storage of API keys and rate-limit settings |
-| **Docs** | *this file* | Detailed HOW-TO & reference |
+_Last updated: **31 May 2025**_
 
 ---
 
-## 2. Tool Reference
+## 1  Overview  
 
-| Tool | Primary API | Highlights | Example `action` / helper |
-|------|-------------|-----------|---------------------------|
-| **DuneAnalyticsTool** | Dune API v1 (SQL) | • Multi-chain curated data<br>• Custom SQL execution<br>• Helper methods: wallet, DeFi, whale analysis | `execute_query(query_id=12345, parameters={...})` |
-| **DefiLlamaTool** | DefiLlama REST / Yields / Stablecoins | • TVL & yield tracking<br>• Protocol comparison<br>• Chain dominance | `find_top_yield_opportunities(min_apy=8)` |
-| **EtherscanTool** | Etherscan-family REST (multi-chain) | • Address & token forensics<br>• Contract source/ABI fetch<br>• Related-address graphing | `analyze_wallet(address=0x..., include_nfts=true)` |
+The Phase-2 crypto upgrade adds end-to-end support for detecting on-chain financial crime inside the Analyst-Agent stack.  
+Key capabilities delivered:
 
-All tools are **async**, rate-limit aware, and can **store results to Neo4j** for graph queries downstream.
+| Capability | Description |
+|-------------|-------------|
+| Time-series anomaly detection | ADTK-powered detectors find volume/price spikes, level/volatility shifts and velocity attacks. |
+| Graph-pattern detection | 30 + Cypher patterns for wash-trading, pump-and-dump, rug-pulls, flash-loans, sandwich attacks, honeypots, address-poisoning and temporal anomalies. |
+| Behavioural clustering | K-Means clusters wallet behaviour, enriched with graph metrics (degree, PageRank, clustering-coef). |
+| CSV → Graph ingestion | High-speed loader imports raw blockchain CSVs to Neo4j, auto-creates schema & indexes, calculates derived metrics. |
 
----
-
-## 3. New Agents & Their Super-Powers
-
-| Agent ID | Key Tools | Core Skill |
-|----------|-----------|-----------|
-| `crypto_data_collector` | Dune, DefiLlama, Etherscan | Aggregates & normalises data from multiple APIs |
-| `blockchain_detective` | Etherscan, Dune | Traces transactions, clusters addresses, follows cross-chain hops |
-| `defi_analyst` | DefiLlama, Dune, Etherscan | Evaluates DeFi TVL, yields, protocol health & risk |
-| `whale_tracker` | Etherscan, Dune | Monitors large-value transfers, exchange inflows/outflows |
-| `protocol_investigator` | Etherscan, Dune, Sandbox | Dissects smart-contract interactions, identifies exploits |
+All features integrate seamlessly with CrewAI agents, Gemini LLM reasoning, Neo4j graph analytics and Prometheus cost metrics.
 
 ---
 
-## 4. The `crypto_investigation` Crew Workflow
+## 2  Tools
 
-1. **Collect** – `crypto_data_collector` pulls raw data.  
-2. **Trace** – `blockchain_detective` builds address relationship graphs.  
-3. **DeFi Lens** – `defi_analyst` analyses protocol exposure & yield history.  
-4. **Whale Watch** – `whale_tracker` flags large-holder behaviour.  
-5. **Contract Deep-Dive** – `protocol_investigator` inspects ABI & function calls.  
-6. **Report** – `report_writer` turns findings into an actionable markdown brief.
+### 2.1 CryptoAnomalyTool  
 
-Kick it off:
+| Aspect | Details |
+|--------|---------|
+| Path | `backend/agents/tools/crypto_anomaly_tool.py` |
+| Dependencies | `adtk`, `networkx`, `scikit-learn`, `matplotlib`, `pandas`, `numpy` |
+| Operations | `time_series_anomaly`, `wash_trading`, `pump_and_dump`, `address_clustering`, `graph_metrics`, `all` |
+| Data sources | `csv` (local path) or `neo4j` (Cypher query) |
+| Output | JSON containing `anomalies`, `summary`, base64 PNG `visualization`, and operation‐specific metadata |
 
-```bash
-curl -X POST http://localhost:8000/api/v1/crew/run \
-  -H "Authorization: Bearer <JWT>" \
-  -d '{ "crew_name": "crypto_investigation", "inputs": { "target_wallet": "0x…", "hours": 24 } }'
+#### Key Detectors
+* **Seasonal / Level / Volatility Shift** – ADTK detectors with configurable windows.  
+* **Wash-Trading** – circular cycles (length 2–5), self-dealing pairs, balanced volumes.  
+* **Pump-and-Dump** – > 100 % price rise + > 200 % volume spike then > 30 % dump.  
+* **Address Clustering** – Scaled feature matrix ➜ K-Means ➜ silhouette scoring.  
+* **Graph Metrics** – Degree, betweenness, closeness, PageRank, clustering-coef.
+
+#### Minimal Python Usage
+```python
+from backend.agents.tools.crypto_anomaly_tool import CryptoAnomalyTool
+tool = CryptoAnomalyTool()            # Neo4j auto-connect
+result = tool.run(
+    operation="pump_and_dump",
+    data_source="csv",
+    data_path="eth_prices_last_30d.csv",
+    timestamp_column="timestamp",
+    price_column="price_usd",
+    volume_column="volume"
+)
+print(result["summary"])
+```
+
+#### CrewAI Function Call Example (inside agent prompt)
+```json
+{
+  "name": "crypto_anomaly_detection",
+  "arguments": {
+    "operation": "wash_trading",
+    "data_source": "neo4j",
+    "data_path": "MATCH (t:Transaction)-[:ON_TOKEN]->(:Token {symbol:'XYZ'}) RETURN t",
+    "from_address_column": "from",
+    "to_address_column": "to",
+    "value_column": "value",
+    "timestamp_column": "ts"
+  }
+}
 ```
 
 ---
 
-## 5. API-Key Setup  🔑
+### 2.2 CryptoCSVLoaderTool  
 
-Add keys to `.env` (see template):
+| Aspect | Details |
+|--------|---------|
+| Path | `backend/agents/tools/crypto_csv_loader_tool.py` |
+| CSV formats | `eth_transactions`, `token_transfers`, `dex_trades`, `address_data`, `custom` |
+| Features | Batch import, automatic schema / index creation, derived address metrics, validation & profiling, optional metrics calculation |
+| Output | Import statistics (`processed_rows`, `error_rows`, success rate %, rows/sec), schema info, metric summary |
 
-| Variable | Needed For | Free Tier? |
-|----------|------------|-----------|
-| `DUNE_API_KEY` | DuneAnalyticsTool | ✔️ |
-| `ETHERSCAN_API_KEY` | Ethereum via EtherscanTool | ✔️ (5 RPS) |
-| `BSCSCAN_API_KEY`, `POLYGONSCAN_API_KEY`, … | Other chains in EtherscanTool | ✔️ |
-| *(optional)* `COINGECKO_API_KEY`, `MORALIS_API_KEY`, `COVALENT_API_KEY` | Future integrations | ✔️ / paid |
-
-No key? — tools still load but will return **error strings** in responses.
-
----
-
-## 6. Quick-Start for Crypto Analysis
-
-```bash
-# 1. Provide keys
-cp .env.example .env
-# ↳ fill DUNE_API_KEY and ETHERSCAN_API_KEY (others optional)
-
-# 2. Build & launch
-make start-dev   # docker-compose backend+frontend+dbs
-
-# 3. Verify
-make health          # /health, /health/crew show new crypto tools
-make crew-run name=crypto_investigation  # helper alias
-
-# 4. Explore results
-http://localhost:8000/docs      # interactive API
-http://localhost:7474           # Neo4j browser for graphs
+#### Minimal Python Usage
+```python
+from backend.agents.tools.crypto_csv_loader_tool import CryptoCSVLoaderTool
+loader = CryptoCSVLoaderTool()
+stats = loader.run(
+    operation="load_csv",
+    csv_path="uniswap_trades.csv",
+    csv_format="dex_trades",
+    batch_size=2000,
+    create_schema=True,
+    calculate_metrics=True
+)
+print(stats["summary"])
 ```
 
 ---
 
-## 7. Supported Networks & Data Sources
+## 3  Fraud Pattern Library (30 + patterns)
 
-| Network / Source | Tool | Coverage |
-|------------------|------|----------|
-| Ethereum Mainnet / Testnets | EtherscanTool, DuneAnalyticsTool | Blocks, txs, contracts |
-| Binance Smart Chain | EtherscanTool (BSCScan) | Blocks, txs, BEP-20 |
-| Polygon | EtherscanTool (PolygonScan), Dune | Blocks, txs, tokens |
-| Arbitrum / Optimism | EtherscanTool variants, Dune | Layer-2 txs |
-| Avalanche, Fantom, … | EtherscanTool variants | Blocks, txs |
-| **200+ Chains** | Covalent (future) | Raw decoded events |
-| DeFi protocols (TVL/metrics) | DefiLlamaTool | 1 000+ protocols |
-| SQL datasets (DEX trades, bridges, MEV) | DuneAnalyticsTool | Curated & custom |
+Patterns are defined in `backend/agents/patterns/crypto_fraud_patterns.yaml`.  
+Structure per pattern:
+
+```yaml
+- id: "WASH_TRADING_CIRCULAR"
+  name: "Circular Wash Trading"
+  category: "WASH_TRADING"
+  risk_level: "HIGH"
+  detection:
+    type: "CYPHER"
+    query: |
+      MATCH path = (a:Address)-[:TRANSFERS*2..5]->(a)
+      ...
+```
+
+### Categories & Count
+
+| Category | Patterns | Examples |
+|----------|----------|----------|
+| Wash-Trading | 3 | Circular, Self-Dealing, Volume Manipulation |
+| Pump-and-Dump | 3 | Price Spike, Coordinated Buying, Insider Selling |
+| Rug Pull | 3 | Liquidity Removal, Abandoned Project, Team Token Dump |
+| Flash Loan | 2 | Direct Attack, Price Manipulation |
+| Sandwich Attack | 2 | Single, Repeat Offender |
+| Address Poisoning | 2 | Single, Campaign |
+| Honeypot Token | 2 | No-Sell, Failed Sells |
+| Time-Based Anomalies | 3 | Velocity, Rapid Movement, Abnormal Timing |
+
+_Total patterns: **30**_
+
+### Pattern Usage (via PatternLibraryTool)
+
+```json
+{
+  "name": "pattern_library",
+  "arguments": {
+    "pattern_id": "WASH_TRADING_CIRCULAR",
+    "parameters": {
+      "min_cycle_value": 5000,
+      "time_window_days": 3
+    }
+  }
+}
+```
+
+The tool fills parameters, executes Cypher on Neo4j, and returns matched sub-graphs.
 
 ---
 
-## 8. Example NLQ Flow
+## 4  Integration Notes
 
-*“Which wallets received **≥ 100 ETH** from Tornado Cash in the last 24 h and deposited to Binance?”*
-
-1. **User** asks in chat.  
-2. `nlq_translator` builds a Cypher query.  
-3. `blockchain_detective` enriches with Etherscan transfers.  
-4. `defi_analyst` cross-references CeFi deposit addresses from Dune.  
-5. `report_writer` returns list + risk commentary.
-
----
-
-## 9. Extending Further 🛠️
-
-*Ideas*  
-- Add **QuickNode RPC** for raw mempool streams.  
-- Integrate **The Graph** subgraph queries into `crypto_data_collector`.  
-- Hook **Covalent** for 200+ chain uniform‐event ingestion.  
-- Build a **real-time alert agent** subscribing to Moralis Streams.
+| Component | Interaction |
+|-----------|-------------|
+| **CrewFactory** | Registers `crypto_anomaly_detection` & `crypto_csv_loader` as Tools available to the `fraud_pattern_hunter` agent. |
+| **FraudPatternHunter Agent** | Combines PatternLibraryTool, FraudMLTool and CryptoAnomalyTool for multi-modal detection. |
+| **Neo4j** | CSV loader populates graph; anomaly tool queries via Cypher or raw DataFrame; graph metrics use NetworkX on exported sub-graph. |
+| **E2B Sandbox** | CodeGenerationTool ➜ Python snippets ➜ SandboxExecutionTool for heavy ML or plotting. |
+| **Prometheus Metrics** | Tool calls counted in `llm_tokens_used_total`, `llm_cost_usd_total`; loader exposes rows/sec gauge. |
 
 ---
 
-Happy hunting 🔎  
-*— Analyst Augmentation Agent team*
+## 5  Usage Workflow
+
+```mermaid
+graph LR
+    CSV[CSV File] --> |crypto_csv_loader| NEO[Neo4j Graph]
+    NEO --> |pattern_library| Agent[Fraud Pattern Hunter]
+    NEO --> |crypto_anomaly_detection| Agent
+    Agent --> Report[Compliance Report / Executive Summary]
+```
+
+1. **Ingest** – Load raw Parquet/CSV blockchain data → Neo4j.  
+2. **Detect** – Run pattern queries & anomaly tool on same graph.  
+3. **Investigate** – GraphVisualization UI highlights suspicious cycles/events.  
+4. **Report** – TemplateEngineTool generates Markdown/PDF for auditors.
+
+---
+
+## 6  Future Enhancements
+
+| Idea | Benefit |
+|------|---------|
+| Real-time stream adapter (Kafka → loader) | Continuous monitoring instead of batch CSV |
+| GDS algorithms (Node2Vec, Community Detect) | Improve address clustering & label propagation |
+| Explainability layer (SHAP for ML models) | Transparent risk scoring for compliance |
+| Alerting webhook (Slack / e-mail) | Immediate notification of high-risk patterns |
+| Multi-chain support (BTC, Solana) | Extend detectors & loader schemas |
+| Auto-tuning thresholds via Gemini Pro agent | Adaptive detection sensitivity |
