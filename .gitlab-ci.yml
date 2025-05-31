@@ -1,0 +1,87 @@
+stages:
+  - lint
+  - type-check
+  - test
+  - docker-build
+
+variables:
+  PYTHON_VERSION: "3.11" # Default Python version for lint and type-check
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+cache:
+  key: "$CI_COMMIT_REF_SLUG-$PYTHON_VERSION"
+  paths:
+    - .cache/pip/
+  policy: pull-push
+
+.install_dependencies: &install_dependencies
+  before_script:
+    - python -m pip install --upgrade pip setuptools wheel
+    - pip install --constraint constraints.txt -r requirements.txt
+
+lint:
+  stage: lint
+  image: python:$PYTHON_VERSION-slim-buster
+  <<: *install_dependencies
+  script:
+    - ruff check --output-format=gitlab backend tests
+  artifacts:
+    reports:
+      codequality: gl-code-quality-report.json
+
+type-check:
+  stage: type-check
+  image: python:$PYTHON_VERSION-slim-buster
+  <<: *install_dependencies
+  script:
+    - PYTHONPATH=. mypy backend
+
+test:
+  stage: test
+  image: python:$PYTHON_VERSION-slim-buster
+  services:
+    - name: neo4j:5.15.0
+      alias: neo4j_db
+      variables:
+        NEO4J_AUTH: neo4j/analyst123
+        NEO4J_ACCEPT_LICENSE_AGREEMENT: yes
+      ports:
+        - 7474:7474
+        - 7687:7687
+  variables:
+    NEO4J_URI: bolt://neo4j_db:7687
+    NEO4J_USERNAME: neo4j
+    NEO4J_PASSWORD: analyst123
+    NEO4J_DATABASE: neo4j
+    GOOGLE_API_KEY: $GOOGLE_API_KEY # Use GitLab CI/CD variables for secrets
+    E2B_API_KEY: $E2B_API_KEY # Use GitLab CI/CD variables for secrets
+    E2B_TEMPLATE_ID: $E2B_TEMPLATE_ID # Use GitLab CI/CD variables for secrets
+    SECRET_KEY: test_secret_key
+    JWT_SECRET_KEY: test_secret_key
+    JWT_ALGORITHM: HS256
+    PYTHONPATH: .
+  parallel:
+    matrix:
+      - PYTHON_VERSION: ["3.9", "3.10", "3.11"]
+  script:
+    - python -m pip install --upgrade pip setuptools wheel
+    - pip install --constraint constraints.txt -r requirements.txt
+    - pytest --cov=backend --cov-report=xml -v
+  coverage: '/^TOTAL.*\s+(\d+\%)$/' # Regex to extract coverage percentage
+  artifacts:
+    reports:
+      junit: junit.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+
+docker-build:
+  stage: docker-build
+  image: docker:latest
+  services:
+    - docker:dind
+  script:
+    - docker build -t analyst-agent-backend:test -f Dockerfile .
+    - docker build -t analyst-agent-frontend:test -f frontend/Dockerfile frontend/
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "develop"'
