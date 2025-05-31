@@ -1,598 +1,618 @@
-from typing import Dict, List, Optional, Any, Type, Union
-import os
-import yaml
-from pathlib import Path
-import logging
-from functools import lru_cache
+"""
+CrewFactory for creating and managing CrewAI crews.
+
+This module provides the CrewFactory class, which is responsible for
+building and managing CrewAI crews, including agent creation, tool
+assignment, task definition, and crew orchestration.
+"""
+
 import asyncio
+import json
+import logging
+import os
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast
 
-from crewai import Agent, Crew, Task, Process
-from crewai.agent import AgentConfig
-from crewai.llm import LLM
+from crewai import Agent, Task, Crew, Process
+from crewai.agent import TaskOutput
 
-# Import tools with graceful error handling
-# Initialize all tools to None by default
-GraphQueryTool = None
-SandboxExecTool = None
-CodeGenTool = None
-PatternLibraryTool = None
-PolicyDocsTool = None
-TemplateEngineTool = None
-Neo4jSchemaTool = None
-RandomTxGeneratorTool = None
-
-# Try to import each tool individually
-try:
-    from backend.agents.tools.graph_query_tool import GraphQueryTool
-except ImportError:
-    pass
-
-try:
-    from backend.agents.tools.sandbox_exec_tool import SandboxExecTool
-except ImportError:
-    pass
-
-try:
-    from backend.agents.tools.code_gen_tool import CodeGenTool
-except ImportError:
-    pass
-
-try:
-    from backend.agents.tools.pattern_library_tool import PatternLibraryTool
-except ImportError:
-    pass
-
-try:
-    from backend.agents.tools.policy_docs_tool import PolicyDocsTool
-except ImportError:
-    pass
-
-try:
-    from backend.agents.tools.template_engine_tool import TemplateEngineTool
-except ImportError:
-    pass
-
-try:
-    from backend.agents.tools.neo4j_schema_tool import Neo4jSchemaTool
-except ImportError:
-    pass
-
-try:
-    from backend.agents.tools.random_tx_generator_tool import RandomTxGeneratorTool
-except ImportError:
-    pass
-
-from backend.agents.llm import get_llm
-from backend.agents.config import load_agent_config, load_crew_config, get_available_crews
+from backend.agents.config import (
+    load_agent_config, 
+    load_crew_config,
+    AgentConfig,
+    CrewConfig,
+    DEFAULT_CREW_CONFIGS
+)
+from backend.agents.llm import GeminiLLMProvider
+from backend.agents.tools import (
+    GraphQueryTool,
+    SandboxExecTool,
+    CodeGenTool,
+    PatternLibraryTool,
+    Neo4jSchemaTool,
+    TemplateEngineTool,
+    PolicyDocsTool
+)
 from backend.integrations.neo4j_client import Neo4jClient
+from backend.integrations.gemini_client import GeminiClient
 from backend.integrations.e2b_client import E2BClient
-from backend.core.logging import get_logger
-from backend.core.metrics import track_crew_task_duration, increment_active_crews, decrement_active_crews
+from backend.core.metrics import (
+    crew_task_duration_seconds,
+    llm_tokens_used_total,
+    llm_cost_usd_total
+)
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
-# Path to agent configs directory
-AGENT_CONFIGS_DIR = Path("backend/agents/configs")
-AGENT_CONFIGS_CREWS_DIR = AGENT_CONFIGS_DIR / "crews"
-DEFAULT_PROMPTS_DIR = AGENT_CONFIGS_DIR / "defaults"
 
-# Ensure directories exist
-AGENT_CONFIGS_DIR.mkdir(exist_ok=True)
-AGENT_CONFIGS_CREWS_DIR.mkdir(exist_ok=True)
-DEFAULT_PROMPTS_DIR.mkdir(exist_ok=True)
+def create_crypto_tools() -> Dict[str, Any]:
+    """
+    Create cryptocurrency-specific tools.
+    
+    This function is separated to handle optional dependencies gracefully.
+    If crypto-related packages are not installed, it returns empty tools.
+    
+    Returns:
+        Dictionary of crypto tools
+    """
+    crypto_tools = {}
+    
+    try:
+        from backend.agents.tools.crypto.dune_analytics_tool import DuneAnalyticsTool
+        crypto_tools["dune_analytics_tool"] = DuneAnalyticsTool()
+    except (ImportError, ModuleNotFoundError):
+        logger.warning("DuneAnalyticsTool not available - skipping initialization")
+    
+    try:
+        from backend.agents.tools.crypto.defillama_tool import DefiLlamaTool
+        crypto_tools["defillama_tool"] = DefiLlamaTool()
+    except (ImportError, ModuleNotFoundError):
+        logger.warning("DefiLlamaTool not available - skipping initialization")
+    
+    try:
+        from backend.agents.tools.crypto.etherscan_tool import EtherscanTool
+        crypto_tools["etherscan_tool"] = EtherscanTool()
+    except (ImportError, ModuleNotFoundError):
+        logger.warning("EtherscanTool not available - skipping initialization")
+    
+    return crypto_tools
 
 
 class CrewFactory:
     """
-    Factory for creating and managing CrewAI agents and crews.
+    Factory for creating and managing CrewAI crews.
     
-    This class handles the creation of agents with their tools,
-    loading configurations from YAML files, and building crews.
+    This class is responsible for building and managing CrewAI crews,
+    including agent creation, tool assignment, task definition, and
+    crew orchestration. It also handles caching of agents and crews
+    to avoid recreating them unnecessarily.
     """
     
-    # Cache for agent configurations
-    _agent_config_cache: Dict[str, Dict[str, Any]] = {}
+    def __init__(self):
+        """Initialize the CrewFactory with necessary clients and tools."""
+        # Initialize clients
+        self.neo4j_client = Neo4jClient()
+        self.gemini_client = GeminiClient()
+        self.e2b_client = E2BClient()
+        self.llm_provider = GeminiLLMProvider()
+        
+        # Initialize tools
+        self.tools = self._initialize_tools()
+        
+        # Initialize caches
+        self.agents_cache = {}
+        self.crews_cache = {}
     
-    # Cache for created agents
-    _agent_cache: Dict[str, Agent] = {}
-    
-    # Cache for created tools
-    _tool_cache: Dict[str, Any] = {}
-    
-    @classmethod
-    def get_agent_config(cls, agent_id: str) -> Optional[Dict[str, Any]]:
+    def _initialize_tools(self) -> Dict[str, Any]:
         """
-        Get an agent's configuration from cache or load from file.
+        Initialize all available tools.
+        
+        Returns:
+            Dictionary of tools by name
+        """
+        tools = {}
+        
+        # Core tools
+        tools["graph_query_tool"] = GraphQueryTool(neo4j_client=self.neo4j_client)
+        tools["sandbox_exec_tool"] = SandboxExecTool(e2b_client=self.e2b_client)
+        tools["code_gen_tool"] = CodeGenTool(gemini_client=self.gemini_client)
+        tools["pattern_library_tool"] = PatternLibraryTool(neo4j_client=self.neo4j_client)
+        tools["neo4j_schema_tool"] = Neo4jSchemaTool(neo4j_client=self.neo4j_client)
+        tools["template_engine_tool"] = TemplateEngineTool()
+        tools["policy_docs_tool"] = PolicyDocsTool(gemini_client=self.gemini_client)
+        
+        # Add crypto tools if available
+        crypto_tools = create_crypto_tools()
+        tools.update(crypto_tools)
+        
+        return tools
+    
+    async def connect(self):
+        """
+        Connect to external services.
+        
+        This method establishes connections to Neo4j and other services
+        that require explicit connection.
+        
+        Raises:
+            Exception: If connection to any service fails
+        """
+        try:
+            # Connect to Neo4j
+            await self.neo4j_client.connect()
+            
+            # Other connections can be added here
+            
+            logger.info("Connected to external services")
+        except Exception as e:
+            logger.error(f"Error connecting to external services: {e}")
+            raise
+    
+    async def close(self):
+        """
+        Close connections to external services.
+        
+        This method should be called when the factory is no longer needed
+        to ensure proper cleanup of resources.
+        """
+        try:
+            # Close Neo4j connection
+            if hasattr(self.neo4j_client, "driver") and self.neo4j_client.driver:
+                await self.neo4j_client.close()
+            
+            # Close E2B sandboxes
+            await self.e2b_client.close_all_sandboxes()
+            
+            logger.info("Closed connections to external services")
+        except Exception as e:
+            logger.error(f"Error closing connections: {e}")
+    
+    def get_tool(self, tool_name: str) -> Optional[Any]:
+        """
+        Get a tool by name.
         
         Args:
-            agent_id: The unique identifier for the agent
+            tool_name: Name of the tool to get
             
         Returns:
-            The agent configuration dictionary or None if not found
+            Tool instance or None if not found
         """
-        # Check cache first
-        if agent_id in cls._agent_config_cache:
-            return cls._agent_config_cache[agent_id]
-        
-        # Try to load from custom config
-        custom_config_path = AGENT_CONFIGS_DIR / f"{agent_id}.yaml"
-        if custom_config_path.exists():
-            try:
-                with open(custom_config_path, "r") as f:
-                    config = yaml.safe_load(f)
-                    if config:
-                        cls._agent_config_cache[agent_id] = config
-                        return config
-            except Exception as e:
-                logger.error(f"Error loading custom config for {agent_id}: {str(e)}")
-        
-        # Try to load from default config
-        default_config_path = DEFAULT_PROMPTS_DIR / f"{agent_id}.yaml"
-        if default_config_path.exists():
-            try:
-                with open(default_config_path, "r") as f:
-                    config = yaml.safe_load(f)
-                    if config:
-                        cls._agent_config_cache[agent_id] = config
-                        return config
-            except Exception as e:
-                logger.error(f"Error loading default config for {agent_id}: {str(e)}")
-        
-        # Try to find in crew configs
-        for crew_file in AGENT_CONFIGS_CREWS_DIR.glob("*.yaml"):
-            try:
-                with open(crew_file, "r") as f:
-                    crew_data = yaml.safe_load(f)
-                    if crew_data and "agents" in crew_data:
-                        for agent in crew_data["agents"]:
-                            if isinstance(agent, dict) and agent.get("id") == agent_id:
-                                cls._agent_config_cache[agent_id] = agent
-                                return agent
-            except Exception as e:
-                logger.error(f"Error loading agents from crew file {crew_file}: {str(e)}")
-        
-        return None
+        return self.tools.get(tool_name)
     
-    @classmethod
-    def update_agent_prompt(cls, agent_id: str, system_prompt: str) -> None:
+    def create_agent(self, agent_id: str) -> Agent:
         """
-        Update an agent's system prompt in the cache.
+        Create a CrewAI agent from configuration.
+        
+        This method loads the agent configuration from YAML files and
+        creates a CrewAI agent with the specified tools.
         
         Args:
-            agent_id: The unique identifier for the agent
-            system_prompt: The new system prompt
+            agent_id: ID of the agent to create
+            
+        Returns:
+            CrewAI Agent instance
         """
-        # Get existing config or create new one
-        config = cls.get_agent_config(agent_id) or {}
+        # Check if agent is already cached
+        if agent_id in self.agents_cache:
+            return self.agents_cache[agent_id]
         
-        # Update system prompt
-        config["system_prompt"] = system_prompt
+        # Load agent configuration
+        config = load_agent_config(agent_id)
         
-        # Update cache
-        cls._agent_config_cache[agent_id] = config
+        # Get tools for agent
+        agent_tools = []
+        for tool_name in config.tools:
+            tool = self.get_tool(tool_name)
+            if tool:
+                agent_tools.append(tool)
+            else:
+                logger.warning(f"Tool '{tool_name}' not found for agent '{agent_id}'")
         
-        # Remove from agent cache to force recreation with new prompt
-        if agent_id in cls._agent_cache:
-            del cls._agent_cache[agent_id]
-            logger.info(f"Removed agent {agent_id} from cache due to prompt update")
+        # Create agent
+        agent = Agent(
+            id=config.id,
+            role=config.role,
+            goal=config.goal,
+            backstory=config.backstory,
+            verbose=config.verbose,
+            allow_delegation=config.allow_delegation,
+            tools=agent_tools,
+            llm=self.llm_provider,
+            max_iter=config.max_iter,
+            max_rpm=config.max_rpm if hasattr(config, "max_rpm") else None,
+            memory=config.memory if hasattr(config, "memory") else False
+        )
+        
+        # Cache agent
+        self.agents_cache[agent_id] = agent
+        
+        logger.info(f"Created agent '{agent_id}' with {len(agent_tools)} tools")
+        return agent
     
-    @classmethod
-    def reset_agent_prompt(cls, agent_id: str) -> None:
+    def create_tasks(self, crew_name: str, agents: Dict[str, Agent]) -> List[Task]:
         """
-        Reset an agent's prompt to default.
+        Create tasks for a crew.
+        
+        This method creates CrewAI tasks for the specified crew based on
+        predefined task templates.
         
         Args:
-            agent_id: The unique identifier for the agent
+            crew_name: Name of the crew
+            agents: Dictionary of agents by ID
+            
+        Returns:
+            List of CrewAI Task instances
         """
-        # Remove from config cache
-        if agent_id in cls._agent_config_cache:
-            del cls._agent_config_cache[agent_id]
+        tasks = []
         
-        # Remove from agent cache
-        if agent_id in cls._agent_cache:
-            del cls._agent_cache[agent_id]
-            logger.info(f"Removed agent {agent_id} from cache due to prompt reset")
+        # Create tasks based on crew type
+        if crew_name == "fraud_investigation":
+            # NLQ translator task
+            if "nlq_translator" in agents:
+                tasks.append(Task(
+                    description="Translate user query into Cypher",
+                    agent=agents["nlq_translator"],
+                    expected_output="Executable Cypher query and explanation"
+                ))
+            
+            # Graph analyst task
+            if "graph_analyst" in agents:
+                tasks.append(Task(
+                    description="Execute graph query and analyze results",
+                    agent=agents["graph_analyst"],
+                    expected_output="Structured graph data with initial analysis",
+                    context=["Translate user query into Cypher"]
+                ))
+            
+            # Fraud pattern hunter task
+            if "fraud_pattern_hunter" in agents:
+                tasks.append(Task(
+                    description="Detect fraud patterns and anomalies",
+                    agent=agents["fraud_pattern_hunter"],
+                    expected_output="Identified patterns, anomalies, and risk assessment",
+                    context=["Execute graph query and analyze results"]
+                ))
+            
+            # Sandbox coder task (optional)
+            if "sandbox_coder" in agents:
+                tasks.append(Task(
+                    description="Generate and execute code for advanced analysis",
+                    agent=agents["sandbox_coder"],
+                    expected_output="Code execution results and insights",
+                    context=["Execute graph query and analyze results", "Detect fraud patterns and anomalies"]
+                ))
+            
+            # Compliance checker task
+            if "compliance_checker" in agents:
+                tasks.append(Task(
+                    description="Verify compliance with regulations",
+                    agent=agents["compliance_checker"],
+                    expected_output="Compliance assessment and SAR recommendations",
+                    context=["Detect fraud patterns and anomalies"]
+                ))
+            
+            # Report writer task
+            if "report_writer" in agents:
+                tasks.append(Task(
+                    description="Generate comprehensive investigation report",
+                    agent=agents["report_writer"],
+                    expected_output="Markdown report with executive summary, findings, and visualizations",
+                    context=[
+                        "Execute graph query and analyze results",
+                        "Detect fraud patterns and anomalies",
+                        "Verify compliance with regulations"
+                    ]
+                ))
+        
+        elif crew_name == "alert_enrichment":
+            # NLQ translator task
+            if "nlq_translator" in agents:
+                tasks.append(Task(
+                    description="Translate alert data into Cypher",
+                    agent=agents["nlq_translator"],
+                    expected_output="Executable Cypher query for alert context"
+                ))
+            
+            # Graph analyst task
+            if "graph_analyst" in agents:
+                tasks.append(Task(
+                    description="Enrich alert with graph context",
+                    agent=agents["graph_analyst"],
+                    expected_output="Alert context with related entities and transactions",
+                    context=["Translate alert data into Cypher"]
+                ))
+            
+            # Fraud pattern hunter task
+            if "fraud_pattern_hunter" in agents:
+                tasks.append(Task(
+                    description="Apply pattern detection to alert",
+                    agent=agents["fraud_pattern_hunter"],
+                    expected_output="Pattern matches and anomaly scores",
+                    context=["Enrich alert with graph context"]
+                ))
+            
+            # Compliance checker task
+            if "compliance_checker" in agents:
+                tasks.append(Task(
+                    description="Assess regulatory implications",
+                    agent=agents["compliance_checker"],
+                    expected_output="Regulatory assessment and recommendations",
+                    context=["Apply pattern detection to alert"]
+                ))
+            
+            # Report writer task
+            if "report_writer" in agents:
+                tasks.append(Task(
+                    description="Generate alert enrichment report",
+                    agent=agents["report_writer"],
+                    expected_output="Structured alert report with findings and recommendations",
+                    context=[
+                        "Enrich alert with graph context",
+                        "Apply pattern detection to alert",
+                        "Assess regulatory implications"
+                    ]
+                ))
+        
+        elif crew_name == "red_blue_simulation":
+            # Red team adversary task
+            if "red_team_adversary" in agents:
+                tasks.append(Task(
+                    description="Generate synthetic fraud scenario",
+                    agent=agents["red_team_adversary"],
+                    expected_output="Synthetic transaction data and ground truth"
+                ))
+                
+                # Additional red team task
+                tasks.append(Task(
+                    description="Execute synthetic transactions",
+                    agent=agents["red_team_adversary"],
+                    expected_output="Executed transaction graph with obfuscation",
+                    context=["Generate synthetic fraud scenario"]
+                ))
+            
+            # Graph analyst task
+            if "graph_analyst" in agents:
+                tasks.append(Task(
+                    description="Analyze transaction graph",
+                    agent=agents["graph_analyst"],
+                    expected_output="Graph analysis and initial findings",
+                    context=["Execute synthetic transactions"]
+                ))
+            
+            # Fraud pattern hunter task
+            if "fraud_pattern_hunter" in agents:
+                tasks.append(Task(
+                    description="Detect patterns in synthetic data",
+                    agent=agents["fraud_pattern_hunter"],
+                    expected_output="Detected patterns and anomalies",
+                    context=["Analyze transaction graph"]
+                ))
+            
+            # Report writer task
+            if "report_writer" in agents:
+                tasks.append(Task(
+                    description="Generate simulation report",
+                    agent=agents["report_writer"],
+                    expected_output="Simulation report with detection effectiveness",
+                    context=[
+                        "Generate synthetic fraud scenario",
+                        "Analyze transaction graph",
+                        "Detect patterns in synthetic data"
+                    ]
+                ))
+        
+        elif crew_name == "crypto_investigation":
+            # Crypto data collector task
+            if "crypto_data_collector" in agents:
+                tasks.append(Task(
+                    description="Collect on-chain and off-chain data",
+                    agent=agents["crypto_data_collector"],
+                    expected_output="Structured crypto data from multiple sources"
+                ))
+            
+            # Blockchain detective task
+            if "blockchain_detective" in agents:
+                tasks.append(Task(
+                    description="Trace on-chain transactions",
+                    agent=agents["blockchain_detective"],
+                    expected_output="Transaction flow and entity identification",
+                    context=["Collect on-chain and off-chain data"]
+                ))
+            
+            # DeFi analyst task
+            if "defi_analyst" in agents:
+                tasks.append(Task(
+                    description="Analyze DeFi protocol interactions",
+                    agent=agents["defi_analyst"],
+                    expected_output="DeFi protocol analysis and risk assessment",
+                    context=["Collect on-chain and off-chain data", "Trace on-chain transactions"]
+                ))
+            
+            # Whale tracker task
+            if "whale_tracker" in agents:
+                tasks.append(Task(
+                    description="Identify and analyze whale activity",
+                    agent=agents["whale_tracker"],
+                    expected_output="Whale activity patterns and impact analysis",
+                    context=["Trace on-chain transactions"]
+                ))
+            
+            # Protocol investigator task
+            if "protocol_investigator" in agents:
+                tasks.append(Task(
+                    description="Investigate protocol-specific risks",
+                    agent=agents["protocol_investigator"],
+                    expected_output="Protocol risk assessment and security analysis",
+                    context=["Analyze DeFi protocol interactions"]
+                ))
+            
+            # Report writer task
+            if "report_writer" in agents:
+                tasks.append(Task(
+                    description="Generate crypto investigation report",
+                    agent=agents["report_writer"],
+                    expected_output="Comprehensive crypto investigation report",
+                    context=[
+                        "Trace on-chain transactions",
+                        "Analyze DeFi protocol interactions",
+                        "Identify and analyze whale activity",
+                        "Investigate protocol-specific risks"
+                    ]
+                ))
+        
+        # If no tasks were created, log a warning
+        if not tasks:
+            logger.warning(f"No tasks created for crew '{crew_name}'")
+        
+        return tasks
     
-    @classmethod
-    def get_available_crews(cls) -> List[str]:
+    async def create_crew(self, crew_name: str) -> Crew:
+        """
+        Create a CrewAI crew from configuration.
+        
+        This method loads the crew configuration from YAML files and
+        creates a CrewAI crew with the specified agents and tasks.
+        
+        Args:
+            crew_name: Name of the crew to create
+            
+        Returns:
+            CrewAI Crew instance
+        """
+        # Check if crew is already cached
+        if crew_name in self.crews_cache:
+            return self.crews_cache[crew_name]
+        
+        # Load crew configuration
+        config = load_crew_config(crew_name)
+        
+        # Create agents
+        agents = {}
+        for agent_id in config.agents:
+            agents[agent_id] = self.create_agent(agent_id)
+        
+        # Create tasks
+        tasks = self.create_tasks(crew_name, agents)
+        
+        # Determine process type
+        process = Process.sequential
+        if config.process_type == "hierarchical":
+            process = Process.hierarchical
+        
+        # Create crew
+        crew = Crew(
+            agents=list(agents.values()),
+            tasks=tasks,
+            process=process,
+            verbose=config.verbose,
+            max_rpm=config.max_rpm if hasattr(config, "max_rpm") else None,
+            memory=config.memory if hasattr(config, "memory") else False,
+            cache=config.cache if hasattr(config, "cache") else False,
+            manager_llm=self.llm_provider if process == Process.hierarchical else None,
+            manager=agents.get(config.manager) if hasattr(config, "manager") and config.manager else None
+        )
+        
+        # Cache crew
+        self.crews_cache[crew_name] = crew
+        
+        logger.info(f"Created crew '{crew_name}' with {len(agents)} agents and {len(tasks)} tasks")
+        return crew
+    
+    async def run_crew(
+        self, 
+        crew_name: str, 
+        inputs: Optional[Dict[str, Any]] = None,
+        task_id: Optional[str] = None,
+        resume: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Run a CrewAI crew.
+        
+        This method creates and runs a CrewAI crew with the specified inputs.
+        
+        Args:
+            crew_name: Name of the crew to run
+            inputs: Input data for the crew
+            task_id: Optional task ID for tracking
+            resume: Whether this is resuming a paused execution
+            
+        Returns:
+            Dictionary with execution results
+        """
+        try:
+            # Create crew
+            crew = await self.create_crew(crew_name)
+            
+            # Prepare inputs
+            crew_inputs = inputs or {}
+            
+            # Add task_id to inputs if provided
+            if task_id:
+                crew_inputs["task_id"] = task_id
+            
+            # Add resume flag to inputs if provided
+            if resume:
+                crew_inputs["resume"] = True
+            
+            # Start timer for metrics
+            start_time = asyncio.get_event_loop().time()
+            
+            # Run crew
+            result = crew.kickoff(inputs=crew_inputs)
+            
+            # Record metrics
+            duration = asyncio.get_event_loop().time() - start_time
+            crew_task_duration_seconds.labels(crew=crew_name).observe(duration)
+            
+            # Process result
+            if isinstance(result, TaskOutput):
+                return {
+                    "success": True,
+                    "result": result.raw_output,
+                    "task_id": result.task_id,
+                    "agent_id": result.agent_id
+                }
+            else:
+                # Handle string or other result types
+                return {
+                    "success": True,
+                    "result": result
+                }
+        
+        except Exception as e:
+            logger.exception(f"Error running crew '{crew_name}': {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+        finally:
+            # Close connections
+            await self.close()
+    
+    @staticmethod
+    async def load(crew_name: str) -> Crew:
+        """
+        Load a crew by name.
+        
+        This static method creates a CrewFactory, connects to external services,
+        and creates a crew with the specified name.
+        
+        Args:
+            crew_name: Name of the crew to load
+            
+        Returns:
+            CrewAI Crew instance
+        """
+        factory = CrewFactory()
+        await factory.connect()
+        return await factory.create_crew(crew_name)
+    
+    @staticmethod
+    def get_available_crews() -> List[str]:
         """
         Get a list of available crew names.
         
         Returns:
             List of crew names
         """
-        return get_available_crews()
-    
-    @classmethod
-    def create_tool(cls, tool_type: str, **kwargs) -> Any:
-        """
-        Create a tool instance based on the tool type.
-        
-        Args:
-            tool_type: The type of tool to create
-            **kwargs: Additional arguments for the tool
-            
-        Returns:
-            The created tool instance
-        """
-        # Create a cache key based on tool type and kwargs
-        cache_key = f"{tool_type}:{hash(frozenset(kwargs.items()))}"
-        
-        # Check cache
-        if cache_key in cls._tool_cache:
-            return cls._tool_cache[cache_key]
-        
-        # Create the tool based on type
-        tool = None
-        try:
-            if tool_type == "GraphQueryTool":
-                if GraphQueryTool is None:
-                    logger.warning(f"GraphQueryTool is not available")
-                    return None
-                neo4j_client = Neo4jClient()
-                tool = GraphQueryTool(neo4j_client=neo4j_client, **kwargs)
-            elif tool_type == "SandboxExecTool":
-                if SandboxExecTool is None:
-                    logger.warning(f"SandboxExecTool is not available")
-                    return None
-                e2b_client = E2BClient()
-                tool = SandboxExecTool(e2b_client=e2b_client, **kwargs)
-            elif tool_type == "CodeGenTool":
-                if CodeGenTool is None:
-                    logger.warning(f"CodeGenTool is not available")
-                    return None
-                tool = CodeGenTool(**kwargs)
-            elif tool_type == "PatternLibraryTool":
-                if PatternLibraryTool is None:
-                    logger.warning(f"PatternLibraryTool is not available")
-                    return None
-                tool = PatternLibraryTool(**kwargs)
-            elif tool_type == "PolicyDocsTool":
-                if PolicyDocsTool is None:
-                    logger.warning(f"PolicyDocsTool is not available")
-                    return None
-                tool = PolicyDocsTool(**kwargs)
-            elif tool_type == "TemplateEngineTool":
-                if TemplateEngineTool is None:
-                    logger.warning(f"TemplateEngineTool is not available")
-                    return None
-                tool = TemplateEngineTool(**kwargs)
-            elif tool_type == "Neo4jSchemaTool":
-                if Neo4jSchemaTool is None:
-                    logger.warning(f"Neo4jSchemaTool is not available")
-                    return None
-                tool = Neo4jSchemaTool(**kwargs)
-            elif tool_type == "RandomTxGeneratorTool":
-                if RandomTxGeneratorTool is None:
-                    logger.warning(f"RandomTxGeneratorTool is not available")
-                    return None
-                tool = RandomTxGeneratorTool(**kwargs)
-            else:
-                logger.warning(f"Unknown tool type: {tool_type}")
-                return None
-        except ImportError as e:
-            logger.warning(f"Could not import tool {tool_type}: {str(e)}")
-            return None
-        except Exception as e:
-            logger.error(f"Error creating tool {tool_type}: {str(e)}")
-            return None
-        
-        # Cache the tool
-        cls._tool_cache[cache_key] = tool
-        
-        return tool
-    
-    @classmethod
-    def _create_agent(cls, agent_id: str, **override_kwargs) -> Agent:
-        """
-        Create an agent with the given ID and optional overrides.
-        
-        Args:
-            agent_id: The unique identifier for the agent
-            **override_kwargs: Optional overrides for agent configuration
-            
-        Returns:
-            The created Agent instance
-        """
-        # Check if agent is already in cache
-        if agent_id in cls._agent_cache:
-            return cls._agent_cache[agent_id]
-        
-        # Get agent configuration
-        agent_config = cls.get_agent_config(agent_id) or {}
-        
-        # Apply overrides
-        agent_config.update(override_kwargs)
-        
-        # Get required parameters
-        role = agent_config.get("role", f"Agent {agent_id}")
-        goal = agent_config.get("goal", "Assist the user with their tasks")
-        backstory = agent_config.get("backstory", f"You are {role}, an AI assistant.")
-        system_prompt = agent_config.get("system_prompt", "")
-        
-        # Create tools if specified
-        tools = []
-        if "tools" in agent_config:
-            for tool_config in agent_config["tools"]:
-                if isinstance(tool_config, str):
-                    # Simple tool reference
-                    tool = cls.create_tool(tool_config)
-                    if tool:
-                        tools.append(tool)
-                elif isinstance(tool_config, dict) and "type" in tool_config:
-                    # Tool with parameters
-                    tool_type = tool_config.pop("type")
-                    tool = cls.create_tool(tool_type, **tool_config)
-                    if tool:
-                        tools.append(tool)
-        
-        # Get LLM
-        llm_config = agent_config.get("llm", {})
-        if isinstance(llm_config, str):
-            # Simple model name
-            llm = get_llm(model=llm_config)
-        else:
-            # LLM with parameters
-            llm = get_llm(**llm_config)
-        
-        # Check for multimodal flag
-        multimodal = agent_config.get("multimodal", False)
-        
-        # Create the agent
-        agent = Agent(
-            role=role,
-            goal=goal,
-            backstory=backstory,
-            llm=llm,
-            tools=tools,
-            verbose=True,
-            allow_delegation=agent_config.get("allow_delegation", False),
-            max_iter=agent_config.get("max_iter", 15),
-            max_rpm=agent_config.get("max_rpm", None),
-            system_prompt=system_prompt,
-            config=AgentConfig(
-                multimodal=multimodal
-            )
-        )
-        
-        # Cache the agent
-        cls._agent_cache[agent_id] = agent
-        
-        return agent
-    
-    @classmethod
-    def create_crew(cls, crew_name: str, **override_kwargs) -> Optional[Crew]:
-        """
-        Create a crew with the given name and optional overrides.
-        
-        Args:
-            crew_name: The name of the crew to create
-            **override_kwargs: Optional overrides for crew configuration
-            
-        Returns:
-            The created Crew instance or None if creation fails
-        """
-        # Load crew configuration
-        crew_config_path = AGENT_CONFIGS_CREWS_DIR / f"{crew_name}.yaml"
-        if not crew_config_path.exists():
-            logger.error(f"Crew configuration not found: {crew_name}")
-            return None
-        
-        try:
-            with open(crew_config_path, "r") as f:
-                crew_config = yaml.safe_load(f)
-        except Exception as e:
-            logger.error(f"Error loading crew configuration {crew_name}: {str(e)}")
-            return None
-        
-        # Apply overrides
-        crew_config.update(override_kwargs)
-        
-        # Get process type
-        process_type_str = crew_config.get("process_type", "sequential").lower()
-        if process_type_str == "sequential":
-            process_type = Process.sequential
-        elif process_type_str == "hierarchical":
-            process_type = Process.hierarchical
-        else:
-            logger.warning(f"Unknown process type: {process_type_str}, defaulting to sequential")
-            process_type = Process.sequential
-        
-        # Create agents
-        agents = []
-        if "agents" in crew_config:
-            for agent_config in crew_config["agents"]:
-                if isinstance(agent_config, str):
-                    # Simple agent reference
-                    agent = cls._create_agent(agent_config)
-                    agents.append(agent)
-                elif isinstance(agent_config, dict) and "id" in agent_config:
-                    # Agent with overrides
-                    agent_id = agent_config.pop("id")
-                    agent = cls._create_agent(agent_id, **agent_config)
-                    agents.append(agent)
-        
-        # Create tasks if specified
-        tasks = []
-        if "tasks" in crew_config:
-            for task_config in crew_config["tasks"]:
-                if not isinstance(task_config, dict):
-                    continue
-                
-                # Get required parameters
-                description = task_config.get("description", "")
-                agent_id = task_config.get("agent", None)
-                
-                # Skip if no description or agent
-                if not description or not agent_id:
-                    continue
-                
-                # Find the agent
-                agent = next((a for a in agents if a.role.lower() == agent_id.lower()), None)
-                if not agent:
-                    # Try to create the agent
-                    agent = cls._create_agent(agent_id)
-                    if agent:
-                        agents.append(agent)
-                    else:
-                        logger.warning(f"Agent not found for task: {agent_id}")
-                        continue
-                
-                # Create the task
-                task = Task(
-                    description=description,
-                    agent=agent,
-                    expected_output=task_config.get("expected_output", None),
-                    async_execution=task_config.get("async_execution", False),
-                )
-                
-                # Add context if specified
-                if "context" in task_config:
-                    context_tasks = []
-                    for context_task_id in task_config["context"]:
-                        context_task = next((t for t in tasks if t.description == context_task_id), None)
-                        if context_task:
-                            context_tasks.append(context_task)
-                    
-                    if context_tasks:
-                        task.context = context_tasks
-                
-                tasks.append(task)
-        
-        # Create the crew
-        try:
-            crew = Crew(
-                agents=agents,
-                tasks=tasks,
-                process=process_type,
-                verbose=True,
-                memory=crew_config.get("memory", False),
-                max_rpm=crew_config.get("max_rpm", None),
-                manager_llm=get_llm() if process_type == Process.hierarchical else None,
-            )
-            
-            return crew
-        except Exception as e:
-            logger.error(f"Error creating crew {crew_name}: {str(e)}")
-            return None
-    
-    @classmethod
-    async def run_crew(cls, crew_name: str, inputs: Dict[str, Any] = None, task_id: str = None, resume: bool = False, **override_kwargs) -> Dict[str, Any]:
-        """
-        Run a crew with the given name and inputs.
-        
-        Args:
-            crew_name: The name of the crew to run
-            inputs: Optional inputs for the crew
-            task_id: Optional task ID for tracking
-            resume: Whether this is resuming a paused execution
-            **override_kwargs: Optional overrides for crew configuration
-            
-        Returns:
-            The crew execution results
-        """
-        # Create the crew
-        crew = cls.create_crew(crew_name, **override_kwargs)
-        if not crew:
-            return {
-                "success": False,
-                "error": f"Failed to create crew: {crew_name}"
-            }
-        
-        # Track active crew
-        increment_active_crews(crew_name)
-        
-        # Run the crew
-        try:
-            # Get tasks
-            tasks = crew.tasks
-            
-            # Initialize results
-            all_results = {}
-            
-            # Execute tasks
-            for i, task in enumerate(tasks):
-                agent_id = task.agent.role
-                task_description = task.description
-                
-                # Use context manager to track task duration and metrics
-                with track_crew_task_duration(crew_name, agent_id, task_description):
-                    # If resuming and this is the compliance_checker task that was paused
-                    if resume and agent_id.lower() == "compliance_checker" and i > 0:
-                        # Add review result to task context
-                        compliance_result = inputs.get("compliance_review_result", {})
-                        logger.info(f"Resuming with compliance review result: {compliance_result}")
-                        
-                        # Execute task with review result
-                        task_result = await task.execute(
-                            context=[all_results[prev_task.description] for prev_task in tasks[:i] if prev_task.description in all_results],
-                            inputs={**inputs, "review_result": compliance_result}
-                        )
-                    else:
-                        # Normal task execution
-                        task_result = await task.execute(
-                            context=[all_results[prev_task.description] for prev_task in tasks[:i] if prev_task.description in all_results],
-                            inputs=inputs
-                        )
-                    
-                    # Store result
-                    all_results[task.description] = task_result
-            
-            # Final result is the last task's result
-            result = all_results[tasks[-1].description] if tasks else None
-            
-            # Decrement active crew count
-            decrement_active_crews(crew_name)
-            
-            return {
-                "success": True,
-                "result": result
-            }
-        except Exception as e:
-            # Decrement active crew count
-            decrement_active_crews(crew_name)
-            
-            logger.error(f"Error running crew {crew_name}: {str(e)}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
-    
-    @classmethod
-    def clear_caches(cls) -> None:
-        """Clear all caches."""
-        cls._agent_config_cache.clear()
-        cls._agent_cache.clear()
-        cls._tool_cache.clear()
-        logger.info("All caches cleared")
-    
-    # Connection management for external services
-    @classmethod
-    async def connect(cls) -> None:
-        """Connect to external services."""
-        # Connect to Neo4j
-        try:
-            neo4j_client = Neo4jClient()
-            await neo4j_client.connect()
-            logger.info("Connected to Neo4j")
-        except Exception as e:
-            logger.warning(f"Failed to connect to Neo4j: {str(e)}")
-        
-        # Connect to e2b
-        try:
-            e2b_client = E2BClient()
-            # e2b connection is lazy, no explicit connect needed
-            logger.info("e2b client initialized")
-        except Exception as e:
-            logger.warning(f"Failed to initialize e2b client: {str(e)}")
-    
-    @classmethod
-    async def close(cls) -> None:
-        """Close connections to external services."""
-        # Close Neo4j connection
-        try:
-            neo4j_client = Neo4jClient()
-            await neo4j_client.close()
-            logger.info("Closed Neo4j connection")
-        except Exception as e:
-            logger.warning(f"Error closing Neo4j connection: {str(e)}")
+        return list(DEFAULT_CREW_CONFIGS.keys())
