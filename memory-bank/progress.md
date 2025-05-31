@@ -20,7 +20,10 @@ _Last updated: **31 May 2025 21:10 UTC**_
 * CI pipeline green after dependency pinning (`constraints.txt`, UV Dockerfile prototype).  
 * Memory Bank core files maintained – single source of truth in repo.  
 * **Frontend authentication UI** – Login, Register, Dashboard, HITL review components ready (PR #31).  
-* **Backend authentication system** – User model, JWT endpoints, bcrypt password hashing ready (PR #33).
+* **Backend authentication system** – User model, JWT endpoints, bcrypt password hashing ready (PR #33).  
+* **Crypto fraud detection tools** – time-series anomaly, wash trading, pump-and-dump detectors.  
+* **CSV → Neo4j loader for crypto data** – high-speed ingest with schema & metrics.  
+* **30+ crypto-specific fraud patterns** – wash-trading, pump-and-dump, rug-pulls, flash-loan, etc.
 
 ---
 
@@ -92,5 +95,19 @@ Legend  🟢 works  🟡 partial  🔴 not started
 | Time (UTC) | Focus | Key Findings |
 |------------|-------|--------------|
 | 20:00-21:00 | **Authentication implementation verification** | • Confirmed frontend auth UI (login, register, dashboard, HITL review) fully merged.<br>• Confirmed backend auth system (User model, JWT endpoints, bcrypt hashing) operational.<br>• JWT/RBAC security working; tests pass, coverage at ~50 %.<br>• Identified missing Alembic migrations, `jwt-decode` npm install, Redis blacklist wiring, env-var cleanup, and pending GitLab sync.<br>• Documented findings in `memory-bank/auth-verification-2025-05-31.md`. |
+
+---
+
+## 📅 31 May 2025 – Session 7 (Crypto Fraud Detection)
+| Time (UTC) | Focus | Key Achievements |
+|------------|-------|------------------|
+| 21:30-22:30 | Implementing crypto fraud detection from Python Fraud Detection Ideas | • Created **CryptoAnomalyTool** with ADTK time-series analysis.<br>• Created **CryptoCSVLoaderTool** for CSV→Neo4j import.<br>• Added **30+** crypto fraud patterns (wash-trading, pump-and-dump, flash-loan, etc.).<br>• Integrated new tools into **CrewFactory**. |
+
+_Files created/modified_:  
+`backend/agents/tools/crypto_anomaly_tool.py`,  
+`backend/agents/tools/crypto_csv_loader_tool.py`,  
+`backend/agents/patterns/crypto_fraud_patterns.yaml`,  
+`backend/agents/factory.py`,  
+`CRYPTO_FEATURES.md`
 
 ---
