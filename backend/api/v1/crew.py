@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from backend.auth.dependencies import get_current_user, RateLimiter
+from backend.auth.rbac import require_roles, Roles, RoleSets
 from backend.agents.factory import CrewFactory
 from backend.agents.config import load_agent_config, load_crew_config
 
@@ -127,6 +128,7 @@ crew_rate_limiter = RateLimiter(times=5, seconds=60)  # 5 requests per minute
     summary="Run a CrewAI crew",
     dependencies=[Depends(get_current_user), Depends(crew_rate_limiter)]
 )
+@require_roles([Roles.ADMIN, Roles.ANALYST], "Only administrators and analysts can run crews")
 async def run_crew(
     request: CrewRequest,
     background_tasks: BackgroundTasks
@@ -312,6 +314,7 @@ async def get_crew_status(
     summary="Pause a crew execution for compliance review",
     dependencies=[Depends(get_current_user)]
 )
+@require_roles([Roles.ADMIN, Roles.COMPLIANCE], "Only administrators and compliance officers can pause crews")
 async def pause_crew(
     review_request: ReviewRequest,
     task_id: str = Path(..., description="Task ID of the execution to pause")
@@ -391,6 +394,7 @@ async def pause_crew(
     summary="Resume a paused crew execution",
     dependencies=[Depends(get_current_user)]
 )
+@require_roles([Roles.ADMIN, Roles.COMPLIANCE], "Only administrators and compliance officers can resume crews")
 async def resume_crew(
     resume_request: ResumeRequest,
     task_id: str = Path(..., description="Task ID of the execution to resume"),
@@ -501,6 +505,7 @@ async def resume_crew(
     summary="Get compliance review details for a task",
     dependencies=[Depends(get_current_user)]
 )
+@require_roles([Roles.ADMIN, Roles.COMPLIANCE, Roles.ANALYST], "Only administrators, compliance officers, and analysts can view reviews")
 async def get_review_details(
     task_id: str = Path(..., description="Task ID of the execution")
 ):
