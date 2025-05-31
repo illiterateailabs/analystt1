@@ -31,7 +31,8 @@ from backend.agents.tools import (
     PatternLibraryTool,
     Neo4jSchemaTool,
     TemplateEngineTool,
-    PolicyDocsTool
+    PolicyDocsTool,
+    FraudMLTool
 )
 from backend.integrations.neo4j_client import Neo4jClient
 from backend.integrations.gemini_client import GeminiClient
@@ -120,6 +121,7 @@ class CrewFactory:
         tools["neo4j_schema_tool"] = Neo4jSchemaTool(neo4j_client=self.neo4j_client)
         tools["template_engine_tool"] = TemplateEngineTool()
         tools["policy_docs_tool"] = PolicyDocsTool(gemini_client=self.gemini_client)
+        tools["fraud_ml_tool"] = FraudMLTool(neo4j_client=self.neo4j_client)
         
         # Add crypto tools if available
         crypto_tools = create_crypto_tools()
