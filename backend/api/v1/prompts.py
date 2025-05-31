@@ -6,7 +6,7 @@ import yaml
 import json
 from pathlib import Path
 
-from backend.auth.dependencies import get_current_user
+from backend.auth.dependencies import require_admin
 from backend.agents.factory import CrewFactory
 from backend.core.logging import get_logger
 
@@ -15,7 +15,7 @@ logger = get_logger(__name__)
 router = APIRouter(
     prefix="/prompts",
     tags=["prompts"],
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(require_admin)],
 )
 
 # Path to agent configs directory

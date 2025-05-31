@@ -40,7 +40,8 @@ _rate_limit_store: Dict[str, Dict[str, Union[int, float]]] = {}
 
 async def get_current_user(
     token: Optional[str] = Depends(oauth2_scheme),
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(http_bearer)
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(http_bearer),
+    request: Optional[Request] = None
 ) -> Dict:
     """
     Validate JWT token and return current user.
@@ -52,6 +53,7 @@ async def get_current_user(
     Args:
         token: OAuth2 token from Authorization header
         credentials: HTTP Bearer credentials
+        request: FastAPI request object for storing user in state
         
     Returns:
         Dict containing user information from token
@@ -95,6 +97,10 @@ async def get_current_user(
             "role": user_data.get("role", UserRole.ANALYST),  # Default to ANALYST
             **user_data
         }
+        
+        # Store user in request state if request is provided
+        if request is not None:
+            setattr(request.state, 'user', user)
         
         return user
         
