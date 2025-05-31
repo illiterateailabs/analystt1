@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          pip install -r requirements.txt
+          pip install --constraint constraints.txt -r requirements.txt
       - name: Lint with Ruff
         run: |
           ruff check --output-format=github backend tests
@@ -38,7 +38,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          pip install -r requirements.txt
+          pip install --constraint constraints.txt -r requirements.txt
       - name: Type check with mypy
         env:
           PYTHONPATH: .
@@ -77,7 +77,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          pip install -r requirements.txt
+          pip install --constraint constraints.txt -r requirements.txt
       - name: Test with pytest
         env:
           NEO4J_URI: bolt://localhost:7687
