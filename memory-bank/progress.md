@@ -1,5 +1,5 @@
 # progress.md – Project Progress & Health  
-_Last updated: **31 May 2025 07:00 UTC**_
+_Last updated: **31 May 2025 08:00 UTC**_
 
 ---
 
@@ -12,18 +12,18 @@ _Last updated: **31 May 2025 07:00 UTC**_
 * **Pattern Library PoC** – YAML schema, PatternLibraryTool, example structuring patterns, 95 % unit-test coverage (PR #16).  
 * **Gemini 2.5 Testing Framework** – flash vs pro comparison, multimodal demo, token/cost tracking.  
 * **HITL Workflow** – pause/resume endpoints, webhook notifications, compliance review system (PR #18).  
-* **Prometheus LLM Metrics** – automatic token & USD cost tracking via GeminiClient integration (PR TBD).  
+* **Prometheus LLM Metrics** – automatic token & USD cost tracking via GeminiClient integration (PR #23).  
+* **GraphVisualization MVP** – vis-network interactive view, PNG export (PR TBD).  
 * Test coverage lifted to **≈ 35 %**.  
 * Memory Bank core files maintained – single source of truth in repo.
 
 ---
 
 ## 🛠️ What's Left to Build (Phase-2 MVP)
-1. **Front-end Graph Visual Component** – render graph JSON from `/crew/run`.  
-2. **Increase coverage to ≥ 50 %** (add HITL & graph tests).  
-3. **Cost Telemetry** – real-time Gemini token + USD tracking.  
-4. **RBAC Enforcement** – apply decorators to protected endpoints.  
-5. **Production Observability** – Loki/Sentry integration, SSE streaming.
+1. **Increase coverage to ≥ 50 %** (add HITL & graph tests).  
+2. **Cost Telemetry** – real-time Gemini token + USD tracking dashboard.  
+3. **RBAC Enforcement** – apply decorators to protected endpoints.  
+4. **Production Observability** – Loki/Sentry integration, SSE streaming.
 
 ---
 
@@ -37,7 +37,7 @@ _Last updated: **31 May 2025 07:00 UTC**_
 | **Pattern Library** | 🟢 PoC merged | YAML schema + tool implemented |
 | **Prompt Management** | 🟢 Live editing UI | Runtime hot-reload |
 | **HITL Layer** | 🟢 Implemented | Webhooks, pause/resume, review system |
-| **Frontend Next.js** | 🟡 Skeleton | Components empty |
+| **Frontend Next.js** | 🟡 MVP graph done | Additional views TBD |
 | **CI Pipeline** | 🟡 Partial | Fixing dependency resolution issues |
 | **Docker Prod Compose** | 🟢 Builds locally | Images tagged `:1.0.0` |
 
@@ -46,9 +46,9 @@ Legend  🟢 works 🟡 partial 🔴 not started
 ---
 
 ## 🐞 Known Issues & Bugs
-* Front-end skeleton empty; graph visual not rendered.  
+* Front-end skeleton still missing analysis & sandbox views.  
 * Test coverage only ~35 %.  
-* Graph visual output currently plain JSON; UI expects nodes/edges schema.  
+* Graph JSON contract may evolve; UI schema validation missing.  
 * HITL workflow needs integration tests and front-end review UI.  
 * CI pipeline failing with "resolution-too-deep" errors during dependency installation (spacy/confection conflict).
 
@@ -61,13 +61,13 @@ Legend  🟢 works 🟡 partial 🔴 not started
 | 02:30-04:30 | **HITL Workflow (P1)** | Implemented webhooks API, pause/resume endpoints, compliance review system. PR #18 created. |
 | 04:30-06:00 | **CI Dependency Fixes (P0)** | Fixed "resolution-too-deep" errors by downgrading spacy, adding constraints.txt for transitive dependencies, improving Dockerfile pip strategy. |
 | 06:00-07:00 | **Prometheus LLM Metrics (P0)** | Integrated cost & token counters into GeminiClient; TODO list updated. |
+| 07:00-08:00 | **GraphVisualization MVP (P1)** | Built vis-network component with PNG export; integrated into main page. |
 
 ### Delta
-* Coverage maintained at **35 %** (new HITL components need tests).  
-* Component statuses updated (HITL Layer now 🟢, CI Pipeline now 🟡 due to dependency issues).  
-* **Prometheus LLM metrics implemented; TODO list updated.**  
-* Added webhooks API (`/api/v1/webhooks`) for external notifications.  
-* Created constraints.txt file to pin transitive dependencies and fix dependency resolution errors.  
-* Modified Docker build process to use two-phase dependency installation for better reliability.
+* Coverage maintained at **35 %** (new GraphVisualization needs tests).  
+* Component statuses updated (Frontend now 🟡 with MVP graph).  
+* **GraphVisualization MVP implemented; front-end graph task removed from TODO list.**  
+* Added PNG export feature via vis-network.  
+* Updated progress timestamp and TODO numbering.
 
 ---
