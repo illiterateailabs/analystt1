@@ -1,5 +1,5 @@
 # progress.md – Project Progress & Health  
-_Last updated: **31 May 2025 08:00 UTC**_
+_Last updated: **31 May 2025 07:00 UTC**_
 
 ---
 
@@ -11,16 +11,16 @@ _Last updated: **31 May 2025 08:00 UTC**_
 * **Agent Prompt Management System** – runtime CRUD API + React UI for editing agent prompts (PR #15).  
 * **Pattern Library PoC** – YAML schema, PatternLibraryTool, example structuring patterns, 95 % unit-test coverage (PR #16).  
 * **Gemini 2.5 Testing Framework** – flash vs pro comparison, multimodal demo, token/cost tracking.  
-* **HITL Workflow** – pause/resume endpoints, webhook notifications, compliance review system (PR #18).
-* **Graph Visualization** – interactive fraud investigation results display with filtering and node details (PR #21).
-* Test coverage lifted to **≈ 40 %**.  
+* **HITL Workflow** – pause/resume endpoints, webhook notifications, compliance review system (PR #18).  
+* **Prometheus LLM Metrics** – automatic token & USD cost tracking via GeminiClient integration (PR TBD).  
+* Test coverage lifted to **≈ 35 %**.  
 * Memory Bank core files maintained – single source of truth in repo.
 
 ---
 
 ## 🛠️ What's Left to Build (Phase-2 MVP)
-1. **Prometheus Metrics** – `crew_task_duration_seconds`, `llm_tokens_used_total`, `llm_cost_usd_total`.  
-2. **Increase coverage to ≥ 50 %** (add HITL, graph & frontend tests).  
+1. **Front-end Graph Visual Component** – render graph JSON from `/crew/run`.  
+2. **Increase coverage to ≥ 50 %** (add HITL & graph tests).  
 3. **Cost Telemetry** – real-time Gemini token + USD tracking.  
 4. **RBAC Enforcement** – apply decorators to protected endpoints.  
 5. **Production Observability** – Loki/Sentry integration, SSE streaming.
@@ -37,7 +37,7 @@ _Last updated: **31 May 2025 08:00 UTC**_
 | **Pattern Library** | 🟢 PoC merged | YAML schema + tool implemented |
 | **Prompt Management** | 🟢 Live editing UI | Runtime hot-reload |
 | **HITL Layer** | 🟢 Implemented | Webhooks, pause/resume, review system |
-| **Frontend Next.js** | 🟡 Partial | Graph visualization done, other components empty |
+| **Frontend Next.js** | 🟡 Skeleton | Components empty |
 | **CI Pipeline** | 🟡 Partial | Fixing dependency resolution issues |
 | **Docker Prod Compose** | 🟢 Builds locally | Images tagged `:1.0.0` |
 
@@ -46,10 +46,10 @@ Legend  🟢 works 🟡 partial 🔴 not started
 ---
 
 ## 🐞 Known Issues & Bugs
-* Test coverage only ~40 %.  
-* No cost telemetry; Gemini spending invisible.  
-* Graph visual output currently plain JSON; UI expects nodes/edges schema.
-* HITL workflow needs integration tests and front-end review UI.
+* Front-end skeleton empty; graph visual not rendered.  
+* Test coverage only ~35 %.  
+* Graph visual output currently plain JSON; UI expects nodes/edges schema.  
+* HITL workflow needs integration tests and front-end review UI.  
 * CI pipeline failing with "resolution-too-deep" errors during dependency installation (spacy/confection conflict).
 
 ---
@@ -60,41 +60,14 @@ Legend  🟢 works 🟡 partial 🔴 not started
 | 00:00-02:30 | **CI Pipeline Fixes (P0)** | Fixed import errors, missing files, type annotations. |
 | 02:30-04:30 | **HITL Workflow (P1)** | Implemented webhooks API, pause/resume endpoints, compliance review system. PR #18 created. |
 | 04:30-06:00 | **CI Dependency Fixes (P0)** | Fixed "resolution-too-deep" errors by downgrading spacy, adding constraints.txt for transitive dependencies, improving Dockerfile pip strategy. |
-| 06:00-08:00 | **Graph Visualization (P0)** | Implemented interactive graph visualization for fraud investigation results with filtering, node details, and export capabilities. PR #21 created. |
+| 06:00-07:00 | **Prometheus LLM Metrics (P0)** | Integrated cost & token counters into GeminiClient; TODO list updated. |
 
 ### Delta
-* Coverage improved to **40 %** (new frontend components need tests).  
-* Component statuses updated (Frontend Next.js now 🟡 Partial with graph visualization done).  
-* Removed "Front-end graph visual not rendered" from Known Issues list.
-* Created constraints.txt file to pin transitive dependencies and fix dependency resolution errors.
+* Coverage maintained at **35 %** (new HITL components need tests).  
+* Component statuses updated (HITL Layer now 🟢, CI Pipeline now 🟡 due to dependency issues).  
+* **Prometheus LLM metrics implemented; TODO list updated.**  
+* Added webhooks API (`/api/v1/webhooks`) for external notifications.  
+* Created constraints.txt file to pin transitive dependencies and fix dependency resolution errors.  
 * Modified Docker build process to use two-phase dependency installation for better reliability.
-* Added comprehensive graph visualization with vis-network, supporting fraud investigation results.
-
----
-
-## 📅 30 May 2025 – Session 2
-| Time (UTC) | Focus | Outcome |
-|-------------|-------|---------| 
-| 14:00-17:30 | **Agent Prompt Management (P0)** | Backend CRUD API, React UI, hot-reload. PR #15 merged into `main`. |
-| 17:45-21:00 | **Pattern Library PoC (P1)** | YAML schema, PatternLibraryTool, example patterns, 200+ unit tests. PR #16 merged. |
-| 21:10-22:30 | **Gemini 2.5 Testing Framework (P0)** | Flash vs Pro benchmark script, multimodal support, token/cost tracking. |
-
-### Delta
-* Coverage ↑ 31 % → **35 %**.  
-* Component statuses updated (Pattern Library + Prompt Management now 🟢).  
-* Removed completed tasks from TODO list; HITL workflow & metrics now top priority.
-
----
-
-## 🔄 Evolution of Key Decisions
-| Date | Decision | Impact |
-|------|----------|--------|
-| 29 May 2025 | Adopt CrewAI sequential for MVP | Ensures auditability |
-| 30 May 2025 | Memory Bank formalised | Post-reset onboarding streamlined |
-| 30 May 2025 | Pattern Library YAML schema introduced | Deterministic fraud detection |
-| 30 May 2025 | Runtime prompt editing capability added | Rapid agent tuning |
-| 31 May 2025 | HITL workflow with webhooks implemented | Regulatory compliance for AML |
-| 31 May 2025 | Added constraints.txt for dependency management | Improved CI reliability |
-| 31 May 2025 | Implemented interactive graph visualization | Enhanced fraud investigation UX |
 
 ---

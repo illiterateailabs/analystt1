@@ -7,12 +7,21 @@ import io
 from PIL import Image
 
 from google import genai
-from google.genai.types import HarmCategory, HarmBlockThreshold
+from google.genai.types import HarmCategory, HarmBlockThreshold, GenerateContentResponse
 
 from backend.config import GeminiConfig
+from backend.core.metrics import track_llm_usage
 
 
 logger = logging.getLogger(__name__)
+
+# Define pricing per million tokens for different Gemini models
+GEMINI_PRICING = {
+    "models/gemini-1.5-flash-latest": {"input": 0.35/1_000_000, "output": 0.70/1_000_000},
+    "models/gemini-1.5-pro-latest": {"input": 3.50/1_000_000, "output": 10.50/1_000_000},
+    # Default pricing if model not found
+    "default": {"input": 1.0/1_000_000, "output": 2.0/1_000_000},
+}
 
 
 class GeminiClient:
@@ -43,6 +52,28 @@ class GeminiClient:
         )
         
         logger.info(f"Gemini client initialized with model: {self.config.MODEL}")
+    
+    def _update_metrics(self, model: str, response: GenerateContentResponse, success: bool):
+        """
+        Update metrics for LLM usage.
+        
+        Args:
+            model: The model name
+            response: The response from Gemini
+            success: Whether the request was successful
+        """
+        # Extract token usage from response metadata
+        prompt_tokens = response.usage_metadata.get("prompt_token_count", 0) if response.usage_metadata else 0
+        output_tokens = response.usage_metadata.get("candidates_token_count", 0) if response.usage_metadata else 0
+        
+        # Get pricing for the model
+        pricing = GEMINI_PRICING.get(model, GEMINI_PRICING["default"])
+        
+        # Calculate cost
+        cost = (prompt_tokens * pricing["input"]) + (output_tokens * pricing["output"])
+        
+        # Track metrics
+        track_llm_usage(model, prompt_tokens, output_tokens, cost, success)
     
     async def generate_text(
         self,
@@ -77,13 +108,19 @@ class GeminiClient:
             
             if response.text:
                 logger.debug(f"Generated text response: {response.text[:100]}...")
+                # Update metrics
+                self._update_metrics(self.config.MODEL, response, True)
                 return response.text
             else:
                 logger.warning("Empty response from Gemini")
+                # Update metrics with empty response
+                self._update_metrics(self.config.MODEL, response, False)
                 return "I apologize, but I couldn't generate a response for that query."
                 
         except Exception as e:
             logger.error(f"Error generating text with Gemini: {e}")
+            # Track failed request
+            track_llm_usage(self.config.MODEL, 0, 0, 0, False)
             raise
     
     async def generate_text_with_tools(
@@ -110,10 +147,14 @@ class GeminiClient:
                 generation_config=generation_config
             )
             
+            # Update metrics
+            self._update_metrics(self.config.MODEL, response, True)
             return response
                 
         except Exception as e:
             logger.error(f"Error generating text with tools: {e}")
+            # Track failed request
+            track_llm_usage(self.config.MODEL, 0, 0, 0, False)
             raise
     
     async def analyze_image(
@@ -140,13 +181,19 @@ class GeminiClient:
             
             if response.text:
                 logger.debug(f"Image analysis response: {response.text[:100]}...")
+                # Update metrics
+                self._update_metrics(self.config.MODEL, response, True)
                 return response.text
             else:
                 logger.warning("Empty response from Gemini image analysis")
+                # Update metrics with empty response
+                self._update_metrics(self.config.MODEL, response, False)
                 return "I couldn't analyze this image."
                 
         except Exception as e:
             logger.error(f"Error analyzing image with Gemini: {e}")
+            # Track failed request
+            track_llm_usage(self.config.MODEL, 0, 0, 0, False)
             raise
     
     async def generate_cypher_query(
@@ -194,13 +241,19 @@ Follow these guidelines:
                     cypher_query = "\n".join(lines[1:-1])
                 
                 logger.debug(f"Generated Cypher query: {cypher_query}")
+                # Update metrics
+                self._update_metrics(self.config.MODEL, response, True)
                 return cypher_query
             else:
                 logger.warning("Empty Cypher query response from Gemini")
+                # Update metrics with empty response
+                self._update_metrics(self.config.MODEL, response, False)
                 return "MATCH (n) RETURN n LIMIT 10"  # Fallback query
                 
         except Exception as e:
             logger.error(f"Error generating Cypher query: {e}")
+            # Track failed request
+            track_llm_usage(self.config.MODEL, 0, 0, 0, False)
             raise
     
     async def generate_python_code(
@@ -249,13 +302,19 @@ Return only the Python code without explanations.
                     code = "\n".join(lines[1:-1])
                 
                 logger.debug(f"Generated Python code: {code[:200]}...")
+                # Update metrics
+                self._update_metrics(self.config.MODEL, response, True)
                 return code
             else:
                 logger.warning("Empty Python code response from Gemini")
+                # Update metrics with empty response
+                self._update_metrics(self.config.MODEL, response, False)
                 return "# No code generated"
                 
         except Exception as e:
             logger.error(f"Error generating Python code: {e}")
+            # Track failed request
+            track_llm_usage(self.config.MODEL, 0, 0, 0, False)
             raise
     
     async def explain_results(
@@ -292,11 +351,17 @@ Keep the explanation clear and accessible to business users.
             
             if response.text:
                 logger.debug(f"Generated explanation: {response.text[:100]}...")
+                # Update metrics
+                self._update_metrics(self.config.MODEL, response, True)
                 return response.text
             else:
                 logger.warning("Empty explanation response from Gemini")
+                # Update metrics with empty response
+                self._update_metrics(self.config.MODEL, response, False)
                 return "Unable to generate explanation for the results."
                 
         except Exception as e:
             logger.error(f"Error generating explanation: {e}")
+            # Track failed request
+            track_llm_usage(self.config.MODEL, 0, 0, 0, False)
             raise
