@@ -48,9 +48,9 @@ if __name__ == "__main__":
 
 try:
     from crewai.llm import LLM
-    import google.generativeai as genai
+    from google import genai
 except ImportError:
-    logger.error("Required packages not found. Please install: pip install crewai google-generativeai")
+    logger.error("Required packages not found. Please install: pip install crewai google-genai")
     sys.exit(1)
 
 # Model IDs

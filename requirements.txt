@@ -14,7 +14,7 @@ chromadb>=0.5.23
 jinja2==3.1.2
 
 # Google Gemini Integration
-google-generativeai>=0.3.0
+google-genai>=0.2.0
 google-cloud-aiplatform==1.38.1
 
 # Neo4j Integration
