@@ -25,6 +25,26 @@ apiClient.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
+// Error handling helper
+export const handleAPIError = (error: any) => {
+  let message = 'An unexpected error occurred';
+  let status = 500;
+
+  if (error.response) {
+    // Server responded with error
+    status = error.response.status;
+    message = error.response.data?.detail || error.response.statusText;
+  } else if (error.request) {
+    // Request made but no response
+    message = 'No response from server. Please check your connection.';
+  } else {
+    // Request setup error
+    message = error.message;
+  }
+
+  return { status, message };
+};
+
 // Auth Types
 export interface LoginRequest {
   username: string;
@@ -100,18 +120,67 @@ export interface GraphQueryResponse {
 }
 
 // Crew Types
-export interface CrewRunRequest {
+export interface CrewRequest {
   crew_name: string;
-  inputs?: Record<string, any>;
-  options?: Record<string, any>;
+  inputs: Record<string, any>;
+  async_execution?: boolean;
 }
 
-export interface CrewRunResponse {
+export interface CrewResponse {
   success: boolean;
+  crew_name: string;
+  task_id?: string;
   result?: any;
   error?: string;
-  task_id?: string;
-  execution_time_ms?: number;
+}
+
+export interface AgentInfo {
+  id: string;
+  role: string;
+  goal: string;
+  tools: string[];
+  backstory?: string;
+}
+
+export interface CrewInfo {
+  name: string;
+  process_type: string;
+  manager?: string;
+  agents: string[];
+  description?: string;
+}
+
+export enum TaskState {
+  PENDING = "pending",
+  RUNNING = "running",
+  PAUSED = "paused",
+  COMPLETED = "completed",
+  FAILED = "failed"
+}
+
+export enum ReviewStatus {
+  PENDING = "pending",
+  APPROVED = "approved",
+  REJECTED = "rejected"
+}
+
+export interface ReviewRequest {
+  findings: string;
+  risk_level: string;
+  regulatory_implications: string[];
+  details?: Record<string, any>;
+}
+
+export interface ReviewResponse {
+  status: ReviewStatus;
+  reviewer: string;
+  comments?: string;
+}
+
+export interface ResumeRequest {
+  status: ReviewStatus;
+  reviewer: string;
+  comments?: string;
 }
 
 // Analysis Types
@@ -147,128 +216,232 @@ export interface PromptUpdate {
 }
 
 // Auth API
-export const login = async (data: LoginRequest): Promise<AuthResponse> => {
-  const response = await apiClient.post('/auth/login', data);
-  return response.data;
-};
-
-export const register = async (data: RegisterRequest): Promise<AuthResponse> => {
-  const response = await apiClient.post('/auth/register', data);
-  return response.data;
-};
-
-export const logout = async (): Promise<void> => {
-  localStorage.removeItem('auth_token');
-};
-
-export const getCurrentUser = async (): Promise<AuthResponse['user']> => {
-  const response = await apiClient.get('/auth/me');
-  return response.data;
+export const authAPI = {
+  login: async (data: LoginRequest): Promise<AuthResponse> => {
+    const response = await apiClient.post('/auth/login', data);
+    return response.data;
+  },
+  
+  register: async (data: RegisterRequest): Promise<AuthResponse> => {
+    const response = await apiClient.post('/auth/register', data);
+    return response.data;
+  },
+  
+  logout: async (): Promise<void> => {
+    localStorage.removeItem('auth_token');
+  },
+  
+  getCurrentUser: async (): Promise<AuthResponse['user']> => {
+    const response = await apiClient.get('/auth/me');
+    return response.data;
+  }
 };
 
 // Chat API
-export const getChatSessions = async (): Promise<ChatSession[]> => {
-  const response = await apiClient.get('/chat/sessions');
-  return response.data;
-};
-
-export const getChatSession = async (sessionId: string): Promise<ChatSession> => {
-  const response = await apiClient.get(`/chat/sessions/${sessionId}`);
-  return response.data;
-};
-
-export const createChatSession = async (title: string): Promise<ChatSession> => {
-  const response = await apiClient.post('/chat/sessions', { title });
-  return response.data;
-};
-
-export const sendChatMessage = async (
-  sessionId: string,
-  content: string
-): Promise<ChatMessage> => {
-  const response = await apiClient.post(`/chat/sessions/${sessionId}/messages`, {
-    content,
-  });
-  return response.data;
+export const chatAPI = {
+  getChatSessions: async (): Promise<ChatSession[]> => {
+    const response = await apiClient.get('/chat/sessions');
+    return response.data;
+  },
+  
+  getChatSession: async (sessionId: string): Promise<ChatSession> => {
+    const response = await apiClient.get(`/chat/sessions/${sessionId}`);
+    return response.data;
+  },
+  
+  createChatSession: async (title: string): Promise<ChatSession> => {
+    const response = await apiClient.post('/chat/sessions', { title });
+    return response.data;
+  },
+  
+  sendChatMessage: async (
+    sessionId: string,
+    content: string
+  ): Promise<ChatMessage> => {
+    const response = await apiClient.post(`/chat/sessions/${sessionId}/messages`, {
+      content,
+    });
+    return response.data;
+  },
+  
+  sendMessage: async (message: string, includeGraphData: boolean = false): Promise<any> => {
+    const response = await apiClient.post('/chat/message', {
+      message,
+      include_graph_data: includeGraphData
+    });
+    return response;
+  },
+  
+  analyzeImage: async (file: File, prompt?: string): Promise<any> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    if (prompt) {
+      formData.append('request', JSON.stringify({ prompt }));
+    }
+    
+    const response = await apiClient.post('/chat/analyze-image', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    
+    return response;
+  }
 };
 
 // Graph API
-export const executeGraphQuery = async (
-  data: GraphQueryRequest
-): Promise<GraphQueryResponse> => {
-  const response = await apiClient.post('/graph/query', data);
-  return response.data;
-};
-
-export const getGraphSchema = async (): Promise<any> => {
-  const response = await apiClient.get('/graph/schema');
-  return response.data;
+export const graphAPI = {
+  executeCypher: async (query: string, parameters?: Record<string, any>): Promise<any> => {
+    const response = await apiClient.post('/graph/query', {
+      query,
+      parameters
+    });
+    return response;
+  },
+  
+  getSchema: async (): Promise<any> => {
+    const response = await apiClient.get('/graph/schema');
+    return response;
+  },
+  
+  naturalLanguageQuery: async (question: string): Promise<any> => {
+    const response = await apiClient.post('/graph/nlq', {
+      question
+    });
+    return response;
+  },
+  
+  calculateCentrality: async (algorithm: string): Promise<any> => {
+    const response = await apiClient.post('/graph/centrality', {
+      algorithm
+    });
+    return response;
+  }
 };
 
 // Crew API
-export const runCrew = async (data: CrewRunRequest): Promise<CrewRunResponse> => {
-  const response = await apiClient.post('/crew/run', data);
-  return response.data;
-};
-
-export const getCrewStatus = async (taskId: string): Promise<any> => {
-  const response = await apiClient.get(`/crew/status/${taskId}`);
-  return response.data;
-};
-
-export const getAvailableCrews = async (): Promise<string[]> => {
-  const response = await apiClient.get('/crew/available');
-  return response.data.crews;
+export const crewAPI = {
+  runCrew: async (request: CrewRequest): Promise<any> => {
+    const response = await apiClient.post('/crew/run', request);
+    return response;
+  },
+  
+  getStatus: async (taskId: string): Promise<any> => {
+    const response = await apiClient.get(`/crew/status/${taskId}`);
+    return response;
+  },
+  
+  listCrews: async (): Promise<any> => {
+    const response = await apiClient.get('/crew/crews');
+    return response;
+  },
+  
+  getCrewDetails: async (crewName: string): Promise<any> => {
+    const response = await apiClient.get(`/crew/crews/${crewName}`);
+    return response;
+  },
+  
+  listAgents: async (crewName?: string): Promise<any> => {
+    const url = crewName ? `/crew/agents?crew_name=${crewName}` : '/crew/agents';
+    const response = await apiClient.get(url);
+    return response;
+  },
+  
+  getAgentDetails: async (agentId: string): Promise<any> => {
+    const response = await apiClient.get(`/crew/agents/${agentId}`);
+    return response;
+  },
+  
+  pauseTask: async (taskId: string, reviewRequest: ReviewRequest): Promise<any> => {
+    const response = await apiClient.post(`/crew/pause/${taskId}`, reviewRequest);
+    return response;
+  },
+  
+  resumeTask: async (taskId: string, resumeRequest: ResumeRequest): Promise<any> => {
+    const response = await apiClient.post(`/crew/resume/${taskId}`, resumeRequest);
+    return response;
+  },
+  
+  getReviewDetails: async (taskId: string): Promise<any> => {
+    const response = await apiClient.get(`/crew/review/${taskId}`);
+    return response;
+  }
 };
 
 // Analysis API
-export const analyzeText = async (data: AnalysisRequest): Promise<AnalysisResponse> => {
-  const response = await apiClient.post('/analysis/text', data);
-  return response.data;
-};
-
-export const analyzeImage = async (
-  image: File,
-  options?: Record<string, any>
-): Promise<AnalysisResponse> => {
-  const formData = new FormData();
-  formData.append('image', image);
+export const analysisAPI = {
+  analyzeText: async (data: AnalysisRequest): Promise<AnalysisResponse> => {
+    const response = await apiClient.post('/analysis/text', data);
+    return response.data;
+  },
   
-  if (options) {
-    formData.append('options', JSON.stringify(options));
+  analyzeImage: async (
+    image: File,
+    options?: Record<string, any>
+  ): Promise<AnalysisResponse> => {
+    const formData = new FormData();
+    formData.append('image', image);
+    
+    if (options) {
+      formData.append('options', JSON.stringify(options));
+    }
+    
+    const response = await apiClient.post('/analysis/image', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    
+    return response.data;
   }
-  
-  const response = await apiClient.post('/analysis/image', formData, {
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
-  });
-  
-  return response.data;
 };
 
 // Prompt Management API
-export const listAgents = async (): Promise<{ agents: AgentListItem[] }> => {
-  const response = await apiClient.get('/prompts');
-  return response.data;
+export const promptsAPI = {
+  listAgents: async (): Promise<{ agents: AgentListItem[] }> => {
+    const response = await apiClient.get('/prompts');
+    return response.data;
+  },
+  
+  getAgentPrompt: async (agentId: string): Promise<PromptResponse> => {
+    const response = await apiClient.get(`/prompts/${agentId}`);
+    return response.data;
+  },
+  
+  updateAgentPrompt: async (
+    agentId: string,
+    data: PromptUpdate
+  ): Promise<PromptResponse> => {
+    const response = await apiClient.put(`/prompts/${agentId}`, data);
+    return response.data;
+  },
+  
+  resetAgentPrompt: async (agentId: string): Promise<PromptResponse> => {
+    const response = await apiClient.post(`/prompts/${agentId}/reset`);
+    return response.data;
+  }
 };
 
-export const getAgentPrompt = async (agentId: string): Promise<PromptResponse> => {
-  const response = await apiClient.get(`/prompts/${agentId}`);
-  return response.data;
-};
-
-export const updateAgentPrompt = async (
-  agentId: string,
-  data: PromptUpdate
-): Promise<PromptResponse> => {
-  const response = await apiClient.put(`/prompts/${agentId}`, data);
-  return response.data;
-};
-
-export const resetAgentPrompt = async (agentId: string): Promise<PromptResponse> => {
-  const response = await apiClient.post(`/prompts/${agentId}/reset`);
-  return response.data;
-};
+// Legacy exports for backward compatibility
+export const login = authAPI.login;
+export const register = authAPI.register;
+export const logout = authAPI.logout;
+export const getCurrentUser = authAPI.getCurrentUser;
+export const getChatSessions = chatAPI.getChatSessions;
+export const getChatSession = chatAPI.getChatSession;
+export const createChatSession = chatAPI.createChatSession;
+export const sendChatMessage = chatAPI.sendChatMessage;
+export const executeGraphQuery = graphAPI.executeCypher;
+export const getGraphSchema = graphAPI.getSchema;
+export const runCrew = crewAPI.runCrew;
+export const getCrewStatus = crewAPI.getStatus;
+export const getAvailableCrews = crewAPI.listCrews;
+export const analyzeText = analysisAPI.analyzeText;
+export const analyzeImage = analysisAPI.analyzeImage;
+export const listAgents = promptsAPI.listAgents;
+export const getAgentPrompt = promptsAPI.getAgentPrompt;
+export const updateAgentPrompt = promptsAPI.updateAgentPrompt;
+export const resetAgentPrompt = promptsAPI.resetAgentPrompt;
 
 export default apiClient;

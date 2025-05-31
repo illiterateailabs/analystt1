@@ -9,14 +9,14 @@ Copy-paste (or paraphrase) the following as the very first user message of the n
 
 ```
 New session: load Memory Bank core files + session-handoff-2025-05-30.md.  
-Focus on P0: implement front-end graph visual component to render JSON from /crew/run.  
-Then increase test coverage to ≥ 50% (add HITL & metrics tests).  
+Focus on P0: increase test coverage to ≥ 50% (add HITL, metrics & graph visualization tests).  
+Then implement Prometheus metrics (crew_task_duration_seconds, llm_tokens_used_total, llm_cost_usd_total).  
 Ask for clarifications if needed.
 ```
 
 ---
 
-## 1 · Session Summary (30-31 May 2025, UTC 14:00-06:00)  
+## 1 · Session Summary (30-31 May 2025, UTC 14:00-08:00)  
 | Time | Accomplishment |
 |------|----------------|
 | 14:00-17:30 | Implemented **Agent Prompt Management** (CRUD API `/api/v1/prompts`, React UI, hot-reload). PR #15 merged. |
@@ -26,8 +26,9 @@ Ask for clarifications if needed.
 | 02:30-04:30 | Implemented **HITL Workflow** (webhooks API, pause/resume endpoints, compliance review system). PR #18 created. |
 | 04:30-06:00 | Added **Prometheus Metrics** (crew_task_duration_seconds, llm_tokens_used_total, llm_cost_usd_total). PR #19 created. |
 | 06:00-07:30 | Fixed **CI Dependency Resolution** (constraints.txt for transitive deps, improved Docker build process). PR #20 created. |
+| 07:30-08:00 | Implemented **Graph Visualization** (interactive fraud investigation results display with filtering, node details). PR #21 created. |
 
-Coverage climbed to ≈ 35 %, CI pipeline improvements in progress, all P0/P1 features implemented.
+Coverage improved to ≈ 40%, CI pipeline improvements in progress, all P0/P1 features implemented.
 
 ---
 
@@ -41,18 +42,17 @@ Pattern Library | 🟢 PoC merged | Deterministic YAML→Cypher tool
 Gemini Integration | 🟢 Flash & Pro tested | Testing script in `scripts/`  
 HITL Workflow | 🟢 implemented | Pause/resume endpoints, webhooks  
 Prometheus Metrics | 🟢 implemented | Task duration, token usage, cost tracking  
-Frontend UI | 🟡 skeleton | Chat, graph panes empty; Prompt editor done  
+Frontend UI | 🟡 partial | Graph visualization complete; Chat, analysis panes empty  
 CI Pipeline | 🟡 partial | Fixing dependency resolution issues  
-Test Coverage | 35 % | Target ≥ 50 % before Phase-2 close  
+Test Coverage | 40% | Target ≥ 50% before Phase-2 close  
 
 ---
 
 ## 3 · Next Priorities (ordered)  
 Priority | Task | ETA | Owner next session
 ---|---|---|---
-P0 | **Implement Front-end Graph Visual** — render JSON from `/crew/run` endpoint | 2 d | You
-P1 | **Raise test coverage to ≥ 50 %** — add HITL & metrics tests | ongoing | You
-P2 | **Cost Telemetry** — real-time Gemini token + USD tracking dashboard | 1 d | —
+P0 | **Raise test coverage to ≥ 50%** — add HITL, metrics & graph visualization tests | ongoing | You
+P1 | **Cost Telemetry** — real-time Gemini token + USD tracking dashboard | 1 d | —
 P2 | **RBAC Enforcement** — apply decorators to protected endpoints | 1 d | —
 P2 | **Production Observability** — Loki/Sentry integration, SSE streaming | 2 d | —
 
@@ -70,6 +70,7 @@ P2 | **Production Observability** — Loki/Sentry integration, SSE streaming | 2
 7. CI uses matrix (py39-41) + docker build; lint/mypy are strict (ruff / mypy --strict).  
 8. Environment vars: `REQUIRE_NEO4J=true` in prod; dev can run without Neo4j.
 9. **Dependency Management** uses constraints.txt to pin transitive dependencies and avoid "resolution-too-deep" errors; alternative Dockerfile.uv provided for faster/more reliable builds.
+10. **Graph Visualization** uses vis-network to render fraud investigation results with interactive filtering, node details, and export capabilities.
 
 ---
 
@@ -84,6 +85,7 @@ P2 | **Production Observability** — Loki/Sentry integration, SSE streaming | 2
 - [ ] Prometheus metrics show up at `/metrics` endpoint.
 - [ ] CI pipeline builds successfully with new constraints.txt and improved Dockerfile.
 - [ ] Test alternative Dockerfile.uv if pip still has resolution issues.
+- [ ] Graph visualization renders fraud investigation results correctly in frontend.
 
 ---
 
