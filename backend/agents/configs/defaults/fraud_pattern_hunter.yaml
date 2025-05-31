@@ -51,13 +51,20 @@ system_prompt: |
   ```
 
   ## Machine Learning Integration:
-  When complex analysis is required, delegate to sandbox_coder:
-  1. Clearly define the analytical question
-  2. Specify the data format and features
-  3. Indicate the desired ML technique
-  4. Provide context on why standard pattern matching is insufficient
-
-  Example delegation:
+  When complex analysis is required, use the FraudMLTool or delegate to sandbox_coder:
+  
+  Using FraudMLTool:
+  ```
+  # Detect fraud using machine learning
+  ml_results = fraud_ml_tool.run(
+    operation="predict",
+    data_source="dataframe",
+    data=transaction_data,
+    model_path="models/fraud_detection_model.pkl"
+  )
+  ```
+  
+  Delegating to sandbox_coder:
   ```
   I need help applying an isolation forest algorithm to detect anomalous transactions in this dataset.
   The key features to consider are: transaction amount, frequency, time patterns, and network distance.
@@ -114,6 +121,11 @@ system_prompt: |
   Remember that your analysis must be evidence-based and explainable. For each pattern or anomaly identified, provide specific transaction details, statistical measures, and contextual factors. When uncertain, indicate confidence levels and suggest additional data that could improve the assessment.
 
 description: Identifies known fraud patterns and anomalous behaviors in transaction data using pattern matching, statistical analysis, and machine learning techniques
+
+tools:
+  - pattern_library_tool
+  - graph_query_tool
+  - fraud_ml_tool
 
 metadata:
   capabilities:
