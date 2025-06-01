@@ -42,6 +42,22 @@ async def compliance_team_endpoint(
 ):
     return {"message": "Compliance team access granted", "user": request.state.user}
 
+# Test crew endpoints for RBAC testing
+@app.post("/api/v1/crew/run")
+@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
+async def crew_run_endpoint(request: Request):
+    return {"message": "Crew run initiated", "user": request.state.user}
+
+@app.patch("/api/v1/crew/pause")
+@require_roles(RoleSets.COMPLIANCE_TEAM)
+async def crew_pause_endpoint(request: Request):
+    return {"message": "Crew paused", "user": request.state.user}
+
+@app.patch("/api/v1/crew/resume")
+@require_roles(RoleSets.COMPLIANCE_TEAM)
+async def crew_resume_endpoint(request: Request):
+    return {"message": "Crew resumed", "user": request.state.user}
+
 
 # Fixtures for different user roles
 @pytest.fixture
@@ -323,3 +339,77 @@ def test_custom_error_message():
     response = test_client.get("/custom-error", headers={"Authorization": "Bearer analyst_token"})
     assert response.status_code == 403
     assert response.json()["detail"] == "Custom access denied message"
+
+
+# Tests for crew endpoint RBAC protection
+def test_crew_run_with_admin(client):
+    """Test that admin can access crew run endpoint."""
+    response = client.post("/api/v1/crew/run", headers={"Authorization": "Bearer admin_token"})
+    assert response.status_code == 200
+    assert response.json()["message"] == "Crew run initiated"
+    assert response.json()["user"]["role"] == "admin"
+
+
+def test_crew_run_with_analyst(client):
+    """Test that analyst can access crew run endpoint."""
+    response = client.post("/api/v1/crew/run", headers={"Authorization": "Bearer analyst_token"})
+    assert response.status_code == 200
+    assert response.json()["message"] == "Crew run initiated"
+    assert response.json()["user"]["role"] == "analyst"
+
+
+def test_crew_run_with_user(client):
+    """Test that regular user cannot access crew run endpoint."""
+    response = client.post("/api/v1/crew/run", headers={"Authorization": "Bearer user_token"})
+    assert response.status_code == 403
+    assert "Access denied" in response.json()["detail"]
+
+
+def test_crew_run_with_no_auth(client):
+    """Test that unauthenticated user cannot access crew run endpoint."""
+    response = client.post("/api/v1/crew/run")
+    assert response.status_code == 401
+    assert "Not authenticated" in response.json()["detail"]
+
+
+def test_crew_pause_with_compliance(client):
+    """Test that compliance officer can access crew pause endpoint."""
+    response = client.patch("/api/v1/crew/pause", headers={"Authorization": "Bearer compliance_token"})
+    assert response.status_code == 200
+    assert response.json()["message"] == "Crew paused"
+    assert response.json()["user"]["role"] == "compliance"
+
+
+def test_crew_resume_with_compliance(client):
+    """Test that compliance officer can access crew resume endpoint."""
+    response = client.patch("/api/v1/crew/resume", headers={"Authorization": "Bearer compliance_token"})
+    assert response.status_code == 200
+    assert response.json()["message"] == "Crew resumed"
+    assert response.json()["user"]["role"] == "compliance"
+
+
+def test_crew_pause_with_analyst(client):
+    """Test that analyst cannot access crew pause endpoint."""
+    response = client.patch("/api/v1/crew/pause", headers={"Authorization": "Bearer analyst_token"})
+    assert response.status_code == 403
+    assert "Access denied" in response.json()["detail"]
+
+
+def test_crew_resume_with_analyst(client):
+    """Test that analyst cannot access crew resume endpoint."""
+    response = client.patch("/api/v1/crew/resume", headers={"Authorization": "Bearer analyst_token"})
+    assert response.status_code == 403
+    assert "Access denied" in response.json()["detail"]
+
+
+def test_crew_pause_resume_with_admin(client):
+    """Test that admin can access crew pause and resume endpoints."""
+    # Test pause
+    response = client.patch("/api/v1/crew/pause", headers={"Authorization": "Bearer admin_token"})
+    assert response.status_code == 200
+    assert response.json()["message"] == "Crew paused"
+    
+    # Test resume
+    response = client.patch("/api/v1/crew/resume", headers={"Authorization": "Bearer admin_token"})
+    assert response.status_code == 200
+    assert response.json()["message"] == "Crew resumed"
