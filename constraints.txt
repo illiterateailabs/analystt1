@@ -16,6 +16,7 @@ huggingface-hub~=0.20.3
 googleapis-common-protos~=1.69.0
 # Pinning protobuf as it's a common source of conflict with google libraries
 protobuf~=4.25.0
+Deprecated==1.2.15
 
 # Chromadb constraint to ensure compatibility with crewai 0.119.0
 chromadb>=0.5.23,<0.6.0
