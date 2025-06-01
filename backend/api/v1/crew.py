@@ -1,948 +1,282 @@
 """
-CrewAI multi-agent system API endpoints.
+Crew API endpoints for running and managing agent crews.
 
-This module provides FastAPI endpoints for managing and interacting with
-CrewAI crews, including running crews, checking status, and listing available
-crews and agents.
+This module provides endpoints for listing available crews,
+running specific crews with inputs, and managing crew execution
+(pause, resume) for human-in-the-loop workflows.
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Union
-from datetime import datetime
-import uuid
-from enum import Enum
-
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query, Path, Body, status
-from fastapi.responses import JSONResponse
+from typing import Dict, List, Optional, Any, Union
+from fastapi import APIRouter, HTTPException, Depends, Request, status
 from pydantic import BaseModel, Field
 
-from backend.auth.dependencies import get_current_user, RateLimiter
-from backend.auth.rbac import require_roles, Roles, RoleSets
 from backend.agents.factory import CrewFactory
-from backend.agents.config import load_agent_config, load_crew_config
+from backend.auth.rbac import require_roles, Roles, RoleSets
+
 
 logger = logging.getLogger(__name__)
-
-# Create router
 router = APIRouter()
 
 
-# Models
-class CrewRequest(BaseModel):
-    """Model for crew execution requests."""
-    
+# Request/Response Models
+class CrewRunRequest(BaseModel):
+    """Request model for running a crew."""
     crew_name: str = Field(..., description="Name of the crew to run")
-    inputs: Dict[str, Any] = Field(default={}, description="Input data for the crew")
-    async_execution: bool = Field(default=False, description="Whether to run the crew asynchronously")
+    inputs: Optional[Dict[str, Any]] = Field(default={}, description="Input parameters for the crew")
+
+
+class CrewPauseRequest(BaseModel):
+    """Request model for pausing a crew."""
+    task_id: str = Field(..., description="Task ID of the running crew")
+    reason: Optional[str] = Field(None, description="Reason for pausing")
+
+
+class CrewResumeRequest(BaseModel):
+    """Request model for resuming a paused crew."""
+    task_id: str = Field(..., description="Task ID of the paused crew")
+    approved: bool = Field(..., description="Whether the task is approved to continue")
+    comment: Optional[str] = Field(None, description="Comment from the reviewer")
 
 
 class CrewResponse(BaseModel):
-    """Model for crew execution responses."""
-    
-    success: bool = Field(..., description="Whether the request was successful")
-    crew_name: str = Field(..., description="Name of the crew that was run")
-    task_id: Optional[str] = Field(None, description="Task ID for async execution")
+    """Response model for crew operations."""
+    success: bool = Field(..., description="Whether the operation was successful")
+    task_id: Optional[str] = Field(None, description="Task ID for tracking")
+    status: Optional[str] = Field(None, description="Current status of the crew")
     result: Optional[Any] = Field(None, description="Result of the crew execution")
-    error: Optional[str] = Field(None, description="Error message if execution failed")
+    error: Optional[str] = Field(None, description="Error message if any")
 
 
-class AgentInfo(BaseModel):
-    """Model for agent information."""
-    
-    id: str = Field(..., description="Agent ID")
-    role: str = Field(..., description="Agent role")
-    goal: str = Field(..., description="Agent goal")
-    tools: List[str] = Field(default=[], description="Tools used by the agent")
+# Dependency to get CrewFactory
+async def get_crew_factory(request: Request) -> CrewFactory:
+    """Get or create a CrewFactory instance."""
+    if not hasattr(request.app.state, "crew_factory"):
+        logger.info("Creating new CrewFactory instance")
+        request.app.state.crew_factory = CrewFactory()
+    return request.app.state.crew_factory
 
 
-class CrewInfo(BaseModel):
-    """Model for crew information."""
-    
-    name: str = Field(..., description="Crew name")
-    process_type: str = Field(..., description="Process type (sequential or hierarchical)")
-    manager: Optional[str] = Field(None, description="Manager agent ID")
-    agents: List[str] = Field(..., description="List of agent IDs in the crew")
-    description: Optional[str] = Field(None, description="Crew description")
-
-
-class TaskState(str, Enum):
-    """Enum for task execution states."""
-    
-    PENDING = "pending"
-    RUNNING = "running"
-    PAUSED = "paused"
-    COMPLETED = "completed"
-    FAILED = "failed"
-
-
-class ReviewStatus(str, Enum):
-    """Enum for compliance review status."""
-    
-    PENDING = "pending"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-
-
-class ReviewRequest(BaseModel):
-    """Model for compliance review request."""
-    
-    findings: str = Field(..., description="Compliance findings")
-    risk_level: str = Field(..., description="Risk level assessment")
-    regulatory_implications: List[str] = Field(..., description="Regulatory implications")
-    details: Optional[Dict[str, Any]] = Field(None, description="Additional details")
-
-
-class ReviewResponse(BaseModel):
-    """Model for compliance review response."""
-    
-    status: ReviewStatus = Field(..., description="Review status")
-    reviewer: str = Field(..., description="Name or ID of the reviewer")
-    comments: Optional[str] = Field(None, description="Comments from the reviewer")
-
-
-class ResumeRequest(BaseModel):
-    """Model for resume request."""
-    
-    status: ReviewStatus = Field(..., description="Review status (approved or rejected)")
-    reviewer: str = Field(..., description="Name or ID of the reviewer")
-    comments: Optional[str] = Field(None, description="Comments from the reviewer")
-
-
-# Background tasks storage
-background_tasks = {}
-
-# Task state storage (in-memory for now, could be moved to Redis)
-task_states = {}
-
-# Compliance review storage
-compliance_reviews = {}
-
-
-# Rate limiters
-crew_rate_limiter = RateLimiter(times=5, seconds=60)  # 5 requests per minute
-
-
-@router.post(
-    "/run",
-    response_model=CrewResponse,
-    summary="Run a CrewAI crew",
-    dependencies=[Depends(get_current_user), Depends(crew_rate_limiter)]
-)
-@require_roles([Roles.ADMIN, Roles.ANALYST], "Only administrators and analysts can run crews")
-async def run_crew(
-    request: CrewRequest,
-    background_tasks: BackgroundTasks
+@router.get("")
+@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
+async def list_crews(
+    crew_factory: CrewFactory = Depends(get_crew_factory)
 ):
-    """
-    Run a CrewAI crew with the specified inputs.
-    
-    This endpoint allows running a crew either synchronously (waiting for completion)
-    or asynchronously (returning immediately and processing in the background).
-    
-    Args:
-        request: The crew execution request
-        background_tasks: FastAPI background tasks
-        
-    Returns:
-        Crew execution response
-    """
-    try:
-        # Create crew factory
-        factory = CrewFactory()
-        
-        # Connect to external services
-        try:
-            await factory.connect()
-        except Exception as e:
-            logger.error(f"Error connecting to external services: {e}")
-            raise HTTPException(
-                status_code=503,
-                detail=f"Could not connect to required services: {str(e)}"
-            )
-        
-        # Check if crew exists
-        available_crews = factory.get_available_crews()
-        if request.crew_name not in available_crews:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Crew '{request.crew_name}' not found. Available crews: {', '.join(available_crews)}"
-            )
-        
-        # Run crew synchronously or asynchronously
-        if request.async_execution:
-            # Generate task ID
-            task_id = str(uuid.uuid4())
-            
-            # Initialize task state
-            task_states[task_id] = {
-                "state": TaskState.PENDING,
-                "crew_name": request.crew_name,
-                "inputs": request.inputs,
-                "created_at": datetime.now().isoformat(),
-                "last_updated": datetime.now().isoformat(),
-                "current_agent": None,
-                "paused_at": None,
-                "result": None,
-                "error": None
-            }
-            
-            # Add task to background tasks
-            background_tasks.add_task(
-                _run_crew_in_background,
-                task_id=task_id,
-                crew_name=request.crew_name,
-                inputs=request.inputs
-            )
-            
-            # Return task ID
-            return {
-                "success": True,
-                "crew_name": request.crew_name,
-                "task_id": task_id,
-                "result": None,
-                "error": None
-            }
-        else:
-            # Generate task ID for synchronous execution too (for consistency)
-            task_id = str(uuid.uuid4())
-            
-            # Initialize task state
-            task_states[task_id] = {
-                "state": TaskState.RUNNING,
-                "crew_name": request.crew_name,
-                "inputs": request.inputs,
-                "created_at": datetime.now().isoformat(),
-                "last_updated": datetime.now().isoformat(),
-                "current_agent": None,
-                "paused_at": None,
-                "result": None,
-                "error": None
-            }
-            
-            # Run crew synchronously
-            result = await factory.run_crew(request.crew_name, request.inputs, task_id=task_id)
-            
-            # Update task state
-            if not result.get("success", False):
-                task_states[task_id]["state"] = TaskState.FAILED
-                task_states[task_id]["error"] = result.get("error", "Unknown error")
-                task_states[task_id]["last_updated"] = datetime.now().isoformat()
-                
-                return {
-                    "success": False,
-                    "crew_name": request.crew_name,
-                    "task_id": task_id,
-                    "result": None,
-                    "error": result.get("error", "Unknown error")
-                }
-            
-            # Check if execution was paused
-            if task_states[task_id]["state"] == TaskState.PAUSED:
-                return {
-                    "success": True,
-                    "crew_name": request.crew_name,
-                    "task_id": task_id,
-                    "result": {
-                        "status": "paused",
-                        "message": "Execution paused for compliance review",
-                        "review_id": task_states[task_id].get("review_id")
-                    },
-                    "error": None
-                }
-            
-            # Update task state for completed execution
-            task_states[task_id]["state"] = TaskState.COMPLETED
-            task_states[task_id]["result"] = result.get("result")
-            task_states[task_id]["last_updated"] = datetime.now().isoformat()
-            
-            # Return result
-            return {
-                "success": True,
-                "crew_name": request.crew_name,
-                "task_id": task_id,
-                "result": result.get("result"),
-                "error": None
-            }
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"Error running crew: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error running crew: {str(e)}"
-        )
-
-
-@router.get(
-    "/status/{task_id}",
-    response_model=Dict[str, Any],
-    summary="Get status of a crew execution",
-    dependencies=[Depends(get_current_user)]
-)
-async def get_crew_status(
-    task_id: str = Path(..., description="Task ID of the execution")
-):
-    """
-    Get the status of a crew execution.
-    
-    Args:
-        task_id: Task ID of the execution
-        
-    Returns:
-        Crew execution status
-    """
-    # Check if task exists in task states
-    if task_id in task_states:
-        return task_states[task_id]
-    
-    # Check if task exists in background tasks (legacy support)
-    if task_id in background_tasks:
-        task_status = background_tasks[task_id]
-        return task_status
-    
-    # Task not found
-    raise HTTPException(
-        status_code=404,
-        detail=f"Task '{task_id}' not found"
-    )
-
-
-@router.post(
-    "/pause/{task_id}",
-    response_model=Dict[str, Any],
-    summary="Pause a crew execution for compliance review",
-    dependencies=[Depends(get_current_user)]
-)
-@require_roles([Roles.ADMIN, Roles.COMPLIANCE], "Only administrators and compliance officers can pause crews")
-async def pause_crew(
-    review_request: ReviewRequest,
-    task_id: str = Path(..., description="Task ID of the execution to pause")
-):
-    """
-    Pause a crew execution for compliance review.
-    
-    This endpoint is called when the compliance_checker agent needs human review.
-    It stores the review details and pauses the crew execution until a response
-    is received.
-    
-    Args:
-        review_request: The compliance review request
-        task_id: Task ID of the execution to pause
-        
-    Returns:
-        Pause status
-    """
-    # Check if task exists
-    if task_id not in task_states:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Task '{task_id}' not found"
-        )
-    
-    # Check if task is already paused
-    if task_states[task_id]["state"] == TaskState.PAUSED:
-        return {
-            "success": False,
-            "message": f"Task '{task_id}' is already paused",
-            "review_id": task_states[task_id].get("review_id")
-        }
-    
-    # Check if task is completed or failed
-    if task_states[task_id]["state"] in [TaskState.COMPLETED, TaskState.FAILED]:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Cannot pause task '{task_id}' in state '{task_states[task_id]['state']}'"
-        )
-    
-    # Generate review ID
-    review_id = f"REV-{uuid.uuid4().hex[:8].upper()}"
-    
-    # Store review details
-    compliance_reviews[review_id] = {
-        "review_id": review_id,
-        "task_id": task_id,
-        "findings": review_request.findings,
-        "risk_level": review_request.risk_level,
-        "regulatory_implications": review_request.regulatory_implications,
-        "details": review_request.details,
-        "status": ReviewStatus.PENDING,
-        "created_at": datetime.now().isoformat(),
-        "responses": []
-    }
-    
-    # Update task state
-    task_states[task_id]["state"] = TaskState.PAUSED
-    task_states[task_id]["paused_at"] = datetime.now().isoformat()
-    task_states[task_id]["current_agent"] = "compliance_checker"
-    task_states[task_id]["review_id"] = review_id
-    task_states[task_id]["last_updated"] = datetime.now().isoformat()
-    
-    logger.info(f"Task '{task_id}' paused for compliance review '{review_id}'")
-    
-    return {
-        "success": True,
-        "message": f"Task '{task_id}' paused for compliance review",
-        "review_id": review_id,
-        "task_id": task_id
-    }
-
-
-@router.post(
-    "/resume/{task_id}",
-    response_model=Dict[str, Any],
-    summary="Resume a paused crew execution",
-    dependencies=[Depends(get_current_user)]
-)
-@require_roles([Roles.ADMIN, Roles.COMPLIANCE], "Only administrators and compliance officers can resume crews")
-async def resume_crew(
-    resume_request: ResumeRequest,
-    task_id: str = Path(..., description="Task ID of the execution to resume"),
-    background_tasks: BackgroundTasks = None
-):
-    """
-    Resume a paused crew execution with the review result.
-    
-    This endpoint is called when a human reviewer has approved or rejected
-    the compliance review. It updates the review status and resumes the crew
-    execution.
-    
-    Args:
-        resume_request: The resume request with review status
-        task_id: Task ID of the execution to resume
-        background_tasks: FastAPI background tasks
-        
-    Returns:
-        Resume status
-    """
-    # Check if task exists
-    if task_id not in task_states:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Task '{task_id}' not found"
-        )
-    
-    # Check if task is paused
-    if task_states[task_id]["state"] != TaskState.PAUSED:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Task '{task_id}' is not paused (current state: {task_states[task_id]['state']})"
-        )
-    
-    # Get review ID
-    review_id = task_states[task_id].get("review_id")
-    if not review_id or review_id not in compliance_reviews:
-        raise HTTPException(
-            status_code=400,
-            detail=f"No compliance review found for task '{task_id}'"
-        )
-    
-    # Update review with response
-    compliance_reviews[review_id]["status"] = resume_request.status
-    compliance_reviews[review_id]["responses"].append({
-        "status": resume_request.status,
-        "reviewer": resume_request.reviewer,
-        "comments": resume_request.comments,
-        "timestamp": datetime.now().isoformat()
-    })
-    
-    # Update task state
-    task_states[task_id]["last_updated"] = datetime.now().isoformat()
-    
-    # If rejected, mark as failed
-    if resume_request.status == ReviewStatus.REJECTED:
-        task_states[task_id]["state"] = TaskState.FAILED
-        task_states[task_id]["error"] = f"Compliance review rejected: {resume_request.comments or 'No comments provided'}"
-        
-        logger.info(f"Task '{task_id}' marked as failed due to rejected compliance review '{review_id}'")
-        
-        return {
-            "success": True,
-            "message": f"Task '{task_id}' marked as failed due to rejected compliance review",
-            "review_id": review_id,
-            "status": "rejected"
-        }
-    
-    # If approved, resume execution
-    task_states[task_id]["state"] = TaskState.RUNNING
-    
-    logger.info(f"Task '{task_id}' resumed after approved compliance review '{review_id}'")
-    
-    # Check if async execution
-    is_async = task_id in background_tasks
-    
-    if is_async and background_tasks:
-        # Resume in background
-        background_tasks.add_task(
-            _resume_crew_in_background,
-            task_id=task_id,
-            review_result={
-                "status": resume_request.status,
-                "reviewer": resume_request.reviewer,
-                "comments": resume_request.comments
-            }
-        )
-        
-        return {
-            "success": True,
-            "message": f"Task '{task_id}' resuming in background",
-            "review_id": review_id,
-            "status": "resuming"
-        }
-    else:
-        # For synchronous execution, client needs to call run again
-        return {
-            "success": True,
-            "message": f"Task '{task_id}' ready to resume. Call /run again with the same task_id.",
-            "review_id": review_id,
-            "status": "ready_to_resume"
-        }
-
-
-@router.get(
-    "/review/{task_id}",
-    response_model=Dict[str, Any],
-    summary="Get compliance review details for a task",
-    dependencies=[Depends(get_current_user)]
-)
-@require_roles([Roles.ADMIN, Roles.COMPLIANCE, Roles.ANALYST], "Only administrators, compliance officers, and analysts can view reviews")
-async def get_review_details(
-    task_id: str = Path(..., description="Task ID of the execution")
-):
-    """
-    Get compliance review details for a task.
-    
-    Args:
-        task_id: Task ID of the execution
-        
-    Returns:
-        Compliance review details
-    """
-    # Check if task exists
-    if task_id not in task_states:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Task '{task_id}' not found"
-        )
-    
-    # Get review ID
-    review_id = task_states[task_id].get("review_id")
-    if not review_id:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No compliance review found for task '{task_id}'"
-        )
-    
-    # Get review details
-    if review_id not in compliance_reviews:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Compliance review '{review_id}' not found"
-        )
-    
-    return compliance_reviews[review_id]
-
-
-@router.get(
-    "/crews",
-    summary="List available crews",
-    dependencies=[Depends(get_current_user)]
-)
-async def list_crews():
     """
     List all available crews.
     
     Returns:
-        List of available crews with their information
+        List of crew names that can be run
     """
     try:
-        # Get available crews
-        factory = CrewFactory()
-        available_crews = factory.get_available_crews()
-        
-        # Get crew information
-        crews_info = []
-        for crew_name in available_crews:
-            try:
-                config = load_crew_config(crew_name)
-                crews_info.append({
-                    "name": crew_name,
-                    "process_type": config.process_type,
-                    "manager": config.manager,
-                    "agents": config.agents,
-                    "description": _get_crew_description(crew_name)
-                })
-            except Exception as e:
-                logger.warning(f"Error loading crew config for '{crew_name}': {e}")
-        
-        return {"crews": crews_info}
-    
+        crews = crew_factory.get_available_crews()
+        return {"success": True, "crews": crews}
     except Exception as e:
-        logger.exception(f"Error listing crews: {e}")
+        logger.error(f"Failed to get crews: {e}")
         raise HTTPException(
-            status_code=500,
-            detail=f"Error listing crews: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get crews: {str(e)}"
         )
 
 
-@router.get(
-    "/agents",
-    summary="List available agents",
-    dependencies=[Depends(get_current_user)]
-)
-async def list_agents(
-    crew_name: Optional[str] = Query(None, description="Filter agents by crew")
+@router.post("/run")
+@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
+async def run_crew(
+    request: CrewRunRequest,
+    crew_factory: CrewFactory = Depends(get_crew_factory)
 ):
     """
-    List all available agents, optionally filtered by crew.
+    Run a crew with the specified inputs.
     
     Args:
-        crew_name: Optional crew name to filter agents
+        request: Crew run request with crew name and inputs
         
     Returns:
-        List of available agents with their information
+        Crew execution result
     """
     try:
-        # Get agents
-        if crew_name:
-            try:
-                config = load_crew_config(crew_name)
-                agent_ids = config.agents
-            except Exception as e:
-                logger.warning(f"Error loading crew config for '{crew_name}': {e}")
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Crew '{crew_name}' not found"
-                )
-        else:
-            # Get all agents from default configs
-            from backend.agents.config import DEFAULT_AGENT_CONFIGS
-            agent_ids = list(DEFAULT_AGENT_CONFIGS.keys())
+        logger.info(f"Running crew: {request.crew_name}")
         
-        # Get agent information
-        agents_info = []
-        for agent_id in agent_ids:
-            try:
-                config = load_agent_config(agent_id)
-                agents_info.append({
-                    "id": config.id,
-                    "role": config.role,
-                    "goal": config.goal,
-                    "tools": config.tools
-                })
-            except Exception as e:
-                logger.warning(f"Error loading agent config for '{agent_id}': {e}")
+        # Validate crew exists
+        available_crews = crew_factory.get_available_crews()
+        if request.crew_name not in available_crews:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Crew not found: {request.crew_name}"
+            )
         
-        return {"agents": agents_info}
-    
+        # Run the crew
+        result = await crew_factory.run_crew(request.crew_name, inputs=request.inputs)
+        
+        # Close the factory to release resources
+        await crew_factory.close()
+        
+        # Return the result
+        if isinstance(result, dict) and result.get("success") is False:
+            # Crew execution failed but API call succeeded
+            return CrewResponse(
+                success=False,
+                error=result.get("error", "Unknown error"),
+                task_id=result.get("task_id"),
+                status=result.get("status", "FAILED")
+            )
+        
+        # Success case
+        return CrewResponse(
+            success=True,
+            task_id=result.get("task_id") if isinstance(result, dict) else None,
+            result=result,
+            status=result.get("status", "COMPLETED") if isinstance(result, dict) else "COMPLETED"
+        )
+        
     except HTTPException:
+        # Re-raise HTTP exceptions
         raise
     except Exception as e:
-        logger.exception(f"Error listing agents: {e}")
+        logger.error(f"Failed to run crew: {e}")
         raise HTTPException(
-            status_code=500,
-            detail=f"Error listing agents: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to run crew: {str(e)}"
         )
 
 
-@router.get(
-    "/crews/{crew_name}",
-    summary="Get crew details",
-    dependencies=[Depends(get_current_user)]
-)
-async def get_crew_details(
-    crew_name: str = Path(..., description="Name of the crew")
+@router.post("/{crew_name}")
+@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
+async def run_crew_by_name(
+    crew_name: str,
+    inputs: Dict[str, Any] = {},
+    crew_factory: CrewFactory = Depends(get_crew_factory)
 ):
     """
-    Get detailed information about a specific crew.
+    Run a crew by name with the specified inputs.
     
     Args:
-        crew_name: Name of the crew
+        crew_name: Name of the crew to run
+        inputs: Input parameters for the crew
         
     Returns:
-        Detailed crew information
+        Crew execution result
     """
     try:
-        # Check if crew exists
-        factory = CrewFactory()
-        available_crews = factory.get_available_crews()
+        logger.info(f"Running crew by name: {crew_name}")
+        
+        # Validate crew exists
+        available_crews = crew_factory.get_available_crews()
         if crew_name not in available_crews:
             raise HTTPException(
-                status_code=404,
-                detail=f"Crew '{crew_name}' not found"
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Crew not found: {crew_name}"
             )
         
-        # Get crew configuration
-        config = load_crew_config(crew_name)
+        # Run the crew
+        result = await crew_factory.run_crew(crew_name, inputs=inputs)
         
-        # Get agent details
-        agents = []
-        for agent_id in config.agents:
-            try:
-                agent_config = load_agent_config(agent_id)
-                agents.append({
-                    "id": agent_config.id,
-                    "role": agent_config.role,
-                    "goal": agent_config.goal,
-                    "tools": agent_config.tools,
-                    "backstory": agent_config.backstory
-                })
-            except Exception as e:
-                logger.warning(f"Error loading agent config for '{agent_id}': {e}")
-                agents.append({"id": agent_id, "error": str(e)})
+        # Close the factory to release resources
+        await crew_factory.close()
         
-        # Return crew details
-        return {
-            "name": crew_name,
-            "process_type": config.process_type,
-            "manager": config.manager,
-            "agents": agents,
-            "description": _get_crew_description(crew_name),
-            "verbose": config.verbose,
-            "memory": config.memory,
-            "cache": config.cache
-        }
-    
+        # Return the result
+        if isinstance(result, dict) and result.get("success") is False:
+            # Crew execution failed but API call succeeded
+            return CrewResponse(
+                success=False,
+                error=result.get("error", "Unknown error"),
+                task_id=result.get("task_id"),
+                status=result.get("status", "FAILED")
+            )
+        
+        # Success case
+        return CrewResponse(
+            success=True,
+            task_id=result.get("task_id") if isinstance(result, dict) else None,
+            result=result,
+            status=result.get("status", "COMPLETED") if isinstance(result, dict) else "COMPLETED"
+        )
+        
     except HTTPException:
+        # Re-raise HTTP exceptions
         raise
     except Exception as e:
-        logger.exception(f"Error getting crew details: {e}")
+        logger.error(f"Failed to run crew: {e}")
         raise HTTPException(
-            status_code=500,
-            detail=f"Error getting crew details: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to run crew: {str(e)}"
         )
 
 
-@router.get(
-    "/agents/{agent_id}",
-    summary="Get agent details",
-    dependencies=[Depends(get_current_user)]
-)
-async def get_agent_details(
-    agent_id: str = Path(..., description="ID of the agent")
+@router.patch("/pause")
+@require_roles(RoleSets.COMPLIANCE_TEAM)
+async def pause_crew(
+    request: CrewPauseRequest,
+    crew_factory: CrewFactory = Depends(get_crew_factory)
 ):
     """
-    Get detailed information about a specific agent.
+    Pause a running crew task.
     
     Args:
-        agent_id: ID of the agent
+        request: Crew pause request with task ID and reason
         
     Returns:
-        Detailed agent information
+        Pause operation result
     """
     try:
-        # Get agent configuration
-        try:
-            config = load_agent_config(agent_id)
-        except Exception as e:
-            logger.warning(f"Error loading agent config for '{agent_id}': {e}")
-            raise HTTPException(
-                status_code=404,
-                detail=f"Agent '{agent_id}' not found"
-            )
+        logger.info(f"Pausing crew task: {request.task_id}")
         
-        # Get available tools
-        factory = CrewFactory()
-        available_tools = list(factory.tools.keys())
+        # Pause the crew
+        result = await crew_factory.pause_crew(
+            task_id=request.task_id,
+            reason=request.reason
+        )
         
-        # Check which tools are available
-        tools_info = []
-        for tool_name in config.tools:
-            tool = factory.get_tool(tool_name)
-            tools_info.append({
-                "name": tool_name,
-                "available": tool is not None,
-                "description": tool.description if tool else None
-            })
+        return CrewResponse(
+            success=result.get("success", False),
+            task_id=request.task_id,
+            status="PAUSED" if result.get("success", False) else "PAUSE_FAILED",
+            error=result.get("error")
+        )
         
-        # Return agent details
-        return {
-            "id": config.id,
-            "role": config.role,
-            "goal": config.goal,
-            "backstory": config.backstory,
-            "tools": tools_info,
-            "memory": config.memory,
-            "max_iter": config.max_iter,
-            "allow_delegation": config.allow_delegation,
-            "verbose": config.verbose,
-            "llm_model": config.llm_model
-        }
-    
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.exception(f"Error getting agent details: {e}")
+        logger.error(f"Failed to pause crew: {e}")
         raise HTTPException(
-            status_code=500,
-            detail=f"Error getting agent details: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to pause crew: {str(e)}"
         )
 
 
-# Helper functions
-async def _run_crew_in_background(task_id: str, crew_name: str, inputs: Dict[str, Any]):
+@router.patch("/resume")
+@require_roles(RoleSets.COMPLIANCE_TEAM)
+async def resume_crew(
+    request: CrewResumeRequest,
+    crew_factory: CrewFactory = Depends(get_crew_factory)
+):
     """
-    Run a crew in the background and store the result.
+    Resume a paused crew task.
     
     Args:
-        task_id: Task ID for tracking
-        crew_name: Name of the crew to run
-        inputs: Input data for the crew
-    """
-    try:
-        # Update task status to running
-        if task_id in task_states:
-            task_states[task_id]["state"] = TaskState.RUNNING
-            task_states[task_id]["last_updated"] = datetime.now().isoformat()
-        else:
-            # Legacy support
-            background_tasks[task_id] = {
-                "success": True,
-                "crew_name": crew_name,
-                "task_id": task_id,
-                "result": None,
-                "error": None,
-                "status": "running"
-            }
-        
-        # Create crew factory
-        factory = CrewFactory()
-        
-        # Connect to external services
-        await factory.connect()
-        
-        # Run crew
-        result = await factory.run_crew(crew_name, inputs, task_id=task_id)
-        
-        # Update task status with result
-        if task_id in task_states:
-            if task_states[task_id]["state"] == TaskState.PAUSED:
-                # Task is paused for compliance review, don't update state
-                logger.info(f"Task {task_id} is paused for compliance review, not updating state")
-                return
-            
-            if result.get("success", False):
-                task_states[task_id]["state"] = TaskState.COMPLETED
-                task_states[task_id]["result"] = result.get("result")
-                task_states[task_id]["last_updated"] = datetime.now().isoformat()
-            else:
-                task_states[task_id]["state"] = TaskState.FAILED
-                task_states[task_id]["error"] = result.get("error", "Unknown error")
-                task_states[task_id]["last_updated"] = datetime.now().isoformat()
-        else:
-            # Legacy support
-            if result.get("success", False):
-                background_tasks[task_id] = {
-                    "success": True,
-                    "crew_name": crew_name,
-                    "task_id": task_id,
-                    "result": result.get("result"),
-                    "error": None,
-                    "status": "completed"
-                }
-            else:
-                background_tasks[task_id] = {
-                    "success": False,
-                    "crew_name": crew_name,
-                    "task_id": task_id,
-                    "result": None,
-                    "error": result.get("error", "Unknown error"),
-                    "status": "failed"
-                }
-    
-    except Exception as e:
-        logger.exception(f"Error running crew in background: {e}")
-        
-        if task_id in task_states:
-            task_states[task_id]["state"] = TaskState.FAILED
-            task_states[task_id]["error"] = str(e)
-            task_states[task_id]["last_updated"] = datetime.now().isoformat()
-        else:
-            # Legacy support
-            background_tasks[task_id] = {
-                "success": False,
-                "crew_name": crew_name,
-                "task_id": task_id,
-                "result": None,
-                "error": str(e),
-                "status": "failed"
-            }
-    finally:
-        # Close connections
-        if 'factory' in locals():
-            await factory.close()
-
-
-async def _resume_crew_in_background(task_id: str, review_result: Dict[str, Any]):
-    """
-    Resume a crew execution in the background.
-    
-    Args:
-        task_id: Task ID for tracking
-        review_result: Result of the compliance review
-    """
-    try:
-        # Get task state
-        if task_id not in task_states:
-            logger.error(f"Task {task_id} not found for resuming")
-            return
-        
-        # Get crew name and inputs
-        crew_name = task_states[task_id]["crew_name"]
-        inputs = task_states[task_id]["inputs"]
-        
-        # Add review result to inputs
-        inputs["compliance_review_result"] = review_result
-        
-        # Update task status to running
-        task_states[task_id]["state"] = TaskState.RUNNING
-        task_states[task_id]["last_updated"] = datetime.now().isoformat()
-        
-        # Create crew factory
-        factory = CrewFactory()
-        
-        # Connect to external services
-        await factory.connect()
-        
-        # Run crew
-        result = await factory.run_crew(crew_name, inputs, task_id=task_id, resume=True)
-        
-        # Update task status with result
-        if result.get("success", False):
-            task_states[task_id]["state"] = TaskState.COMPLETED
-            task_states[task_id]["result"] = result.get("result")
-            task_states[task_id]["last_updated"] = datetime.now().isoformat()
-        else:
-            task_states[task_id]["state"] = TaskState.FAILED
-            task_states[task_id]["error"] = result.get("error", "Unknown error")
-            task_states[task_id]["last_updated"] = datetime.now().isoformat()
-    
-    except Exception as e:
-        logger.exception(f"Error resuming crew in background: {e}")
-        
-        task_states[task_id]["state"] = TaskState.FAILED
-        task_states[task_id]["error"] = str(e)
-        task_states[task_id]["last_updated"] = datetime.now().isoformat()
-    finally:
-        # Close connections
-        if 'factory' in locals():
-            await factory.close()
-
-
-def _get_crew_description(crew_name: str) -> str:
-    """
-    Get a description for a crew based on its name.
-    
-    Args:
-        crew_name: Name of the crew
+        request: Crew resume request with task ID, approval status, and comment
         
     Returns:
-        Description of the crew
+        Resume operation result
     """
-    descriptions = {
-        "fraud_investigation": "Investigates complex fraud cases by analyzing graph data, detecting patterns, and generating comprehensive reports.",
-        "alert_enrichment": "Enriches alerts with supporting evidence, risk scoring, and recommended actions in real-time.",
-        "red_blue_simulation": "Simulates adversarial scenarios by generating synthetic fraud patterns and testing detection capabilities."
-    }
-    
-    return descriptions.get(crew_name, "No description available")
+    try:
+        logger.info(f"Resuming crew task: {request.task_id} (approved: {request.approved})")
+        
+        # Resume the crew
+        result = await crew_factory.resume_crew(
+            task_id=request.task_id,
+            approved=request.approved,
+            comment=request.comment
+        )
+        
+        return CrewResponse(
+            success=result.get("success", False),
+            task_id=request.task_id,
+            status="RESUMED" if result.get("success", False) else "RESUME_FAILED",
+            error=result.get("error")
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to resume crew: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to resume crew: {str(e)}"
+        )

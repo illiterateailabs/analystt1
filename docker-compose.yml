@@ -92,6 +92,7 @@ services:
       - E2B_API_KEY=${E2B_API_KEY}
       - E2B_TEMPLATE_ID=python-data-science
       - DATABASE_URL=postgresql://analyst:analyst123@postgres:5432/analyst_agent
+    command: sh -c "alembic upgrade head && uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload"
     volumes:
       - ./backend:/app/backend
       - ./logs:/app/logs

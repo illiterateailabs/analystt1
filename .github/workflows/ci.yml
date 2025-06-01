@@ -78,6 +78,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel
           pip install --constraint constraints.txt -r requirements.txt
+      - name: Run database migrations
+        env:
+          DATABASE_URL: sqlite:///test.db
+        run: |
+          alembic upgrade head
       - name: Test with pytest
         env:
           NEO4J_URI: bolt://localhost:7687

@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from backend.integrations.gemini_client import GeminiClient
 from backend.integrations.neo4j_client import Neo4jClient
 from backend.integrations.e2b_client import E2BClient
+from backend.auth.rbac import require_roles, Roles, RoleSets
 
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,7 @@ async def get_e2b_client(request: Request) -> E2BClient:
 
 
 @router.post("/execute-code", response_model=CodeExecutionResponse)
+@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
 async def execute_code(
     request: CodeExecutionRequest,
     e2b: E2BClient = Depends(get_e2b_client)
@@ -89,6 +91,7 @@ async def execute_code(
 
 
 @router.post("/analyze", response_model=AnalysisResponse)
+@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
 async def perform_analysis(
     request: AnalysisRequest,
     gemini: GeminiClient = Depends(get_gemini_client),
@@ -204,6 +207,7 @@ driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD))
 
 
 @router.get("/fraud-detection/patterns")
+@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
 async def detect_fraud_patterns(
     pattern_type: str = "money_laundering",
     limit: int = 100,
@@ -273,6 +277,7 @@ async def detect_fraud_patterns(
 
 
 @router.get("/sandbox/{sandbox_id}/files")
+@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
 async def list_sandbox_files(
     sandbox_id: str,
     directory: str = ".",
@@ -289,6 +294,7 @@ async def list_sandbox_files(
 
 
 @router.get("/sandbox/{sandbox_id}/download/{file_path:path}")
+@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
 async def download_sandbox_file(
     sandbox_id: str,
     file_path: str,
