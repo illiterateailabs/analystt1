@@ -13,7 +13,7 @@ cache:
     files:
       - requirements.txt
       - constraints.txt
-    prefix: deps-v3-${CI_COMMIT_REF_SLUG}-${PYTHON_VERSION} # Incremented to v3
+    prefix: deps-v4-${CI_COMMIT_REF_SLUG}-${PYTHON_VERSION} # Incremented to v4
   paths:
     - .cache/pip/
   policy: pull-push
