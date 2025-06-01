@@ -1,20 +1,20 @@
 # Core Framework
-fastapi==0.104.1
+fastapi~=0.115.9
 uvicorn[standard]==0.24.0
-pydantic==2.5.0
+pydantic~=2.7.1
 pydantic-settings==2.1.0
-python-multipart==0.0.6
-slowapi==0.1.8
+python-multipart==0.0.12
+slowapi==0.1.9
 
 # Multi-Agent Framework
-crewai[tools]==0.5.0
-crewai-tools>=0.1.0
+crewai==0.119.0
+crewai-tools==0.44.0
 redis==5.0.1
 chromadb>=0.5.23
-jinja2==3.1.2
+jinja2==3.1.4
 
 # Google Gemini Integration
-google-genai>=0.2.0
+google-genai==1.18.0
 google-cloud-aiplatform==1.38.1
 
 # Neo4j Integration
@@ -42,17 +42,17 @@ plotly==5.17.0
 seaborn==0.13.0
 
 # Image Processing & OCR
-Pillow==10.1.0
+Pillow==10.4.0
 opencv-python==4.8.1.78
 pytesseract==0.3.10
 
 # Web & API
-httpx==0.25.2
-aiohttp==3.9.1
-websockets==12.0
+httpx~=0.28.1
+aiohttp==3.10.5
+websockets~=14.0
 
 # Database & ORM
-sqlalchemy==2.0.23
+sqlalchemy==2.0.27
 alembic==1.13.1
 asyncpg==0.29.0
 
@@ -65,7 +65,7 @@ python-dotenv==1.0.0
 
 # Logging & Monitoring
 structlog==23.2.0
-sentry-sdk[fastapi]==1.38.0
+sentry-sdk[fastapi]==2.16.0
 python-json-logger==2.0.7
 prometheus-client==0.17.1
 
@@ -83,8 +83,8 @@ mypy==1.7.1
 pre-commit==3.5.0
 
 # Blockchain & Crypto (for crypto fraud detection)
-web3==6.12.0
-eth-account==0.9.0
+# web3==6.12.0 # Temporarily commented out to resolve eth-typing conflict
+# eth-account==0.9.0 # Temporarily commented out
 
 # Financial Data APIs
 yfinance==0.2.28
@@ -92,7 +92,7 @@ alpha-vantage==2.3.1
 
 # Natural Language Processing
 # Downgraded from 3.7.2 to improve dependency compatibility
-spacy==3.6.1
+spacy==3.7.5
 # Explicit constraint for confection to avoid resolution-too-deep errors
 confection>=0.1.3,<1.0.0
 # Pin transformers to avoid conflicts with spacy
@@ -100,6 +100,7 @@ transformers==4.35.2
 
 # Time Series Analysis
 statsmodels==0.14.0
+adtk # For time-series anomaly detection in crypto features
 
 # Async & Concurrency
 aiofiles==23.2.1
@@ -107,6 +108,6 @@ aiofiles==23.2.1
 # Utilities
 python-dateutil==2.8.2
 pytz==2023.3
-click==8.1.7
+click==8.1.8
 rich==13.7.0
 tqdm==4.66.1
