@@ -7,7 +7,7 @@ typing_extensions>=4.8.0,<5.0.0
 
 # Constraints added to mitigate pip backtracking issues observed in CI (May 31, 2025)
 # These help stabilize the dependency resolution for complex packages like
-# google-cloud-aiplatform, langchain, crewai, and transformers.
+# google-cloud-aiplatform, langchain, crewai.
 grpcio~=1.62.2
 grpcio-status~=1.62.2
 langchain-core~=0.1.52
@@ -19,6 +19,10 @@ protobuf~=4.25.0
 
 # Chromadb constraint to ensure compatibility with crewai 0.119.0
 chromadb>=0.5.23,<0.6.0
+
+# Block embedchain to prevent chromadb version conflicts
+# embedchain requires chromadb<0.5.0 but we need >=0.5.23
+embedchain<0.0.0  # This prevents embedchain from being installed
 
 # SQLAlchemy constraint required by crewai 0.119.0
 sqlalchemy>=2.0.27,<2.1.0
