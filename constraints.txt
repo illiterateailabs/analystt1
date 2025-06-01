@@ -2,36 +2,8 @@
 # This file helps pip resolve complex dependency graphs by providing explicit version bounds
 # for packages that might cause conflicts or "resolution-too-deep" errors.
 
-# Configuration system used by spacy - pin to avoid resolution-too-deep errors
-confection>=0.1.3,<1.0.0
-
 # Common dependency that causes conflicts across ML libraries
 typing_extensions>=4.8.0,<5.0.0
-
-# Registry system used by spacy for plugin architecture
-catalogue>=2.0.6,<2.1.0
-
-# Serialization library used by spacy for model I/O
-srsly>=2.4.1,<3.0.0
-
-# Logging library used by spacy for structured output
-wasabi>=0.9.1,<1.2.0
-
-# CLI library that sometimes conflicts with other packages
-typer>=0.3.2,<0.10.0
-
-# Neural network library used by spacy - version must be compatible with spacy 3.6.1
-thinc>=8.1.0,<8.3.0
-
-# Path utility used by spacy for filesystem abstraction
-pathy>=0.3.5,<1.0.0
-
-# Additional constraints to help with dependency resolution
-langcodes>=3.2.0,<4.0.0
-spacy-legacy>=3.0.8,<3.1.0
-spacy-loggers>=1.0.0,<2.0.0
-murmurhash>=1.0.0,<1.1.0
-preshed>=3.0.2,<3.1.0
 
 # Constraints added to mitigate pip backtracking issues observed in CI (May 31, 2025)
 # These help stabilize the dependency resolution for complex packages like
@@ -44,10 +16,6 @@ huggingface-hub~=0.20.3
 googleapis-common-protos~=1.69.0
 # Pinning protobuf as it's a common source of conflict with google libraries
 protobuf~=4.25.0
-
-# Fix for marisa-trie backtracking issues (dependency of spacy)
-marisa-trie==1.2.0
-language-data>=1.2.0,<1.3.0
 
 # Chromadb constraint to ensure compatibility with crewai 0.119.0
 chromadb>=0.5.23,<0.6.0
