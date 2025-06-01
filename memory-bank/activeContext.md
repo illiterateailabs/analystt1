@@ -1,53 +1,53 @@
 # activeContext.md – Live Session Log  
 
-**Session:** 31 May 2025 · 12:45 UTC  
+**Session:** 01 Jun 2025 · 14:30 UTC  
 **Droid:** Factory assistant (`illiterate ai`)  
-**Active branch:** `droid/complete-implementation-gaps`  
-**Goal:** Close Phase-2 MVP implementation gaps so the stack runs end-to-end with ≥ 50 % test coverage.
+**Active branch:** `fix/P0-quick-wins`  
+**Goal:** Implement P0 quick wins and prepare for P0-1 CodeGenTool integration.
 
 ---
 
 ## 🏗️ Work in Progress (WIP)
 | Area | Action | Status |
 |------|--------|--------|
-| Agent YAMLs | Add `graph_analyst`, `compliance_checker`, `report_writer`, crypto agents | ⏳ drafting |
-| Tools | Implement `TemplateEngineTool`, `PolicyDocsTool`; finish `CodeGenTool` execution path | ⏳ scaffolding |
-| RBAC/Auth | Protect `/crew/run`, `/analysis/*`; unit-test 401/403/200 flows | ⏳ not started |
-| Tests | Extend to HITL, tools edge-cases, front-end graph schema | ⏳ test stubs |
-| Docs | Align README / ROADMAP with real status | ✅ progress.md updated |
+| P0 Quick Wins | RBAC guards, Alembic setup, failing test | ✅ PR #44 |
+| CodeGenTool Integration | P0-1 result flow | ⏳ next after merge |
+| Redis JWT Blacklist | P1-1 implementation | ⏳ not started |
+| PolicyDocsTool | P1-2 vector retrieval | ⏳ not started |
+| Test Coverage | Raise to ≥55% | ⏳ at 50% now |
 
 ---
 
 ## 🚀 Next Immediate Tasks (P0 / next 4 h)
-1. **Write missing agent YAMLs** in `backend/agents/configs/defaults/` (graph_analyst, compliance_checker, report_writer).  
-2. **Code & unit-test `TemplateEngineTool`** – must render Markdown using Jinja2 templates.  
-3. **Add RBAC decorator** utility and guard `/api/v1/crew/run`.  
-4. **Expand test coverage to ≥ 45 %** by adding tool tests (TemplateEngineTool success + failure).  
-5. Commit & push → open PR draft for review.
+1. **Wait for PR #44 CI** – ensure all tests pass (except intentional CodeGen failure).
+2. **After merge, create branch** `fix/P0-1-codegen-results`.
+3. **Implement CodeGenTool result integration** – make failing test pass.
+4. **Test end-to-end** with fraud_investigation crew.
+5. **Open PR for P0-1** with full implementation.
 
 ---
 
 ## 📝 Recent Decisions & Context
-* Keep **sequential crew pattern** for auditability.  
-* CI fixed via `constraints.txt`; pipeline now green.  
-* Prometheus metrics integrated; cost counters exposed.  
-* Docker **prod profile** still WIP – moved to P1 after core gaps filled.  
+* **P0 quick wins completed** in 2.5 hours – security gaps closed.
+* **TDD approach** for CodeGenTool – test written first.
+* **CI updated** to run Alembic migrations automatically.
+* **RBAC now protects** all sensitive crew and analysis endpoints.
 
 ---
 
 ## 🔧 Critical Issues Being Addressed
-* Runtime falls back to default prompts due to **missing agent configs** → breaks role-aligned reasoning.  
-* `TemplateEngineTool` & `PolicyDocsTool` exist only as stubs → report generation & compliance checks fail.  
-* RBAC only guards `/prompts` & `/graph` → potential security hole on `/crew/run`.  
-* Test coverage at **≈ 40 %**; CI gating requires ≥ 50 % before Phase-2 sign-off.
+* ✅ **RBAC security gap** on `/crew/run` – now protected.
+* ✅ **Database migrations** – automated in Docker & CI.
+* ⏳ **CodeGenTool results** not reaching subsequent agents.
+* ⏳ **Redis blacklist** still in-memory only.
 
 ---
 
 ## ⛔ Blockers / Dependencies
-* **Frontend auth flow** missing – JWT must be crafted manually; not blocking backend tests but needed for E2E.  
-* **Redis persistence** for rate-limit store not configured – defer to infra hardening after core gaps.  
-* **Time** – tight window before Phase-2 review tomorrow; focus strictly on P0 tasks.
+* **PR #44 must merge** before starting P0-1 implementation.
+* **Test coverage gate** will need adjustment after P1-4.
+* **Time** – aiming to complete P0-1 today, P1 items over next week.
 
 ---
 
-_If you pick up this branch, start with Task #1 above. Update this file after each material change. Keep entries concise – aim for ≤ 150 lines._  
+_If you pick up this session, check PR #44 status first. If merged, proceed with P0-1 implementation._
