@@ -18,7 +18,6 @@ google-cloud-aiplatform==1.38.1
 
 # Neo4j Integration
 neo4j==5.15.0
-py2neo==2021.2.4
 
 # e2b.dev Integration
 e2b==0.15.0
