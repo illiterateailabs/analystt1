@@ -15,7 +15,6 @@ from pathlib import Path
 import datetime
 import re
 
-from crewai_tools import BaseTool
 from pydantic import BaseModel, Field
 
 try:
@@ -55,7 +54,7 @@ class TemplateInput(BaseModel):
     )
 
 
-class TemplateEngineTool(BaseTool):
+class TemplateEngineTool:
     """
     Tool for generating reports from templates using Jinja2.
     
@@ -84,7 +83,6 @@ class TemplateEngineTool(BaseTool):
     - Format transaction data for presentation
     - Generate a risk assessment report
     """
-    args_schema: type[BaseModel] = TemplateInput
     
     def __init__(self, template_dir: Optional[Path] = None):
         """
@@ -93,7 +91,6 @@ class TemplateEngineTool(BaseTool):
         Args:
             template_dir: Optional custom directory for templates
         """
-        super().__init__()
         
         if not JINJA2_AVAILABLE:
             logger.warning("Jinja2 not available. Install with 'pip install jinja2'")
@@ -332,7 +329,7 @@ class TemplateEngineTool(BaseTool):
             }{% if not loop.last %},{% endif %}
             {% endfor %}
         ],
-        "analysis": "{{ analysis|replace('\n', ' ')|replace('\"', '\\\"') }}",
+        "analysis": "{{ analysis|replace('\\n', ' ')|replace('\\"', '\\\\\\"') }}",
         {% if recommendations %}
         "recommendations": [
             {% for rec in recommendations %}
@@ -470,7 +467,7 @@ class TemplateEngineTool(BaseTool):
                 "error": str(e)
             })
     
-    def _run(
+    def run(
         self,
         template_name: Optional[str] = None,
         template_content: Optional[str] = None,
