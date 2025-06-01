@@ -1,5 +1,5 @@
 # progress.md – Project Progress & Health  
-_Last updated: **01 Jun 2025 16:30 UTC**_
+
 
 ---
 
@@ -128,11 +128,3 @@ _Next steps_: After PR #44 merges, implement P0-1 (CodeGenTool result integratio
 
 _Next steps_: After PR #45 merges, implement P1-1 (Redis JWT blacklist).
 
----
-
-## 📅 01 Jun 2025 – Session 3 (CI Timeout Fix)
-| Time (UTC) | Focus | Key Achievements |
-|------------|-------|------------------:|
-| 16:00-16:30 | **Dependency Cleanup** | • Removed 5 unused heavy packages (statsmodels, xgboost, yfinance, alpha-vantage, imbalanced-learn).<br>• Reduced CI dependency download by ~2.5GB.<br>• Expected CI time reduction: 55-65min → 25-30min (>50% faster).<br>• Updated constraints.txt to remove langchain dependencies.<br>• Created DEPENDENCY_CLEANUP.md guide.<br>• Opened **PR #46** to fix CI timeouts. |
-
-_Root cause_: Legacy ML/NLP dependencies from when project might have used local models. Now all NLP is Gemini API-based.
