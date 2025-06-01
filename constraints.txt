@@ -20,10 +20,6 @@ protobuf~=4.25.0
 # Chromadb constraint to ensure compatibility with crewai 0.119.0
 chromadb>=0.5.23,<0.6.0
 
-# Block embedchain to prevent chromadb version conflicts
-# embedchain requires chromadb<0.5.0 but we need >=0.5.23
-embedchain<0.0.0  # This prevents embedchain from being installed
-
 # SQLAlchemy constraint required by crewai 0.119.0
 sqlalchemy>=2.0.27,<2.1.0
 

@@ -8,7 +8,6 @@ slowapi==0.1.9
 
 # Multi-Agent Framework
 crewai==0.119.0
-crewai-tools==0.44.0
 redis==5.0.1
 chromadb>=0.5.23
 jinja2==3.1.4
