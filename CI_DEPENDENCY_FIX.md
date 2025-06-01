@@ -1,111 +1,91 @@
-# GitLab CI Dependency Resolution and Timeout Fixes
+# CI_DEPENDENCY_FIX.md  
+_Last updated: 01 Jun 2025_
 
-_Date: **31 May 2025**_
-
-This document outlines the issues encountered with the GitLab CI pipeline, specifically `lint` job timeouts, and the corrective actions taken.
-
----
-
-## 1. Problem Statement
-
-The `lint` job in the GitLab CI pipeline was consistently timing out after 1 hour. The primary cause was identified as the `pip install -r requirements.txt --constraint constraints.txt` command taking an excessively long time to resolve dependencies.
-
-**Log Snippet Indicating Backtracking:**
-```
-INFO: This is taking longer than usual. You might need to provide the dependency resolver with stricter constraints to reduce runtime. See https://pip.pypa.io/warnings/backtracking for guidance. If you want to abort this run, press Ctrl + C.
-```
+A pocket-guide for keeping our CI pipeline green when `pip`’s resolver melts down.
 
 ---
 
-## 2. Root Cause Analysis
+## 1 · The `httpx` Conflict (Real-World Case)
 
-The extended dependency resolution time was due to `pip`'s backtracking mechanism. With a complex set of direct and transitive dependencies (particularly from packages like `google-cloud-aiplatform`, `langchain`, `crewai`, and `transformers`), `pip` was attempting to evaluate hundreds of version combinations for several packages to find a compatible set.
+**Symptom**  
+CI failed with:
 
-Packages observed to cause significant backtracking included:
-- `grpcio-status`
-- `langchain-core`
-- `langchain-community`
-- `huggingface-hub`
-- `googleapis-common-protos`
-- `protobuf`
+```
+ERROR: Cannot install … and httpx==0.27.0 because these package versions have conflicting dependencies.
 
-Additionally, a separate configuration error was found in the `test` job's `services` definition where `ports` were specified for the `neo4j` service, which is not a valid configuration key in GitLab CI services.
+fastapi 0.111.0   → httpx>=0.23.0
+chromadb 0.5.23   → httpx>=0.27.0
+google-genai 1.18 → httpx>=0.28.1,<1.0.0
+```
+
+**Root cause**  
+We had **`httpx==0.27.0`** pinned.  
+`google-genai 1.18.0` requires **≥ 0.28.1**.
+
+**Fix**  
+Bump to the smallest compatible version for *all* dependants:
+
+```diff
+- httpx==0.27.0
++ httpx==0.28.1
+```
+
+No other packages were affected:  
+`fastapi` & `chromadb` still satisfy their lower bounds.
 
 ---
 
-## 3. Solutions Implemented
+## 2 · General `pip` Resolution Tips
 
-### 3.1. Enhanced Dependency Constraints
-
-To mitigate `pip` backtracking, explicit version constraints were added to `constraints.txt` for the problematic packages and their related dependencies. This significantly reduces the search space for the resolver.
-
-**Key additions to `constraints.txt`:**
-```
-# ... (other constraints) ...
-
-# Constraints added to mitigate pip backtracking issues observed in CI (May 31, 2025)
-# These help stabilize the dependency resolution for complex packages like
-# google-cloud-aiplatform, langchain, crewai, and transformers.
-grpcio~=1.62.2
-grpcio-status~=1.62.2
-langchain-core~=0.1.52
-langchain-community~=0.0.38
-huggingface-hub~=0.20.3
-googleapis-common-protos~=1.69.0
-# Pinning protobuf as it's a common source of conflict with google libraries
-protobuf~=4.25.0
-```
-*Commit SHA for this change (and initial CI optimizations): `1786dbfa08b34d403d4564266185589b9602b309`*
-
-### 3.2. GitLab CI Configuration (`.gitlab-ci.yml`) Optimizations
-
-Several changes were made to the `.gitlab-ci.yml` file:
-
-1.  **Removed Disallowed `ports` Key**: The `ports` mapping was removed from the `neo4j` service definition in the `test` job, as this is not supported by GitLab CI services.
-    *Commit SHA for this fix: `487f7eace904e59fda794d1384394c1944c37f62`*
-
-2.  **Lint Job Timeout**: A `timeout: 30m` was added to the `lint` job as a safeguard, though the dependency pinning should prevent this from being reached.
-
-3.  **Optimized Test Dependency Installation**: Dependencies for the `test` job (which runs in a matrix for Python 3.9, 3.10, 3.11) are now installed once per Python version using a `before_script` block within the `test` job definition. This avoids redundant installations for each parallel job instance if the cache is effective.
-
-4.  **Improved Cache Key**: The cache key was updated to include `requirements.txt` and `constraints.txt` to ensure the cache is more accurately invalidated when dependencies change:
-    ```yaml
-    cache:
-      key:
-        files:
-          - requirements.txt
-          - constraints.txt
-        prefix: files-$CI_COMMIT_REF_SLUG-$PYTHON_VERSION
-      paths:
-        - .cache/pip/
-      policy: pull-push
-    ```
-    *These CI optimizations were part of commit SHA: `1786dbfa08b34d403d4564266185589b9602b309` and refined in `487f7eace904e59fda794d1384394c1944c37f62`.*
+| Trick | Why it helps |
+|-------|--------------|
+| **Read the traceback** | `pip` lists every incompatible requirement. Scroll up! |
+| **Constrain, don’t pin, transitive deps** | Pin only direct deps in *requirements.txt*.  Use *constraints.txt* for the rest. |
+| **`pip install --dry-run -r requirements.txt`** | Shows the solver result without downloading wheels (PEP 668). |
+| **`pipdeptree --reverse <pkg>`** | Visualise who drags an old version in. |
+| **`pip check` after install** | Verifies runtime compatibility. |
+| **Cache wheels** | Add `pip cache dir` to CI cache to avoid repeated downloads. |
+| **Use `--no-deps` in Docker multi-stage** | First copy *requirements.txt* → install, then project code; keeps layer invalidations minimal. |
 
 ---
 
-## 4. Manual Steps for GitLab Synchronization
+## 3 · Identifying the Offending Package
 
-Since these changes were committed to the GitHub repository (`illiterateailabs/analyst-agent-illiterateai`), they need to be manually synced to your GitLab repository (`illiterateailabs/analyst-agent-illiterateai-gitlabs`).
-
-Execute the following commands in your local clone of the repository:
-```bash
-# Ensure your local main branch is up-to-date with GitHub
-git checkout main
-git pull origin main
-
-# Push the changes to your GitLab remote
-# (Assuming 'gitlab' is the name of your GitLab remote)
-git push gitlab main
-```
+1. **Look for “The conflict is caused by:”** – pip spells it out.  
+2. **Find the tightest specifier** – exact (`==`) or narrow range causes most pain.  
+3. **Walk the tree**  
+   ```
+   pipdeptree --warn silence | less
+   ```
+   Find who pins the bad version.  
+4. **Test the hypothesis** – in a venv:  
+   ```bash
+   pip install "troublesome-lib>=X.Y"
+   pip install -r requirements.txt
+   ```
+   If it now resolves → you found the culprit.
 
 ---
 
-## 5. Expected Outcome
+## 4 · Version-Pinning Best Practices
 
-After applying these changes and syncing to GitLab, the CI pipeline, particularly the `lint` and `test` stages, should:
-- Complete significantly faster due to reduced dependency resolution time.
-- Be more reliable and less prone to timeouts.
-- Utilize caching more effectively.
+| Rule | Example |
+|------|---------|
+| **Pin direct runtime deps** in `requirements.txt` | `fastapi==0.111.0` |
+| **Use semver caps for libs you don’t control** | `sqlalchemy>=2.0,<2.1` |
+| **Guide the solver with `constraints.txt`** | keep protobuf / grpcio in sync |
+| **Group heavyweight extras behind opt-in** | `pip install .[xgboost]` |
+| **Regularly update & audit** | `pip-review --local` monthly |
+| **Fail fast in CI** – `pip install --no-cache-dir --constraint constraints.txt` |
 
-If timeouts persist, further investigation into the specific environment or runner constraints on GitLab might be necessary. However, these changes address the most common causes of `pip`-related performance issues in CI.
+---
+
+### TL;DR Flowchart
+
+1. ❌ _Pip fails_ → read conflicting list.  
+2. 🔎 Identify **narrow pin** or **outdated lower bound**.  
+3. 🛠  Bump or unpin in *requirements.txt* or *constraints.txt*.  
+4. ✅ `pip install --dry-run -r requirements.txt` passes.  
+5. 🎉 Commit & watch CI run in < 30 min again.
+
+_End of file._
