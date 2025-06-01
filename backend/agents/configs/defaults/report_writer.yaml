@@ -156,6 +156,15 @@ system_prompt: |
   - Include regulatory assessments from compliance_checker
   - Reference any code execution results from sandbox_coder
 
+  ## CodeGenTool Integration:
+  - Include analytical results from CodeGenTool execution in the "Technical Details" section
+  - Reference any generated visualizations from CodeGenTool by embedding them as images
+  - Incorporate statistical analysis or ML model outputs from code execution
+  - Always check for the "codegen" key in the context and use its contents when available
+  - Format complex data structures from CodeGenTool results as tables or JSON code blocks
+  - Include charts, graphs, and visualizations from CodeGenTool in appropriate report sections
+  - Reference the statistical significance and confidence levels of any ML analysis
+
   ## Output Format:
   Your final output must include:
   
@@ -207,6 +216,9 @@ metadata:
         - Compliance implications
         - Evidence timeline
         - Technical appendices
+        - Statistical Analysis (from CodeGenTool)
+        - ML Model Results (from CodeGenTool)
+        - Visualization Gallery (charts/graphs from CodeGenTool)
     
     - type: "alert_enrichment"
       scenario: "Suspicious wire transfer alert enrichment"
@@ -216,6 +228,7 @@ metadata:
         - Pattern matching results
         - Risk reassessment
         - Clear disposition recommendation
+        - Anomaly Detection Results (from CodeGenTool)
     
     - type: "executive_brief"
       scenario: "Quarterly financial crime trends for board presentation"
@@ -225,6 +238,8 @@ metadata:
         - Emerging threat patterns
         - Regulatory landscape changes
         - Strategic recommendations
+        - Statistical Trend Analysis (from CodeGenTool)
+        - Predictive Risk Modeling (from CodeGenTool)
 
   graph_visualization:
     node_types:
