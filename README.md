@@ -4,29 +4,31 @@ An AI-powered system that revolutionizes analyst workflows across finance and re
 
 ## 🏗️ Architecture
 
-- **Gemini API**: Multimodal LLM for reasoning, code generation, and NLU
-- **Neo4j**: Graph database for complex interconnected data analysis
-- **e2b.dev**: Secure cloud execution environment for AI-generated code
-- **MCP**: Model Context Protocol for standardized tool interaction
-- **Python**: Primary integration layer
+- **FastAPI** – async Python backend, REST API surface  
+- **Next.js** – React-based frontend for chat, graph & dashboards  
+- **Gemini API** – multimodal LLM for reasoning, code generation, and NLU  
+- **Neo4j** – graph database for complex interconnected data analysis  
+- **e2b.dev** – secure cloud execution environment for AI-generated code  
+- **MCP** – Model Context Protocol for standardized tool interaction  
+- **Python** – primary integration & orchestration layer  
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 - Python 3.9+
 - Node.js 18+
-- Docker (for Neo4j)
+- Docker (for Neo4j **and** Postgres & Redis via `docker-compose`)
 - Google Cloud API key (Gemini)
 - e2b.dev API key
 
 ### Installation
 
-1. **Clone and setup environment**:
+1. **Clone and set up environment**:
 ```bash
 git clone <repo-url>
-cd eCommGeminiIntegration
+cd analystt1
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+source venv/bin/activate      # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
@@ -37,15 +39,15 @@ npm install
 cd ..
 ```
 
-3. **Setup environment variables**:
+3. **Set up environment variables**:
 ```bash
 cp .env.example .env
 # Edit .env with your API keys
 ```
 
-4. **Start Neo4j**:
+4. **Start services (Neo4j, Postgres, Redis)**:
 ```bash
-docker-compose up -d neo4j
+docker-compose up -d neo4j postgres redis
 ```
 
 5. **Run the application**:
@@ -60,16 +62,16 @@ cd frontend && npm run dev
 ## 📁 Project Structure
 
 ```
-eCommGeminiIntegration/
+analystt1/
 ├── backend/                 # FastAPI backend
 │   ├── core/               # Core orchestration & reasoning
 │   ├── integrations/       # External service integrations
 │   ├── models/             # Data models & schemas
 │   ├── services/           # Business logic services
 │   └── api/                # API endpoints
-├── frontend/               # React frontend
+├── frontend/               # React (Next.js) frontend
 ├── neo4j/                  # Neo4j configuration & scripts
-├── e2b_sandboxes/         # e2b.dev sandbox templates
+├── e2b_sandboxes/          # e2b.dev sandbox templates
 ├── mcp_tools/             # MCP tool implementations
 ├── tests/                 # Test suites
 └── docs/                  # Documentation
@@ -77,25 +79,27 @@ eCommGeminiIntegration/
 
 ## 🔧 Development Phases
 
-- **Phase 1**: Core Foundation & PoC ✅ (Current)
-- **Phase 2**: MVP for Financial Crime Analysis
-- **Phase 3**: Feature Enrichment & MCP Integration
-- **Phase 4**: Advanced AI & "Data Detective" Features
+- **Phase 1**: Core Foundation & PoC ✅ (Completed)
+- **Phase 2**: MVP for Financial Crime Analysis ✅
+- **Phase 3**: Integrations & Ecosystem (Completed)
+- **Phase 4**: Advanced AI & "Data Detective" (Current)
 - **Phase 5**: Ongoing Evolution
 
 ## 📊 Features
 
-### Current (Phase 1)
+### Current
 - [x] Gemini API integration
+- [x] FastAPI backend & Next.js UI
 - [x] Neo4j graph database setup
 - [x] e2b.dev secure execution
 - [x] Basic NLQ-to-Cypher translation
-- [x] Minimal web interface
+- [x] JWT + RBAC security
+- [x] Prometheus metrics
 
 ### Planned
 - [ ] Advanced fraud detection modules
 - [ ] Multimodal document analysis
-- [ ] MCP tool ecosystem
+- [ ] MCP tool ecosystem expansion
 - [ ] Graph analytics & pattern recognition
 - [ ] AI-assisted hypothesis generation
 
@@ -109,15 +113,15 @@ eCommGeminiIntegration/
 
 ## 📚 Documentation
 
-- [Architecture Overview](docs/architecture.md)
-- [API Reference](docs/api.md)
-- [Development Guide](docs/development.md)
-- [Deployment Guide](docs/deployment.md)
+- [Architecture Overview](memory-bank/systemPatterns.md)
+- API Reference – TODO
+- Development Guide – TODO
+- Deployment Guide – TODO
 
 ## 🤝 Contributing
 
-Please read our [Contributing Guide](CONTRIBUTING.md) for development practices and guidelines.
+See our forthcoming [CONTRIBUTING.md](CONTRIBUTING.md) for development practices and guidelines.
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License – see the [LICENSE](LICENSE) file for details.

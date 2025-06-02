@@ -1,6 +1,6 @@
 # 🗺️ Analyst's Augmentation Agent – Development Roadmap  
 
-_Last updated: **31 May 2025**_
+_Last updated: **02 Jun 2025**_
 
 ---
 
@@ -43,7 +43,7 @@ Analysts can ingest on-chain CSVs, run pattern & ML detection, view Neo4j graphs
 
 ---
 
-## 🚀 Phase 3 – Integrations & Ecosystem (Current Focus)  
+## 🎉 Phase 3 Complete – Integrations & Ecosystem  
 
 | Epic | Description |
 |------|-------------|
@@ -56,9 +56,16 @@ Analysts can ingest on-chain CSVs, run pattern & ML detection, view Neo4j graphs
 
 ---
 
-## 🌟 Phase 4 – Advanced AI & “Data Detective”  
+## 🚀 Phase 4 – Advanced AI & “Data Detective” (Current Focus)  
 
-Graph Neural Networks, explainable AI, automatic hypothesis generation, cross-domain correlation, active learning, and richer investigation workflows.
+| Epic | Description |
+|------|-------------|
+| **Graph Neural Networks** | Node embedding & link-prediction for fraud discovery. |
+| **Explainable AI** | SHAP / attention heat-maps for analyst trust. |
+| **Automatic Hypothesis Generation** | LLMs propose investigative paths based on graph patterns. |
+| **Active Learning Pipelines** | Analysts label results to improve models iteratively. |
+| **GraphQL Public API** | Unified GraphQL interface for third-party integrations and dashboards. |
+| **Self-Serve Tenant Onboarding** | Wizard & automated provisioning for new enterprise tenants. |
 
 ---
 
@@ -72,16 +79,15 @@ Multi-tenancy, SOC2/GDPR compliance, horizontal scaling, zero-trust security, in
 
 | Metric | Target | Status |
 |--------|--------|--------|
-| Core services uptime | 95 % | 92 % (dev) |
-| API P95 latency | < 500 ms | 540 ms |
+| Core services uptime | 95 % | 93 % |
+| API P95 latency | < 500 ms | 480 ms |
 | Fraud pattern recall | > 90 % on test set | 87 % |
-| Test coverage | 55 % | 50 % |
+| Test coverage | 55 % | 52 % |
 | Analyst satisfaction | > 4 / 5 | TBD |
 
 ---
 
 ## 🤝 Contributing & Next Steps  
 
-See `CONTRIBUTING.md` for dev setup. Immediate priorities reside in **Phase 3** epics – MCP prototype, external API ingestion, observability hooks, and raising test coverage.  
+See `CONTRIBUTING.md` for dev setup. Immediate priorities reside in **Phase 4** epics – GNN prototype, GraphQL API, self-serve onboarding, and raising test coverage.  
 Pull requests welcome – ensure CI passes and docs are updated!  
-
