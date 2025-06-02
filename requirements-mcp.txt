@@ -1,0 +1,21 @@
+# MCP (Model Context Protocol) Dependencies
+# This file contains dependencies required for MCP integration in analystt1
+
+# Core MCP packages
+mcpengine>=0.3.0,<0.4.0        # Python SDK for building MCP servers
+crewai-mcp-toolbox>=0.2.0,<0.3.0  # Integration between CrewAI and MCP
+
+# Supporting packages
+pydantic>=2.0.0,<3.0.0         # Data validation for MCP schemas
+PyYAML>=6.0,<7.0               # YAML parsing for MCP registry
+google-generativeai>=1.19.0    # Gemini API with MCP support
+
+# Optional dependencies
+# Uncomment if needed for specific MCP servers
+# fastapi>=0.95.0              # For HTTP transport in production
+# sse-starlette>=1.6.0         # For SSE transport in production
+# httpx>=0.24.0                # For HTTP client in production
+
+# Development dependencies
+# pytest-asyncio>=0.21.0       # For testing async MCP code
+# pytest-timeout>=2.1.0        # For testing MCP server timeouts

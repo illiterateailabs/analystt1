@@ -46,6 +46,64 @@ try:
 except ImportError:
     RandomTxGeneratorTool = None
 
+# Import GNN tools
+try:
+    from backend.agents.tools.gnn_fraud_detection_tool import GNNFraudDetectionTool
+except ImportError:
+    GNNFraudDetectionTool = None
+
+try:
+    from backend.agents.tools.gnn_training_tool import GNNTrainingTool
+except ImportError:
+    GNNTrainingTool = None
+
+# Import MCP client for tool integration
+try:
+    from backend.mcp import get_mcp_tools_for_factory
+except ImportError:
+    get_mcp_tools_for_factory = None
+
+# Function to get all available tools (including MCP tools)
+def get_all_tools():
+    """
+    Get all available tools, including traditional tools and MCP tools.
+    
+    Returns:
+        List of all available tools.
+    """
+    tools = []
+    
+    # Add traditional tools
+    for tool_class in [
+        GraphQueryTool,
+        SandboxExecTool,
+        CodeGenTool,
+        PatternLibraryTool,
+        PolicyDocsTool,
+        TemplateEngineTool,
+        Neo4jSchemaTool,
+        RandomTxGeneratorTool,
+        GNNFraudDetectionTool,
+        GNNTrainingTool,
+    ]:
+        if tool_class is not None:
+            try:
+                tools.append(tool_class())
+            except Exception:
+                # Skip tools that fail to initialize
+                pass
+    
+    # Add MCP tools if available
+    if get_mcp_tools_for_factory is not None:
+        try:
+            mcp_tools = get_mcp_tools_for_factory()
+            tools.extend(mcp_tools)
+        except Exception:
+            # Skip MCP tools if they fail to initialize
+            pass
+    
+    return tools
+
 # Export only the tools that successfully imported
 __all__ = [
     name for name in [
@@ -57,6 +115,9 @@ __all__ = [
         "TemplateEngineTool",
         "Neo4jSchemaTool",
         "RandomTxGeneratorTool",
+        "GNNFraudDetectionTool",
+        "GNNTrainingTool",
+        "get_all_tools",
     ]
     if globals().get(name) is not None
 ]

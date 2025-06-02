@@ -1,0 +1,82 @@
+# MCP Servers Registry
+# Configuration file for Model Context Protocol servers in analystt1
+# 
+# This file defines all MCP servers available to the system, their launch commands,
+# transport methods, and environment variables.
+#
+# Each server entry should include:
+#   - command: The command to run the server
+#   - args: Arguments to pass to the command
+#   - transport: Transport method (stdio, http, etc.)
+#   - env: Environment variables for the server
+#   - description: Brief description of the server's purpose
+
+# Echo Server - Simple test server for MCP proof-of-concept
+echo:
+  command: "python"
+  args: ["backend/mcp_servers/echo_server.py"]
+  transport: "stdio"
+  description: "Simple echo server for testing MCP integration"
+  enabled: true
+
+# Graph Server - Neo4j operations and graph queries
+graph:
+  command: "python"
+  args: ["backend/mcp_servers/graph_server.py"]
+  transport: "stdio"
+  env:
+    NEO4J_URI: "${NEO4J_URI}"
+    NEO4J_USERNAME: "${NEO4J_USERNAME}"
+    NEO4J_PASSWORD: "${NEO4J_PASSWORD}"
+    MCP_ALLOW_WRITE_OPERATIONS: "0"  # Set to 1 to enable write operations
+  description: "Neo4j graph database operations and fraud detection"
+  enabled: true
+
+# GNN Server - Graph Neural Network operations (placeholder)
+gnn:
+  command: "python"
+  args: ["backend/mcp_servers/gnn_server.py"]  # Will be implemented in Phase 1
+  transport: "stdio"
+  env:
+    CUDA_VISIBLE_DEVICES: "0"  # GPU selection, if available
+    GNN_MODEL_PATH: "${GNN_MODEL_PATH:-models/gnn/default.pt}"
+  description: "Graph Neural Network operations for fraud detection"
+  enabled: false  # Will be enabled in Phase 1
+
+# Crypto Server - Cryptocurrency analysis operations (placeholder)
+crypto:
+  command: "python"
+  args: ["backend/mcp_servers/crypto_server.py"]  # Will be implemented in Phase 1
+  transport: "stdio"
+  env:
+    CRYPTO_API_KEY: "${CRYPTO_API_KEY}"
+  description: "Cryptocurrency transaction analysis and anomaly detection"
+  enabled: false  # Will be enabled in Phase 1
+
+# Sandbox Server - Secure code execution via e2b (placeholder)
+sandbox:
+  command: "python"
+  args: ["backend/mcp_servers/sandbox_server.py"]  # Will be implemented in Phase 1
+  transport: "stdio"
+  env:
+    E2B_API_KEY: "${E2B_API_KEY}"
+  description: "Secure code execution sandbox via e2b"
+  enabled: false  # Will be enabled in Phase 1
+
+# External MCP Servers - For development and testing
+
+# Weather MCP Server - For development testing with Gemini
+weather:
+  command: "npx"
+  args: ["-y", "@philschmid/weather-mcp"]
+  transport: "stdio"
+  description: "Weather information MCP server for testing"
+  enabled: false  # Enable for testing with weather queries
+
+# Filesystem MCP Server - For local file access
+filesystem:
+  command: "npx"
+  args: ["-y", "@modelcontextprotocol/server-filesystem", "./mcp_data"]
+  transport: "stdio"
+  description: "Local filesystem access for MCP"
+  enabled: false  # Enable when file access is needed
