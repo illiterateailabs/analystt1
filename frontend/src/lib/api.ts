@@ -184,15 +184,68 @@ export interface ResumeRequest {
 }
 
 // Analysis Types
-export interface AnalysisRequest {
+export interface AnalysisRequest { // For POST /analysis/text or /analysis/image
   text: string;
   options?: Record<string, any>;
 }
 
-export interface AnalysisResponse {
+export interface AnalysisResponse { // For POST /analysis/text or /analysis/image
   analysis: any;
   execution_time_ms: number;
 }
+
+// Specific Node/Edge types for Analysis Results (GET /analysis/{taskId})
+export interface AnalysisResultNode {
+  id: string;
+  label: string;
+  type?: string;
+  properties?: Record<string, any>;
+  risk_score?: number;
+  size?: number;
+  color?: string;
+  [key: string]: any; // Allow other properties
+}
+
+export interface AnalysisResultEdge {
+  from: string;
+  to: string;
+  label?: string;
+  properties?: Record<string, any>;
+  weight?: number;
+  color?: string;
+  [key: string]: any; // Allow other properties
+}
+
+export interface AnalysisResultGraphData {
+  nodes: AnalysisResultNode[];
+  edges: AnalysisResultEdge[];
+}
+
+export interface GeneratedVisualization {
+  filename: string;
+  content: string; // base64 encoded image data
+  type: 'image/png' | 'image/jpeg' | 'image/svg+xml' | 'text/html';
+}
+
+export interface AnalysisResultsResponse { // For GET /analysis/{taskId}
+  task_id: string;
+  status: string;
+  title?: string;
+  executive_summary?: string;
+  risk_score?: number;
+  confidence?: number;
+  detailed_findings?: string;
+  graph_data?: AnalysisResultGraphData;
+  visualizations?: GeneratedVisualization[];
+  recommendations?: string[];
+  code_generated?: string;
+  execution_details?: any;
+  error?: string;
+  crew_name?: string;
+  crew_inputs?: Record<string, any>;
+  crew_result?: any;
+}
+
 
 // Prompt Management Types
 export interface AgentListItem {
@@ -394,6 +447,11 @@ export const analysisAPI = {
     });
     
     return response.data;
+  },
+
+  fetchAnalysisResults: async (taskId: string): Promise<AnalysisResultsResponse> => {
+    const response = await apiClient.get(`/analysis/${taskId}`);
+    return response.data;
   }
 };
 
@@ -439,6 +497,7 @@ export const getCrewStatus = crewAPI.getStatus;
 export const getAvailableCrews = crewAPI.listCrews;
 export const analyzeText = analysisAPI.analyzeText;
 export const analyzeImage = analysisAPI.analyzeImage;
+export const fetchAnalysisResults = analysisAPI.fetchAnalysisResults; // Added legacy export
 export const listAgents = promptsAPI.listAgents;
 export const getAgentPrompt = promptsAPI.getAgentPrompt;
 export const updateAgentPrompt = promptsAPI.updateAgentPrompt;
