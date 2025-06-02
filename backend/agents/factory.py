@@ -17,6 +17,7 @@ import yaml
 
 from backend.agents.config import AgentConfig as AppAgentConfig
 from backend.agents.llm import GeminiLLMProvider
+from backend.agents.custom_crew import CustomCrew
 from backend.core.metrics import increment_counter, observe_value
 from backend.integrations.neo4j_client import Neo4jClient
 from backend.integrations.e2b_client import E2BClient
@@ -323,8 +324,8 @@ class CrewFactory:
             )
             tasks.append(task)
         
-        # Create crew
-        crew = Crew(
+        # Create crew using CustomCrew instead of Crew
+        crew = CustomCrew(
             agents=agents,
             tasks=tasks,
             verbose=config.get("verbose", False),
