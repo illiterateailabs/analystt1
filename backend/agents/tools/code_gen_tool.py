@@ -1,385 +1,210 @@
 """
-CodeGenTool for generating and executing Python code using Gemini AI.
+CodeGenTool for generating and executing Python code.
 
-This tool leverages the GeminiClient to generate Python code for data analysis,
-machine learning, visualization, and other computational tasks. It produces
-secure, well-commented code that can be executed in sandboxed environments.
+This tool uses Gemini to generate Python code from natural language questions,
+executes the code in a secure sandbox, and returns structured results that
+can be used by subsequent agents in the crew.
 """
 
 import json
 import logging
 import base64
+import re
 from typing import Any, Dict, List, Optional, Union
 
+from crewai_tools import BaseTool
 from pydantic import BaseModel, Field
 
 from backend.integrations.gemini_client import GeminiClient
 from backend.integrations.e2b_client import E2BClient
+from backend.agents.tools.sandbox_exec_tool import SandboxExecTool
 
 logger = logging.getLogger(__name__)
 
 
-class CodeGenerationInput(BaseModel):
-    """Input model for code generation."""
+class CodeGenInput(BaseModel):
+    """Input model for code generation and execution."""
     
-    task_description: str = Field(
+    question: str = Field(
         ...,
-        description="Detailed description of the task the code should perform"
-    )
-    libraries: Optional[List[str]] = Field(
-        default=None,
-        description="List of Python libraries that can be used in the solution"
+        description="Natural language question or task description for code generation"
     )
     context: Optional[str] = Field(
         default=None,
-        description="Additional context, such as data schema, sample data, or constraints"
+        description="Additional context for code generation (e.g., data description, requirements)"
     )
-    code_style: Optional[str] = Field(
-        default="standard",
-        description="Preferred code style (e.g., 'standard', 'functional', 'object-oriented')"
+    execute_code: bool = Field(
+        default=True,
+        description="Whether to execute the generated code"
     )
-    security_level: Optional[str] = Field(
-        default="high",
-        description="Security level for generated code ('standard', 'high', 'paranoid')"
-    )
-    execute_code: Optional[bool] = Field(
-        default=False,
-        description="Whether to execute the generated code in a sandbox"
+    install_packages: Optional[List[str]] = Field(
+        default=None,
+        description="List of Python packages to install before execution"
     )
     timeout_seconds: Optional[int] = Field(
         default=60,
-        description="Maximum execution time in seconds (only used if execute_code is True)"
+        description="Maximum execution time in seconds"
     )
-    input_files: Optional[Dict[str, str]] = Field(
-        default=None,
-        description="Dictionary of filename:content pairs to create before execution"
-    )
-    return_files: Optional[List[str]] = Field(
-        default=None,
-        description="List of filenames to return after execution"
+    return_visualizations: bool = Field(
+        default=True,
+        description="Whether to return generated visualizations"
     )
 
 
-class CodeGenTool:
+class CodeGenTool(BaseTool):
     """
-    Tool for generating and executing Python code using Gemini AI.
+    Tool for generating and executing Python code from natural language.
     
-    This tool allows agents to request Python code generation for various
-    tasks, including data analysis, machine learning, visualization, and
-    data transformation. The generated code is designed to be secure,
-    well-commented, and ready for execution in sandboxed environments.
+    This tool uses Gemini to generate Python code based on natural language
+    questions, executes the code in a secure sandbox environment, and returns
+    structured results that can be used by subsequent agents in the crew.
     
-    The tool can also optionally execute the generated code in a secure
-    sandbox environment and return the execution results, which can be
-    used by subsequent agents in a crew workflow.
+    Key features:
+    - Generate Python code using Gemini API
+    - Execute code in E2B sandbox
+    - Collect and encode artifacts (images, CSVs, etc.)
+    - Return structured result that agents can use
+    - Parse JSON outputs from code execution
+    - Handle visualization files and data exports
     """
     
-    def __init__(self, gemini_client: Optional[GeminiClient] = None, e2b_client: Optional[E2BClient] = None):
+    name: str = "code_gen_tool"
+    description: str = """
+    Generate and execute Python code based on natural language questions.
+    
+    Use this tool when you need to:
+    - Analyze data or generate statistics
+    - Create visualizations or charts
+    - Process and transform data
+    - Perform calculations or simulations
+    - Generate reports with embedded visualizations
+    
+    The tool will:
+    1. Generate appropriate Python code based on your question
+    2. Execute the code in a secure sandbox
+    3. Return the results, including any visualizations
+    4. Parse JSON output for structured data
+    
+    Example usage:
+    - "Generate a histogram of transaction amounts"
+    - "Calculate the average transaction value per day"
+    - "Find outliers in the transaction data using IQR"
+    - "Create a network graph visualization of connected accounts"
+    """
+    args_schema: type[BaseModel] = CodeGenInput
+    
+    def __init__(
+        self,
+        gemini_client: Optional[GeminiClient] = None,
+        e2b_client: Optional[E2BClient] = None
+    ):
         """
         Initialize the CodeGenTool.
         
         Args:
-            gemini_client: Optional GeminiClient instance. If not provided,
-                          a new client will be created.
-            e2b_client: Optional E2BClient instance for code execution.
-                       If not provided, a new client will be created when needed.
+            gemini_client: Optional GeminiClient instance for code generation
+            e2b_client: Optional E2BClient instance for code execution
         """
+        super().__init__()
         self.gemini_client = gemini_client or GeminiClient()
-        self.e2b_client = e2b_client
-        self._active_sandbox = None
-        self._last_result = None  # Store the last execution result
+        self.e2b_client = e2b_client or E2BClient()
+        self.sandbox_tool = SandboxExecTool(e2b_client=self.e2b_client)
     
-    async def _execute_in_sandbox(
+    async def _arun(
         self,
-        code: str,
-        libraries: Optional[List[str]] = None,
+        question: str,
+        context: Optional[str] = None,
+        execute_code: bool = True,
+        install_packages: Optional[List[str]] = None,
         timeout_seconds: int = 60,
-        input_files: Optional[Dict[str, str]] = None,
-        return_files: Optional[List[str]] = None
+        return_visualizations: bool = True
     ) -> Dict[str, Any]:
         """
-        Execute the generated code in a sandbox environment.
+        Generate and execute Python code based on a natural language question.
         
         Args:
-            code: Python code to execute
-            libraries: Optional list of libraries to install
+            question: Natural language question or task description
+            context: Additional context for code generation
+            execute_code: Whether to execute the generated code
+            install_packages: Optional list of packages to install
             timeout_seconds: Maximum execution time in seconds
-            input_files: Dictionary of filename:content pairs to create
-            return_files: List of filenames to return after execution
+            return_visualizations: Whether to return generated visualizations
             
         Returns:
-            Dictionary containing execution results and any output files
+            Dictionary containing generated code, execution results, and visualizations
         """
         try:
-            # Initialize e2b_client if not provided
-            if not self.e2b_client:
-                self.e2b_client = E2BClient()
+            logger.info(f"Generating code for question: {question}")
             
-            # Create or reuse sandbox
-            if not self._active_sandbox:
-                logger.info("Creating new e2b sandbox")
-                self._active_sandbox = await self.e2b_client.create_sandbox()
+            # Prepare prompt for code generation
+            prompt = self._prepare_prompt(question, context)
             
-            sandbox_id = self._active_sandbox
-            
-            # Install packages if requested
-            if libraries and len(libraries) > 0:
-                logger.info(f"Installing packages: {', '.join(libraries)}")
-                for package in libraries:
-                    # Install the package
-                    await self.e2b_client.install_package(package, sandbox_id)
-            
-            # Create input files if provided
-            if input_files:
-                logger.info(f"Creating {len(input_files)} input files")
-                for filename, content in input_files.items():
-                    await self.e2b_client.upload_file(
-                        content.encode('utf-8'), 
-                        filename, 
-                        sandbox_id
-                    )
-            
-            # Execute the code with timeout
-            logger.info(f"Executing code in sandbox (timeout: {timeout_seconds}s)")
-            result = await self.e2b_client.execute_code(
-                code, 
-                sandbox=sandbox_id,
-                timeout=timeout_seconds
-            )
-            
-            # Parse the output to extract any structured results
-            parsed_result = None
-            try:
-                if result["success"] and result["stdout"]:
-                    # Try to parse JSON output if present
-                    import re
-                    json_match = re.search(r'```json\n(.*?)\n```', result["stdout"], re.DOTALL)
-                    if json_match:
-                        parsed_result = json.loads(json_match.group(1))
-                    else:
-                        # Look for JSON at the end of output
-                        try:
-                            parsed_result = json.loads(result["stdout"].strip())
-                        except:
-                            pass
-            except Exception as e:
-                logger.warning(f"Failed to parse JSON from output: {e}")
-            
-            # Collect output files if requested
-            output_files = {}
-            if return_files and result["success"]:
-                logger.info(f"Retrieving {len(return_files)} output files")
-                for filename in return_files:
-                    try:
-                        file_content = await self.e2b_client.download_file(filename, sandbox_id)
-                        # Convert binary content to base64 for serialization
-                        output_files[filename] = base64.b64encode(file_content).decode('utf-8')
-                    except Exception as e:
-                        logger.warning(f"Failed to retrieve file {filename}: {e}")
-                        output_files[filename] = None
-            
-            # Check for generated visualizations
-            visualizations = []
-            if result["success"]:
-                try:
-                    files = await self.e2b_client.list_files(sandbox_id)
-                    for file in files:
-                        if any(ext in file for ext in ['.png', '.jpg', '.svg', '.html']):
-                            try:
-                                file_content = await self.e2b_client.download_file(file, sandbox_id)
-                                visualizations.append({
-                                    "filename": file,
-                                    "content": base64.b64encode(file_content).decode('utf-8')
-                                })
-                            except Exception as e:
-                                logger.warning(f"Failed to retrieve visualization {file}: {e}")
-                except Exception as e:
-                    logger.warning(f"Failed to list files: {e}")
-            
-            # Prepare response
-            return {
-                "success": result["success"],
-                "stdout": result["stdout"],
-                "stderr": result["stderr"],
-                "exit_code": result["exit_code"],
-                "execution_time": result.get("execution_time", 0),
-                "result": parsed_result,
-                "output_files": output_files,
-                "visualizations": visualizations
-            }
-            
-        except Exception as e:
-            logger.error(f"Error executing code in sandbox: {e}", exc_info=True)
-            return {
-                "success": False,
-                "error": str(e),
-                "stdout": "",
-                "stderr": f"Internal error: {str(e)}"
-            }
-    
-    async def run(self, **kwargs) -> Dict[str, Any]:
-        """
-        Generate and optionally execute Python code based on the provided parameters.
-        
-        Args:
-            **kwargs: Keyword arguments matching CodeGenerationInput fields
-                task_description: Description of the task the code should perform
-                libraries: Optional list of Python libraries to use
-                context: Additional context for code generation
-                code_style: Preferred code style
-                security_level: Security level for generated code
-                execute_code: Whether to execute the generated code
-                timeout_seconds: Maximum execution time in seconds
-                input_files: Dictionary of filename:content pairs to create
-                return_files: List of filenames to return after execution
-            
-        Returns:
-            Dictionary containing the generated code, execution results (if requested),
-            and metadata that can be integrated into crew context
-        """
-        try:
-            # Extract parameters
-            task_description = kwargs.get("task_description") or kwargs.get("question")
-            libraries = kwargs.get("libraries")
-            context = kwargs.get("context")
-            code_style = kwargs.get("code_style", "standard")
-            security_level = kwargs.get("security_level", "high")
-            execute_code = kwargs.get("execute_code", False)
-            timeout_seconds = kwargs.get("timeout_seconds", 60)
-            input_files = kwargs.get("input_files")
-            return_files = kwargs.get("return_files")
-            
-            if not task_description:
+            # Generate code using Gemini
+            code = await self.gemini_client.generate_python_code(prompt)
+            if not code:
+                logger.warning("Failed to generate code")
                 return {
                     "success": False,
-                    "error": "Task description is required",
-                    "code": "# Error: No task description provided"
+                    "error": "Failed to generate code",
+                    "code": None
                 }
             
-            # Prepare the full context for code generation
-            full_context = f"""
-Task: {task_description}
-
-"""
+            logger.info("Successfully generated code")
             
-            if context:
-                full_context += f"Context: {context}\n\n"
-            
-            if libraries:
-                full_context += f"Available libraries: {', '.join(libraries)}\n\n"
-            
-            # Add code style guidance
-            if code_style == "functional":
-                full_context += "Please use a functional programming style with pure functions and minimal state.\n\n"
-            elif code_style == "object-oriented":
-                full_context += "Please use an object-oriented programming style with appropriate classes and methods.\n\n"
-            
-            # Add security requirements based on security level
-            security_guidance = ""
-            if security_level == "high":
-                security_guidance = """
-- Validate all inputs before processing
-- Use safe methods for file operations
-- Avoid eval(), exec(), and other unsafe functions
-- Handle exceptions properly with specific exception types
-- Sanitize any data that might be used in queries or commands
-"""
-            elif security_level == "paranoid":
-                security_guidance = """
-- Implement strict input validation with explicit type checking
-- Use allowlists instead of blocklists for validation
-- Avoid all potentially unsafe functions (eval, exec, os.system, subprocess, etc.)
-- Implement resource limits (memory, CPU time) where possible
-- Use context managers for all resource handling
-- Sanitize all external data with explicit encoding/escaping
-- Add runtime assertions to verify invariants
-"""
-            
-            # Build the final prompt
-            system_instruction = f"""
-You are an expert Python developer specializing in secure, efficient code for data analysis and machine learning.
-Generate Python code that accomplishes the specified task while following these guidelines:
-
-1. Write well-commented, readable code
-2. Include proper error handling
-3. Follow {code_style} programming style
-4. Include necessary imports at the beginning
-5. Use efficient algorithms and data structures
-6. Return results in a structured format (JSON if possible)
-7. Security requirements: {security_guidance}
-
-The code should be ready to run in an isolated sandbox environment and should be self-contained.
-If the code generates any visualizations, save them as files (e.g., 'plot.png', 'chart.html').
-If possible, structure your final results as JSON and print them at the end of execution.
-"""
-            
-            # Generate the code
-            code = await self.gemini_client.generate_python_code(
-                task_description=full_context,
-                system_instruction=system_instruction,
-                libraries=libraries
-            )
-            
-            # Validate the generated code (basic security checks)
-            if security_level in ["high", "paranoid"]:
-                code = self._apply_security_checks(code, security_level)
-            
-            # Prepare the response with generated code
-            response = {
+            # Initialize result structure
+            result = {
                 "success": True,
                 "code": code,
-                "language": "python",
-                "libraries_used": libraries or []
+                "execution": None,
+                "result": None,
+                "visualizations": []
             }
             
-            # Execute the code if requested
+            # Execute code if requested
             if execute_code:
-                import asyncio
-                execution_result = await self._execute_in_sandbox(
-                    code=code,
-                    libraries=libraries,
-                    timeout_seconds=timeout_seconds,
-                    input_files=input_files,
-                    return_files=return_files
+                logger.info("Executing generated code")
+                execution_result = await self._execute_code(
+                    code,
+                    install_packages,
+                    timeout_seconds,
+                    return_visualizations
                 )
                 
-                # Merge execution results into response
-                response.update({
-                    "execution": {
-                        "success": execution_result["success"],
-                        "stdout": execution_result["stdout"],
-                        "stderr": execution_result["stderr"],
-                        "exit_code": execution_result["exit_code"],
-                        "execution_time": execution_result.get("execution_time", 0)
-                    },
-                    "result": execution_result.get("result"),
-                    "output_files": execution_result.get("output_files", {}),
-                    "visualizations": execution_result.get("visualizations", [])
-                })
+                # Add execution results to the result
+                result["execution"] = execution_result
                 
-                # Update overall success based on execution
-                if not execution_result["success"]:
-                    response["error"] = execution_result.get("error") or "Execution failed"
+                # Try to parse JSON output from stdout
+                parsed_result = self._parse_json_from_output(execution_result["stdout"])
+                if parsed_result:
+                    result["result"] = parsed_result
+                
+                # Add visualizations if available and requested
+                if return_visualizations and execution_result["success"]:
+                    visualizations = await self._get_visualizations()
+                    if visualizations:
+                        result["visualizations"] = visualizations
             
-            # Store the last result for CustomCrew to access
-            self._last_result = response
-            
-            return response
+            return result
             
         except Exception as e:
-            logger.error(f"Error generating/executing code: {e}", exc_info=True)
-            error_response = {
+            logger.error(f"Error in CodeGenTool: {e}", exc_info=True)
+            return {
                 "success": False,
                 "error": str(e),
-                "code": "# Error generating code"
+                "code": code if 'code' in locals() else None
             }
-            # Store the error result
-            self._last_result = error_response
-            return error_response
     
-    def _run(self, **kwargs) -> Dict[str, Any]:
+    def _run(
+        self,
+        question: str,
+        context: Optional[str] = None,
+        execute_code: bool = True,
+        install_packages: Optional[List[str]] = None,
+        timeout_seconds: int = 60,
+        return_visualizations: bool = True
+    ) -> Dict[str, Any]:
         """
-        Synchronous wrapper for run.
+        Synchronous wrapper for _arun.
         
         This method exists for compatibility with synchronous CrewAI operations.
         It should not be called directly in an async context.
@@ -396,83 +221,179 @@ If possible, structure your final results as JSON and print them at the end of e
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
         
-        result = loop.run_until_complete(self.run(**kwargs))
-        # Store the last result for CustomCrew to access
-        self._last_result = result
-        return result
+        return loop.run_until_complete(
+            self._arun(
+                question,
+                context,
+                execute_code,
+                install_packages,
+                timeout_seconds,
+                return_visualizations
+            )
+        )
     
-    def _apply_security_checks(self, code: str, security_level: str) -> str:
+    def _prepare_prompt(self, question: str, context: Optional[str] = None) -> str:
         """
-        Apply security checks to the generated code.
+        Prepare a prompt for code generation.
         
         Args:
-            code: The generated Python code
-            security_level: The security level to apply
+            question: Natural language question or task
+            context: Additional context for code generation
             
         Returns:
-            Potentially modified code with security enhancements
+            Formatted prompt for code generation
         """
-        # List of dangerous functions to check for
-        dangerous_functions = [
-            "eval(", "exec(", "os.system(", "subprocess.call(", 
-            "subprocess.Popen(", "subprocess.run(", "subprocess.check_output(",
-            "__import__(", "globals()", "locals()"
-        ]
+        prompt = f"""
+        Generate Python code to answer the following question or perform the task:
         
-        # Check for dangerous functions
-        for func in dangerous_functions:
-            if func in code:
-                # Add warning comment
-                code = f"# WARNING: This code contains potentially unsafe function: {func}\n" + code
-                
-                if security_level == "paranoid":
-                    # Replace the dangerous function with a safer alternative or comment it out
-                    code = code.replace(func, f"# SECURITY RISK REMOVED: {func}")
+        QUESTION: {question}
         
-        # Add security wrapper for paranoid level
-        if security_level == "paranoid":
-            # Add resource limits and other security measures
-            code = f"""
-# Security wrapper with resource limits
-import resource
-import sys
-import signal
-
-def limit_resources():
-    # Set CPU time limit (seconds)
-    resource.setrlimit(resource.RLIMIT_CPU, (30, 30))
-    # Set memory limit (bytes)
-    resource.setrlimit(resource.RLIMIT_AS, (1024 * 1024 * 1024, 1024 * 1024 * 1024))  # 1GB
-
-def timeout_handler(signum, frame):
-    raise TimeoutError("Execution timed out")
-
-# Set timeout
-signal.signal(signal.SIGALRM, timeout_handler)
-signal.alarm(25)  # 25 seconds timeout
-
-try:
-    limit_resources()
+        """
+        
+        if context:
+            prompt += f"""
+            ADDITIONAL CONTEXT:
+            {context}
+            
+            """
+        
+        prompt += """
+        REQUIREMENTS:
+        1. Use standard data science libraries (pandas, numpy, matplotlib, seaborn, etc.)
+        2. Include appropriate error handling
+        3. Generate visualizations when appropriate
+        4. Save visualizations as PNG files (e.g., "plot.png", "chart.png")
+        5. For any significant results or data, print them as JSON to stdout
+        6. Make the code self-contained and executable
+        7. Include comments explaining key steps
+        
+        Return only the Python code without any additional text or explanations.
+        """
+        
+        return prompt
     
-    # Original code below
-{code.replace('\n', '\n    ')}
-
-except Exception as e:
-    print(f"Error: {{e}}")
-    sys.exit(1)
-finally:
-    # Reset alarm
-    signal.alarm(0)
-"""
+    async def _execute_code(
+        self,
+        code: str,
+        install_packages: Optional[List[str]] = None,
+        timeout_seconds: int = 60,
+        return_visualizations: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Execute generated code in a sandbox environment.
         
-        return code
+        Args:
+            code: Python code to execute
+            install_packages: Optional list of packages to install
+            timeout_seconds: Maximum execution time in seconds
+            return_visualizations: Whether to look for generated visualizations
+            
+        Returns:
+            Dictionary containing execution results
+        """
+        # Prepare standard visualization packages if needed
+        if return_visualizations and install_packages is None:
+            install_packages = ["matplotlib", "seaborn", "plotly"]
+        elif return_visualizations and install_packages is not None:
+            for pkg in ["matplotlib", "seaborn", "plotly"]:
+                if pkg not in install_packages:
+                    install_packages.append(pkg)
+        
+        # Execute code using SandboxExecTool
+        sandbox_result_str = await self.sandbox_tool._arun(
+            code=code,
+            install_packages=install_packages,
+            timeout_seconds=timeout_seconds,
+            return_files=["*.png", "*.jpg", "*.jpeg", "*.csv", "*.json"] if return_visualizations else None
+        )
+        
+        # Parse the JSON result
+        try:
+            sandbox_result = json.loads(sandbox_result_str)
+            return {
+                "success": sandbox_result.get("success", False),
+                "stdout": sandbox_result.get("stdout", ""),
+                "stderr": sandbox_result.get("stderr", ""),
+                "exit_code": sandbox_result.get("exit_code", 1),
+                "output_files": sandbox_result.get("output_files", {})
+            }
+        except json.JSONDecodeError:
+            logger.error(f"Failed to parse sandbox result: {sandbox_result_str}")
+            return {
+                "success": False,
+                "stdout": "",
+                "stderr": f"Failed to parse sandbox result: {sandbox_result_str}",
+                "exit_code": 1,
+                "output_files": {}
+            }
+    
+    async def _get_visualizations(self) -> List[Dict[str, str]]:
+        """
+        Extract visualizations from sandbox output files.
+        
+        Returns:
+            List of dictionaries containing filename and base64-encoded content
+        """
+        visualizations = []
+        
+        try:
+            # List files in the sandbox
+            sandbox = self.sandbox_tool._active_sandbox
+            if not sandbox:
+                return []
+            
+            # Get all files with image extensions
+            files = await self.e2b_client.list_files(sandbox)
+            image_files = [f for f in files if f.endswith((".png", ".jpg", ".jpeg"))]
+            
+            # Download and encode each file
+            for filename in image_files:
+                try:
+                    file_content = await self.e2b_client.download_file(filename, sandbox)
+                    encoded_content = base64.b64encode(file_content).decode("utf-8")
+                    visualizations.append({
+                        "filename": filename,
+                        "content": encoded_content
+                    })
+                except Exception as e:
+                    logger.warning(f"Failed to retrieve file {filename}: {e}")
+            
+            return visualizations
+            
+        except Exception as e:
+            logger.error(f"Error getting visualizations: {e}")
+            return []
+    
+    def _parse_json_from_output(self, stdout: str) -> Optional[Dict[str, Any]]:
+        """
+        Parse JSON data from stdout.
+        
+        Args:
+            stdout: Standard output from code execution
+            
+        Returns:
+            Parsed JSON object if found, None otherwise
+        """
+        if not stdout:
+            return None
+        
+        try:
+            # Look for JSON objects in the output
+            json_pattern = r'(\{.*\}|\[.*\])'
+            json_matches = re.findall(json_pattern, stdout, re.DOTALL)
+            
+            for match in json_matches:
+                try:
+                    return json.loads(match)
+                except json.JSONDecodeError:
+                    continue
+            
+            return None
+            
+        except Exception as e:
+            logger.warning(f"Error parsing JSON from output: {e}")
+            return None
     
     async def close(self):
-        """Close the active sandbox if one exists."""
-        if self._active_sandbox and self.e2b_client:
-            try:
-                await self.e2b_client.close_sandbox(self._active_sandbox)
-                self._active_sandbox = None
-                logger.info("Closed e2b sandbox")
-            except Exception as e:
-                logger.error(f"Error closing sandbox: {e}")
+        """Close the sandbox tool and release resources."""
+        await self.sandbox_tool.close()
