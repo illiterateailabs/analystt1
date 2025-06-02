@@ -229,6 +229,64 @@ ci: lint type-check test-coverage ## Run all CI checks locally
 	@echo "$(GREEN)All CI checks completed successfully!$(NC)"
 
 # ===========================================
+# MCP Commands
+# ===========================================
+.PHONY: mcp-demo
+mcp-demo: ## Run the MCP demonstration script
+	@echo "$(BLUE)Running MCP demonstration...$(NC)"
+	@ENABLE_MCP=1 $(VENV_DIR)/bin/python scripts/mcp_demo.py
+	@echo "$(GREEN)MCP demo completed.$(NC)"
+
+.PHONY: mcp-echo
+mcp-echo: ## Start just the echo server for testing
+	@echo "$(BLUE)Starting MCP echo server...$(NC)"
+	@$(VENV_DIR)/bin/python backend/mcp_servers/echo_server.py
+	@echo "$(GREEN)Echo server stopped.$(NC)"
+
+.PHONY: mcp-test
+mcp-test: ## Run MCP-specific tests
+	@echo "$(BLUE)Running MCP integration tests...$(NC)"
+	@ENABLE_MCP=1 $(PYTEST) tests/test_mcp_integration.py -v
+	@echo "$(GREEN)MCP tests completed.$(NC)"
+
+.PHONY: mcp-install
+mcp-install: ## Install MCP dependencies
+	@echo "$(BLUE)Installing MCP dependencies...$(NC)"
+	@if [ ! -d $(VENV_DIR) ]; then \
+		$(PYTHON) -m venv $(VENV_DIR); \
+	fi
+	@$(PIP) install --upgrade pip
+	@$(PIP) install -r requirements-mcp.txt
+	@echo "$(GREEN)MCP dependencies installed.$(NC)"
+
+.PHONY: mcp-check
+mcp-check: ## Check MCP configuration
+	@echo "$(BLUE)Checking MCP configuration...$(NC)"
+	@if [ ! -f config/mcp_servers.yaml ]; then \
+		echo "$(RED)MCP server registry not found!$(NC)"; \
+		echo "$(YELLOW)Run 'make setup' to initialize configuration.$(NC)"; \
+		exit 1; \
+	fi
+	@if [ -z "$$GEMINI_API_KEY" ]; then \
+		echo "$(YELLOW)Warning: GEMINI_API_KEY environment variable not set.$(NC)"; \
+		echo "$(YELLOW)Set it in .env file or export it before running MCP commands.$(NC)"; \
+	else \
+		echo "$(GREEN)GEMINI_API_KEY found.$(NC)"; \
+	fi
+	@echo "$(BLUE)Checking MCP server availability...$(NC)"
+	@if [ -f backend/mcp_servers/echo_server.py ]; then \
+		echo "$(GREEN)Echo server available.$(NC)"; \
+	else \
+		echo "$(RED)Echo server not found!$(NC)"; \
+	fi
+	@if [ -f backend/mcp_servers/graph_server.py ]; then \
+		echo "$(GREEN)Graph server available.$(NC)"; \
+	else \
+		echo "$(RED)Graph server not found!$(NC)"; \
+	fi
+	@echo "$(GREEN)MCP configuration check completed.$(NC)"
+
+# ===========================================
 # Health Checks
 # ===========================================
 .PHONY: health
