@@ -76,6 +76,18 @@ class Neo4jSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
+class RedisSettings(BaseSettings):
+    """
+    Redis connection settings.
+    """
+    REDIS_URL: str = Field("redis://localhost:6379/0", description="Redis connection URL")
+    REDIS_PASSWORD: Optional[str] = Field(None, description="Optional Redis password")
+    REDIS_DB: int = Field(0, description="Redis database number")
+    REDIS_MAX_CONNECTIONS: int = Field(10, description="Maximum connections in Redis pool")
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+
 class SecuritySettings(BaseSettings):
     """
     Security-related settings, including JWT and CORS.
@@ -100,8 +112,8 @@ class ExternalAPISettings(BaseSettings):
     Settings for external API keys and services.
     """
     GOOGLE_API_KEY: Optional[str] = Field(None, description="Google Gemini API key")
-    GEMINI_MODEL: str = Field("gemini-2.5-flash-preview-05-20", description="Default Gemini model to use")
-    MODEL: str = Field("gemini/gemini-2.5-pro-preview-05-06", description="CrewAI LLM model configuration")
+    GEMINI_MODEL: str = Field("gemini-1.5-pro-preview-05-14", description="Default Gemini model to use") # Updated to a valid model
+    MODEL: str = Field("gemini/gemini-1.5-pro-preview-05-14", description="CrewAI LLM model configuration") # Updated to a valid model
     SERPER_API_KEY: Optional[str] = Field(None, description="Serper API key for web search")
     E2B_API_KEY: Optional[str] = Field(None, description="e2b.dev API key for sandbox execution")
     E2B_TEMPLATE_ID: str = Field("python-data-science", description="e2b.dev template ID")
@@ -143,6 +155,7 @@ class Settings(
     AppSettings,
     DatabaseSettings,
     Neo4jSettings,
+    RedisSettings,
     SecuritySettings,
     ExternalAPISettings,
     ObservabilitySettings,
@@ -172,7 +185,7 @@ settings = Settings()
 if settings.DEBUG:
     # Filter out sensitive values like API keys and passwords
     safe_settings = {
-        k: "***REDACTED***" if any(sensitive in k.lower() for sensitive in ["key", "secret", "password", "token"])
+        k: "***REDACTED***" if any(sensitive in k.lower() for sensitive in ["key", "secret", "password", "token", "redis_password"])
         else v
         for k, v in settings.dict().items()
     }
