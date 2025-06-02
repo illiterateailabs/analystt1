@@ -1,53 +1,54 @@
 # activeContext.md – Live Session Log  
 
-**Session:** 01 Jun 2025 · 14:30 UTC  
+**Session:** 02 Jun 2025 · 13:00 UTC  
 **Droid:** Factory assistant (`illiterate ai`)  
-**Active branch:** `fix/P0-quick-wins`  
-**Goal:** Implement P0 quick wins and prepare for P0-1 CodeGenTool integration.
+**Active branch:** `droid/gnn-fraud-detection`  
+**Goal:** Complete Graph Neural Networks (GNN) implementation & integration for advanced fraud detection.
 
 ---
 
 ## 🏗️ Work in Progress (WIP)
 | Area | Action | Status |
 |------|--------|--------|
-| P0 Quick Wins | RBAC guards, Alembic setup, failing test | ✅ PR #44 |
-| CodeGenTool Integration | P0-1 result flow | ⏳ next after merge |
-| Redis JWT Blacklist | P1-1 implementation | ⏳ not started |
-| PolicyDocsTool | P1-2 vector retrieval | ⏳ not started |
-| Test Coverage | Raise to ≥55% | ⏳ at 50% now |
+| **GNN Implementation** | Core tools (`GNNFraudDetectionTool`, `GNNTrainingTool`) | ✅ PR #60 |
+| **CrewFactory Wiring** | Register GNN tools, create sample *gnn_analyst* agent | ⏳ next |
+| **Test Coverage ≥ 55 %** | Add unit & integration tests for GNN paths | ⏳ |
+| **Redis JWT Blacklist** | Persistent token blacklist (P1-1) | ⏳ |
+| **PolicyDocsTool** | Vector search integration (P1-2) | ⏳ |
 
 ---
 
-## 🚀 Next Immediate Tasks (P0 / next 4 h)
-1. **Wait for PR #44 CI** – ensure all tests pass (except intentional CodeGen failure).
-2. **After merge, create branch** `fix/P0-1-codegen-results`.
-3. **Implement CodeGenTool result integration** – make failing test pass.
-4. **Test end-to-end** with fraud_investigation crew.
-5. **Open PR for P0-1** with full implementation.
+## 🚀 Next Immediate Tasks (next 4 h)
+1. **Review & merge PR #60** – “Implement Graph Neural Networks for Advanced Fraud Detection”.  
+2. **Wire GNN tools into CrewFactory** and add sample agent configuration.  
+3. **Write GNN unit/integration tests** to raise coverage past 55 %.  
+4. **Begin Redis blacklist refactor** once GNN merged.  
+5. **Draft Docker GPU image plan** for PyG + CUDA.
 
 ---
 
 ## 📝 Recent Decisions & Context
-* **P0 quick wins completed** in 2.5 hours – security gaps closed.
-* **TDD approach** for CodeGenTool – test written first.
-* **CI updated** to run Alembic migrations automatically.
-* **RBAC now protects** all sensitive crew and analysis endpoints.
+* **GNN milestone achieved** – PyTorch Geometric chosen; supports GCN, GAT, GraphSAGE.  
+* **Optuna adopted** for hyper-parameter tuning; local FS experiment tracker v1 implemented.  
+* **Unified `GNNModel`** reduces duplicate architecture code.  
+* **Neo4j subgraph extraction** via APOC path; placeholder explainability to be upgraded.  
+* **PR #60** houses all GNN code; awaiting review.
 
 ---
 
 ## 🔧 Critical Issues Being Addressed
-* ✅ **RBAC security gap** on `/crew/run` – now protected.
-* ✅ **Database migrations** – automated in Docker & CI.
-* ⏳ **CodeGenTool results** not reaching subsequent agents.
-* ⏳ **Redis blacklist** still in-memory only.
+* ⏳ **CrewFactory wiring** to expose GNN capabilities to agents.  
+* ⏳ **Comprehensive tests** for new tools to maintain CI stability.  
+* ⏳ **Redis blacklist** still in-memory only.  
+* ⏳ **Docker GPU build** required for production training workloads.
 
 ---
 
 ## ⛔ Blockers / Dependencies
-* **PR #44 must merge** before starting P0-1 implementation.
-* **Test coverage gate** will need adjustment after P1-4.
-* **Time** – aiming to complete P0-1 today, P1 items over next week.
+* **PR #60 must merge** before downstream wiring & tests.  
+* **GPU image** planning needed for CI/CD before heavy training.  
+* **Feature branches** dependent on Redis refactor will wait until GNN integrated.
 
 ---
 
-_If you pick up this session, check PR #44 status first. If merged, proceed with P0-1 implementation._
+_If you pick up this session, start by reviewing PR #60; once merged, proceed with CrewFactory integration and test suite expansion._
