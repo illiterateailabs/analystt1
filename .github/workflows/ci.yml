@@ -17,10 +17,15 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
+      - name: Restore pip cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements-ci-min.txt') }}
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          pip install --constraint constraints.txt -r requirements.txt
+          pip install --prefer-binary -r requirements-ci-min.txt
       - name: Lint with Ruff
         run: |
           ruff check --output-format=github backend tests
@@ -35,10 +40,15 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
+      - name: Restore pip cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements-ci-min.txt') }}
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          pip install --constraint constraints.txt -r requirements.txt
+          pip install --prefer-binary -r requirements-ci-min.txt
       - name: Type check with mypy
         env:
           PYTHONPATH: .
@@ -74,10 +84,15 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
+      - name: Restore pip cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements.txt', 'constraints.txt') }}
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          pip install --constraint constraints.txt -r requirements.txt
+          pip install --prefer-binary --constraint constraints.txt -r requirements.txt
       - name: Run database migrations
         env:
           DATABASE_URL: sqlite:///test.db
