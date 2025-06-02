@@ -77,7 +77,7 @@ async def get_current_user(
     
     try:
         # Decode and validate token
-        payload = JWTHandler.decode_token(final_token)
+        payload = await JWTHandler.decode_token(final_token)
         
         # Extract user data
         user_id = payload.get("sub")

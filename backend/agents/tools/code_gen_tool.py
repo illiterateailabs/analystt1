@@ -87,6 +87,7 @@ class CodeGenTool:
         self.gemini_client = gemini_client or GeminiClient()
         self.e2b_client = e2b_client
         self._active_sandbox = None
+        self._last_result = None  # Store the last execution result
     
     async def _execute_in_sandbox(
         self,
@@ -360,15 +361,21 @@ If possible, structure your final results as JSON and print them at the end of e
                 if not execution_result["success"]:
                     response["error"] = execution_result.get("error") or "Execution failed"
             
+            # Store the last result for CustomCrew to access
+            self._last_result = response
+            
             return response
             
         except Exception as e:
             logger.error(f"Error generating/executing code: {e}", exc_info=True)
-            return {
+            error_response = {
                 "success": False,
                 "error": str(e),
                 "code": "# Error generating code"
             }
+            # Store the error result
+            self._last_result = error_response
+            return error_response
     
     def _run(self, **kwargs) -> Dict[str, Any]:
         """
@@ -389,7 +396,10 @@ If possible, structure your final results as JSON and print them at the end of e
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
         
-        return loop.run_until_complete(self.run(**kwargs))
+        result = loop.run_until_complete(self.run(**kwargs))
+        # Store the last result for CustomCrew to access
+        self._last_result = result
+        return result
     
     def _apply_security_checks(self, code: str, security_level: str) -> str:
         """
