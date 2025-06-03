@@ -7,174 +7,150 @@ _Last updated: **03 Jun 2025 – commit `ab99807` (PR #64)**_
 ## 1 ▪ High-Level Overview
 
 ```
-┌───────────────────┐        HTTPS         ┌────────────────────────┐
-│     Frontend      │  ─────────────────▶  │ FastAPI Back-End       │
-│  (Next.js + MUI)  │   JSON/WS/SSE        │  • Auth & RBAC         │
-└───────────────────┘                      │  • Crew / Templates    │
-        ▲                                  │  • Tool Gateway        │
-        │                                  └─────────┬──────────────┘
-        │                                          Async I/O
-        │                            ┌────────────────┴────────────────┐
-        │                            │   CrewAI Engine (CrewFactory)   │
-        │                            │  • Agent & Tool registry        │
-        │   WebSockets (P1)          │  • RUNNING_CREWS task tracker   │
-        │                            │  • Context propagation          │
-        │                            └────────────────┬────────────────┘
-        │                         calls via           │
-        │                         Python APIs         │
-┌───────┴────────┐  Cypher   ┌──────────────┐   REST / gRPC   ┌────────────┐
-│   Neo4j 5.15   │◀──────────┤  GraphQuery  │                 │  e2b.dev   │
-└────────────────┘           └──────────────┘<───────────────▶│ Sandboxes  │
-   │  APOC, GDS                                Code / PIP      └────────────┘
-   │                                                  ▲
-   │  Embeddings / Cypher                             │
-┌──┴────────────┐        Vector search     ┌──────────┴─────────┐
-│  Gemini LLM   │  <────────────────────── │    Redis 7         │
-└───────────────┘     (Policy RAG)         └────────────────────┘
-        ▲                                            │
-        │ JWT / TLS                                   │
-┌───────┴───────────┐                                │
-│  Postgres 15      │  Alembic migrations            │
-└───────────────────┘                                ▼
-                                          Prometheus Metrics / OTel (P2)
+┌───────────────────┐        HTTPS/WS        ┌────────────────────────┐
+│     Frontend      │  ───────────────────▶  │    FastAPI Back-End    │
+│  (Next.js + MUI)  │                       │  • Auth & RBAC         │
+└───────────────────┘                       │  • Crew / Templates    │
+        ▲                                   │  • Tool Gateway        │
+        │                                   └─────────┬──────────────┘
+        │                                           Async I/O
+        │                             ┌──────────────┴──────────────┐
+        │                             │   CrewAI Engine (Factory)   │
+        │                             │  • Agent & Tool registry    │
+        │      WebSockets/SSE (P1)    │  • RUNNING_CREWS tracker    │
+        │                             │  • Context propagation      │
+        │                             └──────────────┬──────────────┘
+        │                          Python calls      │
+        │                                             ▼
+        │                        ┌──────────────────────────────┐
+        │                        │  Tools & External Services   │
+        │                        │  (GraphQuery, GNN, RAG, …)   │
+        │                        └──────────────────────────────┘
+Services: Neo4j • Postgres • Redis • E2B Sandboxes • Gemini API • Prometheus
 ```
 
 ---
 
 ## 2 ▪ Component Breakdown
 
-| Layer | Module / Dir | Key Classes & Files | Purpose |
-|-------|--------------|---------------------|---------|
-| **Frontend** | `frontend/src` | `app/analysis/[taskId]/page.tsx` | Auth, dashboard, template wizard, results UI |
-| **API** | `backend/api/v1` | `crew.py`, `templates.py`, `analysis.py` | Crew run/pause/resume, task list & result, template CRUD |
-| **Factory** | `backend/agents/factory.py` | `CrewFactory`, `get_all_tools`, `RUNNING_CREWS` | Central builder; hot-reload configs; shared context |
-| **Agents** | `backend/agents/configs` | YAML files per agent/crew | Declarative definitions (role, goal, tools) |
-| **Tools** | `backend/agents/tools` | `GraphQueryTool`, `CodeGenTool`, `SandboxExecTool`, `PolicyDocsTool`, `GNN*Tool` | Encapsulate external capabilities |
-| **LLM** | `backend/integrations/gemini_client.py`, `agents/llm.py` | `GeminiClient`, `GeminiLLMProvider` | Text & code generation, embedding |
-| **Execution** | `backend/integrations/e2b_client.py` | Secure Python execution in Firecracker VMs |
-| **Data** | `backend/integrations/neo4j_client.py` | Async driver helpers, Cypher execution |
-| **Security** | `backend/auth` | `jwt_handler.py`, `rbac.py` | JWT issuance/blacklist, role decorator |
-| **Persistence** | `alembic/versions`, `backend/database.py` | DB models (User, HITL to-do), migrations |
-| **Observability** | `backend/core/metrics.py`, Prometheus exporter | LLM token & cost counters, crew execution timers |
-| **Memory Bank** | `memory-bank/*.md` | `MASTER_STATUS.md`, this doc | Single source doc store |
+| Layer | Component | Notes |
+|-------|-----------|-------|
+| **Frontend** | Next.js 14 / React 18, MUI v5 | Wizard UIs (templates, investigation run), analysis dashboard, auth pages |
+| **API** | FastAPI 0.111 | Versioned under `/api/v1/*`; fully async; integrated Prometheus middleware |
+| | `auth.py` | JWT issuance, refresh, blacklist (Redis) |
+| | `templates.py` | CRUD + AI suggestions (Gemini) |
+| | `analysis.py` | Task submission, status, results retrieval |
+| | `crew.py` | Hot-reload & runtime management |
+| **CrewAI Engine** | `CrewFactory` + `agents/*` | Loads YAML configs & user templates, instantiates agents & tools |
+| **Tools** | GraphQueryTool, GraphQLQueryTool, CodeGenTool (E2B), GNNFraudDetectionTool, PatternLibraryTool, PolicyDocsTool (RAG), SandboxExecTool, etc. | All implement common interface; discoverable via ToolFactory |
+| **Data Stores** | Neo4j 5.15 (graph), Postgres 15 (relational, Alembic), Redis 7 (cache, JWT, vector store), Minio/S3 (artifacts) |
+| **External** | Gemini Flash/Pro (LLM), E2B secure containers, Optuna (tuning) |
+| **Observability** | Prometheus metrics exporter, structured Loguru logs, future OpenTelemetry traces |
 
 ---
 
-## 3 ▪ Data Flow
+## 3 ▪ Detailed Data Flow
 
-### 3.1 Template → Execution → Results
+1. **User action** (template create / run investigation) from browser → Frontend fetch / mutate.
+2. **FastAPI** validates JWT (RBAC) → routes to corresponding service:
+   - **Template** CRUD hits `templates.py` → persists YAML in `backend/agents/configs/*` → `CrewFactory.reload()` for hot-availability.
+   - **Analysis** run hits `analysis.py` → enqueues new crew in `RUNNING_CREWS` Gauge, returns `taskId`.
+3. **CrewAI Engine** executes agents sequentially/parallel:
+   - Each **Agent** selects **Tools**; outputs structured JSON or artifacts.
+   - **Context propagation**: shared dict passed through all agents; CodeGenTool results, GNN predictions, etc., become inputs for later steps.
+4. **Results persistence**:
+   - Intermediate JSON in Redis (TTL), final artefacts (plots, HTML) in S3 path `analyses/{taskId}/`.
+   - DB rows (Postgres) for HITL reviews (`hitl_reviews` table – P0 migration).
+5. **Frontend polling / (P1) WebSocket** fetches `/analysis/{taskId}` until `status=done`, then renders graphs & reports.
+6. **Metrics** pushed: crew durations, LLM tokens, cost, errors → Prometheus scrape at `/metrics`.
 
-1. **Template Creation**  
-   Frontend wizard → `POST /api/v1/templates` (FastAPI)  
-   • YAML written under `backend/agents/configs/crews/`  
-   • `CrewFactory.reload()` hot-reloads config cache.
+---
 
-2. **Crew Execution**  
-   Analyst calls `POST /api/v1/crew/run` with `crew_name` & optional inputs.  
-   • Factory generates `task_id`, adds entry in `RUNNING_CREWS`.  
-   • Agents iterate tasks; context dict `_context` travels via `kickoff_with_context`.  
-   • Tools (e.g., CodeGenTool) push artefacts into `_context`.
+## 4 ▪ Tool Ecosystem & Agent Configurations
 
-3. **Tool Invocations**  
-   • _GraphQueryTool_ runs Cypher via Neo4j; returns JSON subgraphs.  
-   • _CodeGenTool_ → Gemini code → e2b sandbox → executes → returns stdout, JSON, PNG (base64) → stored in context.  
-   • _PolicyDocsTool_ embeds query, vector search Redis → Gemini answer.
+| Tool | Purpose | Key Deps |
+|------|---------|----------|
+| **GraphQueryTool** | Parameterized Cypher queries, sub-graph extraction | neo4j-python |
+| **GNNFraudDetectionTool** | GCN, GAT, GraphSAGE inference; pattern detection | PyTorch + DGL |
+| **GNNTrainingTool** | Train & tune models via Optuna; saves `.pt` artefacts | CUDA optional |
+| **CodeGenTool** | Generates & executes Python/SQL in sandbox (E2B) | e2b.dev API |
+| **PolicyDocsTool** | RAG over AML/KYC docs; Redis vector store | Gemini embeddings |
+| **PatternLibraryTool** | Yaml-defined fraud patterns; matches graph motifs | pydantic |
+| **SandboxExecTool** | Generic code execution with isolation | E2B |
+| **Neo4jSchemaTool** | Auto-migrate graph schema from YAML | neo4j |
 
-4. **Completion**  
-   Crew returns `TaskOutput`; `RUNNING_CREWS` updated to `COMPLETED`.  
-   Analyst polls `GET /api/v1/crew/{task_id}/result` → receives raw output, report (if generated), visualizations, metadata.
+Agents are defined YAML-first; key agent roles:
 
-5. **UI Display**  
-   React page fetches result, renders executive summary, markdown report, vis-network graph, gallery, risk/confidence chips.
+- `investigator`: orchestrates workflow
+- `graph_analyst`: runs GraphQuery & GNN tools
+- `code_writer`: uses CodeGenTool for visualizations
+- `compliance_checker`: invokes PolicyDocsTool
+- `report_writer`: collates context dict → Markdown/HTML report
 
-### 3.2 Authentication
+---
 
+## 5 ▪ Context Propagation Mechanism
+
+```python
+# Simplified excerpt
+context: dict[str, Any] = {}
+for agent in crew.agents:
+    result = await agent.run(context)
+    context.update(result)           # 🔑 Key line – global mutable context
 ```
-Login ➜ /auth/login
-   ↳ bcrypt pwd check
-   ↳ access/refresh JWT
-           ↓
-Every API call with Authorization: Bearer <access>
-   ↳ FastAPI dependency verifies JWT + Redis blacklist
-   ↳ @require_roles checks RBAC scopes
-```
 
-Refresh tokens stored HTTP-only; blacklist persisted (P0).
+• **RUNNING_CREWS** (in‐memory dict) stores `taskId → context` pointer.  
+• Completed contexts serialized to S3 & Postgres for audit.  
+• Prevents “lost tool outputs” problem fixed in PR #63.
 
 ---
 
-## 4 ▪ Tool Registry & Extensibility
+## 6 ▪ Security
 
-`get_all_tools()` instantiates core + crypto + GNN tools.  
-Adding a tool:
-
-1. `class MyTool(BaseTool): ...` in `backend/agents/tools`.  
-2. Append to `get_all_tools()` or dynamic discover via entry-points (P2).  
-3. Reference tool ID in agent YAML; hot-reload picks it up.
-
----
-
-## 5 ▪ Runtime Lifecycle
-
-| Phase | Action |
-|-------|--------|
-| **Startup** | FastAPI mounts routers; CrewFactory singleton lazily created; gRPC (future) servers start |
-| **Connect** | Each crew run triggers `CrewFactory.connect()` → Neo4j driver init |
-| **Execution** | Agents sequential/hierarchical per YAML; metrics collected; context propagated |
-| **Pause / HITL** | `POST /crew/pause` sets state=PAUSED; review stored; resume continues same context |
-| **Shutdown** | `CrewFactory.close()` closes Neo4j, terminates sandboxes |
+1. **JWT Auth** – Access & refresh tokens (HS256); blacklist set in Redis with AOF (`appendonly yes`) for durability.  
+2. **RBAC** – Role scopes (`analyst`, `admin`) enforced via FastAPI `Depends`.  
+3. **Sandboxed Code Execution** – All arbitrary code runs in e2b.dev secure containers; no host access.  
+4. **Database Least Privilege** – App role with limited grants; Alembic migrations tracked.  
+5. **Secrets** – Supplied via Docker/CI env vars; never committed.  
+6. **Compliance** – PolicyDocsTool auto-flags sanctions/AML violations; HITL review table stores approvals.
 
 ---
 
-## 6 ▪ Deployment & CI
+## 7 ▪ Observability
 
-* **Docker Compose (dev)**: `docker-compose.yml` spins Neo4j, Postgres, Redis, backend (hot-reload), frontend.  
-* **Docker Compose (prod)**: `docker-compose.prod.yml` – Nginx static frontend, gunicorn Uvicorn workers (GPU image WIP).  
-* **CI Pipeline** (GitHub Actions):  
-  * Ruff + Black + isort  
-  * mypy static typing  
-  * pytest (banked creds mocked)  
-  * Build Docker images  
-  * Push artefacts (future).
+| Aspect | Implementation |
+|--------|----------------|
+| **Metrics** | `backend/core/metrics.py` – Prometheus Counters, Histograms, Gauges (LLM tokens, cost, crew durations, HITL reviews) |
+| **Logging** | Loguru JSON lines, log level via `LOG_LEVEL` env; aggregated by docker-compose. |
+| **Tracing** | OpenTelemetry instrumentation planned (Phase 5). |
+| **Frontend** | React error boundaries; Sentry SDK TODO. |
 
 ---
 
-## 7 ▪ Security Layers
+## 8 ▪ Deployment Footprint
 
-1. **RBAC Decorator** – endpoint guard; roles in JWT.  
-2. **JWT Blacklist** – Redis set + AOF (pending).  
-3. **SandboxExecTool** – Firecracker micro-VM isolation, 30 s CPU / 512 MB mem caps.  
-4. **CORS & HTTPS** – enforced in FastAPI + Nginx.  
-5. **Audit Trails** – Run events in RUNNING_CREWS (persist to Postgres P1).  
-6. **Data Governance** – PolicyDocsTool cross-checks findings vs AML/OFAC guidelines.
+| Compose Service | CPU | RAM | Notes |
+|-----------------|-----|-----|-------|
+| backend | 1 vCPU | 1 GiB | FastAPI + workers |
+| frontend | 0.5 vCPU | 512 MiB | Next.js prod |
+| neo4j | 2 vCPU | 2 GiB | Heap 1 GiB, pagecache 512 MiB |
+| postgres | 1 vCPU | 1 GiB | WAL, `shared_buffers=256M` |
+| redis | 0.5 vCPU | 512 MiB | AOF on, `maxmemory 256M` |
+| prometheus (optional) | 0.5 vCPU | 512 MiB | External scrape |
 
----
-
-## 8 ▪ Observability
-
-* **Prometheus Exporter** – LLM token usage, cost (USD), crew duration, task counts.  
-* **Structured Logging** – Loguru JSON lines; log level via env.  
-* **OTel Instrumentation** – TODO (Phase 5).  
-* **Frontend Sentry** – TODO.
+GPU image (P1) will extend backend with CUDA 12, PyTorch.
 
 ---
 
-## 9 ▪ File & Document Governance
+## 9 ▪ Future Evolution
 
-* This document + `MASTER_STATUS.md` are the _only_ canonical docs.  
-* All other scattered .md files (progress, roadmap, etc.) are legacy; will be deleted after PR #64 merge.  
-* Updates: bump versions & dates in §1 and relevant tables.
-
----
-
-## 10 ▪ Future Evolution
-
-* **Graph Transformer** & heterogeneous graph support (HGT, HAN).  
-* **Real-time SSE/WebSocket progress** integrated with RUNNING_CREWS.  
-* **Tenant isolation** – row-level security + per-tenant Neo4j DBMS.  
-* **Model Registry** – MLflow / S3 for GNN artefacts.  
-* **Plugin Marketplace** – community tools auto-discoverable via MCP.
+* **WebSocket/SSE progress feed** – Task events → UI real-time.  
+* **GPU CI Job** – nightly GNN baseline evaluation.  
+* **Graph Transformer & heterogeneous graphs** – HGT, HAN experimentation.  
+* **OpenTelemetry + Grafana/Loki** – full tracing and log dashboards.  
+* **Multi-tenant onboarding** – tenant_id column + Neo4j DBMS per tenant.
 
 ---
 
-_© 2025 IlliterateAI Labs – built by Marian Stanescu & Factory Droids_
+© 2025 IlliterateAI Labs • Built by Marian Stanescu & Factory Droids  
+_Every architectural change **must** be reflected in this document._
