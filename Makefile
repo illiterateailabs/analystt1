@@ -1,6 +1,6 @@
 # Makefile for Analystt1 - AI-Powered Financial Crime Analysis Platform
 
-.PHONY: help dev test lint format type-check clean migrate migrate-create smoke-test smoke-test-all
+.PHONY: help dev test lint format type-check clean migrate migrate-create smoke-test smoke-test-all ws-test ws-demo ws-curl
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -45,6 +45,19 @@ smoke-test: ## Run end-to-end smoke test
 	python scripts/smoke_test.py || echo "Smoke test failed"
 	
 smoke-test-all: dev smoke-test ## Start dev environment and run smoke test
+
+# WebSocket testing
+ws-test: ## Test WebSocket connection
+	@echo "Testing WebSocket connection..."
+	python -m pytest tests/test_websocket_progress.py -v
+
+ws-demo: ## Run WebSocket demo client
+	@echo "Running WebSocket demo..."
+	python scripts/websocket_demo.py
+
+ws-curl: ## Test WebSocket endpoint with curl
+	@echo "Testing WebSocket with curl..."
+	@curl -i -N -H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Key: SGVsbG8sIHdvcmxkIQ==" -H "Sec-WebSocket-Version: 13" http://localhost:8000/api/v1/ws/tasks/test?token=$(TOKEN)
 
 # Cleanup
 clean: ## Remove temporary files and artifacts

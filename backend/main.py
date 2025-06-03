@@ -17,7 +17,8 @@ import uvicorn
 from backend.config import settings
 from backend.core.logging import configure_logging, get_logger
 from backend.core.metrics import setup_metrics
-from backend.api.v1 import auth, chat, analysis, graph, crew, prompts, webhooks
+from backend.core.events import initialize_events, shutdown_events
+from backend.api.v1 import auth, chat, analysis, graph, crew, prompts, webhooks, ws_progress
 from backend.integrations.neo4j_client import Neo4jClient
 
 # Configure logging
@@ -53,6 +54,7 @@ app.include_router(graph.router, prefix="/api/v1/graph", tags=["Graph"])
 app.include_router(crew.router, prefix="/api/v1/crew", tags=["Crew"])
 app.include_router(prompts.router, prefix="/api/v1/prompts", tags=["Prompts"])
 app.include_router(webhooks.router, prefix="/api/v1/webhooks", tags=["Webhooks"])
+app.include_router(ws_progress.router, prefix="/api/v1", tags=["WebSockets"])
 
 
 # Exception handlers
@@ -163,6 +165,9 @@ async def startup_event() -> None:
     """Run startup tasks."""
     logger.info(f"Starting Analyst Agent API ({settings.ENVIRONMENT})")
     
+    # Initialize event system
+    await initialize_events()
+    
     # Check Neo4j connection if required
     if settings.REQUIRE_NEO4J:
         try:
@@ -180,6 +185,9 @@ async def startup_event() -> None:
 async def shutdown_event() -> None:
     """Run shutdown tasks."""
     logger.info("Shutting down Analyst Agent API")
+    
+    # Shutdown event system
+    await shutdown_events()
     
     # Close Neo4j connections if needed
     try:
