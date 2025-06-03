@@ -1,514 +1,445 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation';
-import ProtectedRoute from '@/components/auth/ProtectedRoute';
-import { getAuthHeaders } from '@/lib/auth';
-import { API_BASE_URL, USER_ROLES } from '@/lib/constants';
+import { useEffect, useState } from 'react';
+import { useParams } from 'next/navigation';
+import { BarChart, CheckCircle, Download, AlertTriangle, Info, FileText, Share2, Loader2, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import {
-  Box,
-  Typography,
-  Paper,
-  CircularProgress,
-  Alert,
-  Button,
-  Card,
-  CardContent,
-  Divider,
-  Grid,
-  Chip,
-  IconButton,
-  Tooltip,
-  Container,
-  Stack,
-} from '@mui/material';
-import {
-  ArrowBack as ArrowBackIcon,
-  Download as DownloadIcon,
-  ContentCopy as CopyIcon,
-  Refresh as RefreshIcon,
-  Info as InfoIcon,
-  Warning as WarningIcon,
-  CheckCircle as CheckCircleIcon,
-  BarChart as BarChartIcon,
-  FileDownload as FileDownloadIcon,
-} from '@mui/icons-material';
-import GraphVisualization from '@/components/graph/GraphVisualization';
+import remarkGfm from 'remark-gfm';
 
-// Define TaskResult interface
-interface Visualization {
+// Ensuring GraphVisualization import is correct for a default export
+import GraphVisualization from '../../../components/graph/GraphVisualization'; 
+// Ensuring fetchAnalysisResults import is correct for a named export
+import { fetchAnalysisResults } from '../../../lib/api'; 
+// Import TaskProgress component and useAuth hook
+import TaskProgress from '../../../components/analysis/TaskProgress';
+import { useAuth } from '../../../lib/auth';
+
+interface AnalysisNode {
+  id: string;
+  label: string;
+  type?: string;
+  properties?: Record<string, any>;
+  risk_score?: number;
+  size?: number;
+  color?: string;
+  [key: string]: any;
+}
+
+interface AnalysisEdge {
+  from: string;
+  to: string;
+  label?: string;
+  properties?: Record<string, any>;
+  weight?: number;
+  color?: string;
+  [key: string]: any;
+}
+interface GraphData {
+  nodes: AnalysisNode[];
+  edges: AnalysisEdge[];
+}
+
+interface GeneratedVisualization {
   filename: string;
-  type: string;
-  data: string;
+  content: string; // base64 encoded image data
+  type: 'image/png' | 'image/jpeg' | 'image/svg+xml' | 'text/html'; // Mime type
 }
 
-interface TaskResult {
+interface AnalysisData {
   task_id: string;
-  crew_name: string;
-  state: string;
-  start_time: string;
-  completion_time?: string;
-  result?: string;
-  report?: string;
-  visualizations?: Visualization[];
-  metadata?: {
-    inputs?: any;
-    paused_duration?: number;
-    risk_score?: number;
-    confidence?: number;
-    [key: string]: any;
-  };
+  status: string;
+  title?: string;
+  executive_summary?: string;
+  risk_score?: number;
+  confidence?: number;
+  detailed_findings?: string; // Markdown or plain text
+  graph_data?: GraphData;
+  visualizations?: GeneratedVisualization[];
+  recommendations?: string[];
+  code_generated?: string;
+  execution_details?: any; // Could be more specific
+  error?: string;
+  // CrewAI specific fields if available
+  crew_name?: string;
+  crew_inputs?: Record<string, any>;
+  crew_result?: any; 
 }
 
-export default function AnalysisResultsPage() {
-  const { taskId } = useParams();
-  const router = useRouter();
-  const [loading, setLoading] = useState(true);
+const AnalysisResultsPage = () => {
+  const params = useParams();
+  const taskId = params.taskId as string;
+  const { token } = useAuth();
+
+  const [analysisData, setAnalysisData] = useState<AnalysisData | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [taskResult, setTaskResult] = useState<TaskResult | null>(null);
-  const [activeTab, setActiveTab] = useState('summary');
-  const [copied, setCopied] = useState(false);
+  const [showProgress, setShowProgress] = useState<boolean>(true);
 
   useEffect(() => {
-    fetchTaskResult();
-  }, [taskId]);
-
-  const fetchTaskResult = async () => {
-    try {
+    if (taskId) {
       setLoading(true);
       setError(null);
-
-      const response = await fetch(`${API_BASE_URL}/crew/${taskId}/result`, {
-        headers: getAuthHeaders(),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Error fetching task result: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      setTaskResult(data);
-    } catch (err) {
-      console.error('Failed to fetch task result:', err);
-      setError(err instanceof Error ? err.message : 'Failed to fetch task result');
-    } finally {
-      setLoading(false);
+      fetchAnalysisResults(taskId)
+        .then((data: AnalysisData) => {
+          // Ensure nested objects are initialized if not present
+          setAnalysisData({
+            ...data,
+            graph_data: data.graph_data || { nodes: [], edges: [] },
+            visualizations: data.visualizations || [],
+            recommendations: data.recommendations || [],
+          });
+        })
+        .catch((err) => {
+          console.error('Error fetching analysis results:', err);
+          setError(err.message || 'Failed to load analysis results.');
+          setAnalysisData(null); // Clear data on error
+        })
+        .finally(() => {
+          setLoading(false);
+        });
     }
-  };
+  }, [taskId]);
 
   const handleExportJSON = () => {
-    if (!taskResult) return;
-    
-    const dataStr = JSON.stringify(taskResult, null, 2);
-    const dataUri = `data:application/json;charset=utf-8,${encodeURIComponent(dataStr)}`;
-    
-    const exportFileDefaultName = `analysis-${taskResult.task_id}.json`;
-    
-    const linkElement = document.createElement('a');
-    linkElement.setAttribute('href', dataUri);
-    linkElement.setAttribute('download', exportFileDefaultName);
-    linkElement.click();
+    if (!analysisData) return;
+    const jsonString = JSON.stringify(analysisData, null, 2);
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `analysis_results_${taskId}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
-  const handleExportReport = () => {
-    if (!taskResult?.report) return;
-    
-    const dataStr = taskResult.report;
-    const dataUri = `data:text/markdown;charset=utf-8,${encodeURIComponent(dataStr)}`;
-    
-    const exportFileDefaultName = `report-${taskResult.task_id}.md`;
-    
-    const linkElement = document.createElement('a');
-    linkElement.setAttribute('href', dataUri);
-    linkElement.setAttribute('download', exportFileDefaultName);
-    linkElement.click();
+  const handleExportPDF = () => {
+    // Placeholder for PDF export functionality
+    // This would typically use a library like jsPDF and html2canvas
+    // or a server-side PDF generation service.
+    alert('PDF export functionality is not yet implemented.');
+    console.log('Attempting to print to PDF via browser');
+    window.print();
   };
 
-  const handleCopyTaskId = () => {
+  const toggleProgressDisplay = () => {
+    setShowProgress(!showProgress);
+  };
+
+  // Determine if the task is still running
+  const isTaskRunning = analysisData?.status === 'running' || 
+                        analysisData?.status === 'pending' || 
+                        analysisData?.status === 'in_progress';
+
+  // Handle task completion from WebSocket
+  const handleTaskComplete = (events) => {
+    // Refresh the analysis data when the task completes
     if (taskId) {
-      navigator.clipboard.writeText(taskId as string);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      fetchAnalysisResults(taskId)
+        .then((data: AnalysisData) => {
+          setAnalysisData({
+            ...data,
+            graph_data: data.graph_data || { nodes: [], edges: [] },
+            visualizations: data.visualizations || [],
+            recommendations: data.recommendations || [],
+          });
+          setLoading(false);
+        })
+        .catch((err) => {
+          console.error('Error fetching updated analysis results:', err);
+        });
     }
   };
 
-  const downloadVisualization = (visualization: Visualization) => {
-    const linkElement = document.createElement('a');
-    linkElement.setAttribute('href', `data:${visualization.type};base64,${visualization.data}`);
-    linkElement.setAttribute('download', visualization.filename);
-    linkElement.click();
-  };
-
-  const renderRiskIndicator = () => {
-    const riskScore = taskResult?.metadata?.risk_score || 0;
-    let color = 'success.main';
-    let icon = <CheckCircleIcon />;
-    let label = 'Low Risk';
-    
-    if (riskScore > 70) {
-      color = 'error.main';
-      icon = <WarningIcon />;
-      label = 'High Risk';
-    } else if (riskScore > 30) {
-      color = 'warning.main';
-      icon = <WarningIcon />;
-      label = 'Medium Risk';
-    }
-    
+  if (loading && !analysisData) {
     return (
-      <Box display="flex" alignItems="center" sx={{ color }}>
-        {icon}
-        <Typography variant="body1" ml={1} fontWeight="bold">
-          {label} ({riskScore}/100)
-        </Typography>
-      </Box>
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-900 text-gray-100 p-4">
+        <Loader2 className="h-16 w-16 animate-spin text-blue-500 mb-4" />
+        <p className="text-xl">Loading Analysis Results for Task ID: {taskId}...</p>
+      </div>
     );
-  };
+  }
 
-  const renderConfidenceIndicator = () => {
-    const confidence = taskResult?.metadata?.confidence || 0;
-    let color = 'error.main';
-    
-    if (confidence > 0.7) {
-      color = 'success.main';
-    } else if (confidence > 0.4) {
-      color = 'warning.main';
-    }
-    
+  if (error && !analysisData) {
     return (
-      <Box display="flex" alignItems="center" sx={{ color }}>
-        <InfoIcon />
-        <Typography variant="body1" ml={1} fontWeight="bold">
-          Confidence: {(confidence * 100).toFixed(0)}%
-        </Typography>
-      </Box>
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-900 text-gray-100 p-4">
+        <AlertTriangle className="h-16 w-16 text-red-500 mb-4" />
+        <h2 className="text-2xl font-semibold mb-2">Error Loading Analysis</h2>
+        <p className="text-red-400 mb-4">{error}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md text-white transition-colors"
+        >
+          Retry
+        </button>
+      </div>
     );
-  };
+  }
 
-  const renderExecutionTime = () => {
-    if (!taskResult?.start_time || !taskResult?.completion_time) return null;
-    
-    try {
-      const start = new Date(taskResult.start_time);
-      const end = new Date(taskResult.completion_time);
-      const durationMs = end.getTime() - start.getTime();
-      const durationMinutes = Math.floor(durationMs / 60000);
-      const durationSeconds = Math.floor((durationMs % 60000) / 1000);
-      
-      return (
-        <Typography variant="body2" color="text.secondary">
-          Execution time: {durationMinutes}m {durationSeconds}s
-        </Typography>
-      );
-    } catch (e) {
-      return null;
-    }
-  };
-
-  const renderStatusChip = () => {
-    if (!taskResult) return null;
-    
-    let color: 'success' | 'error' | 'warning' | 'default' = 'default';
-    
-    switch (taskResult.state) {
-      case 'COMPLETED':
-        color = 'success';
-        break;
-      case 'ERROR':
-        color = 'error';
-        break;
-      case 'PAUSED':
-        color = 'warning';
-        break;
-    }
-    
+  if (!analysisData && !loading) {
     return (
-      <Chip 
-        label={taskResult.state} 
-        color={color} 
-        size="small" 
-        sx={{ fontWeight: 'bold' }}
-      />
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-900 text-gray-100 p-4">
+        <Info className="h-16 w-16 text-yellow-500 mb-4" />
+        <p className="text-xl">No analysis data found for Task ID: {taskId}.</p>
+         <p className="text-sm text-gray-400">The task might still be processing or encountered an issue.</p>
+      </div>
     );
+  }
+  
+  const riskScoreColor = (score?: number) => {
+    if (score === undefined) return 'text-gray-400';
+    if (score >= 0.75) return 'text-red-500';
+    if (score >= 0.5) return 'text-yellow-500';
+    if (score >= 0.25) return 'text-blue-500';
+    return 'text-green-500';
+  };
+  
+  const confidenceColor = (score?: number) => {
+    if (score === undefined) return 'text-gray-400';
+    if (score >= 0.8) return 'text-green-500';
+    if (score >= 0.6) return 'text-blue-500';
+    return 'text-yellow-500';
   };
 
-  const renderVisualizations = () => {
-    if (!taskResult?.visualizations || taskResult.visualizations.length === 0) {
-      return (
-        <Alert severity="info" sx={{ mt: 2 }}>
-          No visualizations were generated during this analysis.
-        </Alert>
-      );
-    }
-    
-    return (
-      <Grid container spacing={3} sx={{ mt: 1 }}>
-        {taskResult.visualizations.map((vis, index) => (
-          <Grid item xs={12} md={6} key={index}>
-            <Card variant="outlined">
-              <CardContent>
-                <Typography variant="subtitle1" gutterBottom>
-                  {vis.filename}
-                </Typography>
-                <Box 
-                  sx={{ 
-                    display: 'flex', 
-                    justifyContent: 'center', 
-                    alignItems: 'center',
-                    border: '1px solid #eee',
-                    borderRadius: 1,
-                    p: 1,
-                    mb: 2,
-                    minHeight: 200
-                  }}
-                >
-                  <img 
-                    src={`data:${vis.type};base64,${vis.data}`} 
-                    alt={vis.filename}
-                    style={{ maxWidth: '100%', maxHeight: 400 }}
-                  />
-                </Box>
-                <Button
-                  startIcon={<DownloadIcon />}
-                  variant="outlined"
-                  size="small"
-                  onClick={() => downloadVisualization(vis)}
-                >
-                  Download
-                </Button>
-              </CardContent>
-            </Card>
-          </Grid>
-        ))}
-      </Grid>
-    );
-  };
-
-  const renderGraph = () => {
-    // Check if there's graph data in the metadata
-    const graphData = taskResult?.metadata?.graph_data;
-    
-    if (!graphData) {
-      return (
-        <Alert severity="info" sx={{ mt: 2 }}>
-          No graph data available for this analysis.
-        </Alert>
-      );
-    }
-    
-    return (
-      <Box sx={{ height: 600, border: '1px solid #eee', borderRadius: 1, p: 2 }}>
-        <GraphVisualization data={graphData} />
-      </Box>
-    );
-  };
 
   return (
-    <ProtectedRoute requiredRoles={[USER_ROLES.ANALYST, USER_ROLES.ADMIN]}>
-      <Box sx={{ p: 3 }}>
-        {/* Header */}
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-          <Button 
-            startIcon={<ArrowBackIcon />} 
-            onClick={() => router.push('/analysis')}
-          >
-            Back to Analysis
-          </Button>
-          
-          <Box sx={{ display: 'flex', gap: 2 }}>
-            <Button
-              startIcon={<RefreshIcon />}
-              variant="outlined"
-              onClick={fetchTaskResult}
-              disabled={loading}
-            >
-              Refresh
-            </Button>
-            <Button
-              startIcon={<FileDownloadIcon />}
-              variant="contained"
+    <div className="min-h-screen bg-gray-900 text-gray-100 p-4 md:p-8">
+      <header className="mb-8">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center">
+          <div>
+            <h1 className="text-3xl md:text-4xl font-bold text-blue-400 break-all">
+              Analysis Report: {analysisData?.title || `Task ${taskId}`}
+            </h1>
+            <p className="text-sm text-gray-400 mt-1">Task ID: <span className="font-mono">{taskId}</span></p>
+            {analysisData?.crew_name && <p className="text-sm text-gray-400">Crew: {analysisData.crew_name}</p>}
+          </div>
+          <div className="flex space-x-2 mt-4 md:mt-0">
+            <button
               onClick={handleExportJSON}
-              disabled={!taskResult}
+              className="flex items-center px-4 py-2 bg-green-600 hover:bg-green-700 rounded-md text-white transition-colors text-sm"
             >
-              Export Results
-            </Button>
-          </Box>
-        </Box>
-        
-        {/* Loading state */}
-        {loading && (
-          <Box sx={{ display: 'flex', justifyContent: 'center', my: 4 }}>
-            <CircularProgress />
-          </Box>
+              <Download className="h-4 w-4 mr-2" /> Export JSON
+            </button>
+            <button
+              onClick={handleExportPDF}
+              className="flex items-center px-4 py-2 bg-red-600 hover:bg-red-700 rounded-md text-white transition-colors text-sm"
+            >
+              <FileText className="h-4 w-4 mr-2" /> Export PDF
+            </button>
+            {/* <button
+              className="flex items-center px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-md text-white transition-colors text-sm"
+            >
+              <Share2 className="h-4 w-4 mr-2" /> Share
+            </button> */}
+          </div>
+        </div>
+         {analysisData?.status && (
+          <p className={`mt-2 text-sm ${analysisData.status === 'completed' ? 'text-green-400' : 'text-yellow-400'}`}>
+            Status: {analysisData.status}
+          </p>
         )}
+      </header>
+
+      {/* Task Progress Section */}
+      <div className="mb-6">
+        <div 
+          className="flex justify-between items-center bg-gray-800 p-4 rounded-t-lg cursor-pointer"
+          onClick={toggleProgressDisplay}
+        >
+          <h2 className="text-xl font-semibold text-blue-300">
+            Real-time Task Progress
+          </h2>
+          <button className="text-gray-400 hover:text-white">
+            {showProgress ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+          </button>
+        </div>
         
-        {/* Error state */}
-        {error && (
-          <Alert severity="error" sx={{ mb: 3 }}>
-            {error}
-          </Alert>
+        {showProgress && (
+          <div className="bg-gray-800 p-4 rounded-b-lg border-t border-gray-700">
+            {token ? (
+              <TaskProgress 
+                taskId={taskId} 
+                token={token} 
+                onComplete={handleTaskComplete}
+                showTimeline={true}
+                maxEvents={25}
+              />
+            ) : (
+              <div className="text-yellow-400 p-4 bg-yellow-900/20 rounded-md">
+                Authentication required to view real-time progress.
+              </div>
+            )}
+          </div>
         )}
-        
-        {/* Result display */}
-        {!loading && !error && taskResult && (
-          <>
-            {/* Task info card */}
-            <Paper sx={{ p: 3, mb: 3 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
-                <Box>
-                  <Typography variant="h5" gutterBottom>
-                    {taskResult.crew_name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
-                  </Typography>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                    <Typography variant="body2" color="text.secondary">
-                      Task ID: {taskResult.task_id}
-                    </Typography>
-                    <Tooltip title={copied ? "Copied!" : "Copy Task ID"}>
-                      <IconButton size="small" onClick={handleCopyTaskId}>
-                        <CopyIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                    {renderStatusChip()}
-                  </Box>
-                  {renderExecutionTime()}
-                </Box>
-                
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'flex-end' }}>
-                  {taskResult.metadata?.risk_score && renderRiskIndicator()}
-                  {taskResult.metadata?.confidence && renderConfidenceIndicator()}
-                </Box>
-              </Box>
-              
-              <Divider sx={{ my: 2 }} />
-              
-              {/* Navigation tabs */}
-              <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
-                <Button 
-                  variant={activeTab === 'summary' ? 'contained' : 'outlined'}
-                  onClick={() => setActiveTab('summary')}
-                >
-                  Summary
-                </Button>
-                {taskResult.report && (
-                  <Button 
-                    variant={activeTab === 'report' ? 'contained' : 'outlined'}
-                    onClick={() => setActiveTab('report')}
-                    endIcon={taskResult.report && <DownloadIcon onClick={handleExportReport} />}
-                  >
-                    Report
-                  </Button>
-                )}
-                {taskResult.visualizations && taskResult.visualizations.length > 0 && (
-                  <Button 
-                    variant={activeTab === 'visualizations' ? 'contained' : 'outlined'}
-                    onClick={() => setActiveTab('visualizations')}
-                    startIcon={<BarChartIcon />}
-                  >
-                    Visualizations
-                  </Button>
-                )}
-                {taskResult.metadata?.graph_data && (
-                  <Button 
-                    variant={activeTab === 'graph' ? 'contained' : 'outlined'}
-                    onClick={() => setActiveTab('graph')}
-                  >
-                    Graph
-                  </Button>
-                )}
-              </Box>
-              
-              {/* Tab content */}
-              <Box sx={{ mt: 3 }}>
-                {activeTab === 'summary' && (
-                  <Box>
-                    <Typography variant="h6" gutterBottom>
-                      Executive Summary
-                    </Typography>
-                    <Paper variant="outlined" sx={{ p: 2, bgcolor: 'background.default' }}>
-                      <Typography variant="body1" component="div" sx={{ whiteSpace: 'pre-wrap' }}>
-                        {taskResult.result || "No summary available."}
-                      </Typography>
-                    </Paper>
-                    
-                    {taskResult.metadata?.inputs && (
-                      <Box sx={{ mt: 3 }}>
-                        <Typography variant="h6" gutterBottom>
-                          Analysis Inputs
-                        </Typography>
-                        <Paper variant="outlined" sx={{ p: 2, bgcolor: 'background.default' }}>
-                          <pre style={{ margin: 0, overflow: 'auto' }}>
-                            {JSON.stringify(taskResult.metadata.inputs, null, 2)}
-                          </pre>
-                        </Paper>
-                      </Box>
-                    )}
-                  </Box>
-                )}
-                
-                {activeTab === 'report' && taskResult.report && (
-                  <Box>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                      <Typography variant="h6">
-                        Detailed Report
-                      </Typography>
-                      <Button 
-                        startIcon={<DownloadIcon />}
-                        variant="outlined"
-                        size="small"
-                        onClick={handleExportReport}
-                      >
-                        Download Report
-                      </Button>
-                    </Box>
-                    <Paper 
-                      variant="outlined" 
-                      sx={{ 
-                        p: 3, 
-                        bgcolor: 'background.default',
-                        '& img': { maxWidth: '100%' },
-                        '& pre': { 
-                          backgroundColor: '#f5f5f5', 
-                          padding: 2, 
-                          borderRadius: 1,
-                          overflow: 'auto'
-                        },
-                        '& table': {
-                          borderCollapse: 'collapse',
-                          width: '100%',
-                          marginBottom: 2
-                        },
-                        '& th, & td': {
-                          border: '1px solid #ddd',
-                          padding: 1
-                        },
-                        '& th': {
-                          backgroundColor: '#f5f5f5'
-                        }
-                      }}
-                    >
-                      <ReactMarkdown>
-                        {taskResult.report}
-                      </ReactMarkdown>
-                    </Paper>
-                  </Box>
-                )}
-                
-                {activeTab === 'visualizations' && renderVisualizations()}
-                
-                {activeTab === 'graph' && renderGraph()}
-              </Box>
-            </Paper>
-          </>
-        )}
-        
-        {/* No result found */}
-        {!loading && !error && !taskResult && (
-          <Alert severity="info" className="mb-6">
-            No results found for this task ID. The task may still be running or doesn't exist.
-          </Alert>
-        )}
-      </Box>
-    </ProtectedRoute>
+      </div>
+
+      {/* Main Content - Only show full content when not running or has data */}
+      {(!isTaskRunning || analysisData?.executive_summary || analysisData?.detailed_findings) && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left Column / Main Column on smaller screens */}
+          <main className="lg:col-span-2 space-y-6">
+            {analysisData?.executive_summary && (
+              <section className="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 className="text-2xl font-semibold mb-3 text-blue-300 border-b border-gray-700 pb-2">Executive Summary</h2>
+                <div className="prose prose-sm prose-invert max-w-none">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{analysisData.executive_summary}</ReactMarkdown>
+                </div>
+              </section>
+            )}
+
+            {analysisData?.detailed_findings && (
+              <section className="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 className="text-2xl font-semibold mb-3 text-blue-300 border-b border-gray-700 pb-2">Detailed Findings</h2>
+                <div className="prose prose-sm prose-invert max-w-none">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{analysisData.detailed_findings}</ReactMarkdown>
+                </div>
+              </section>
+            )}
+
+            {analysisData?.graph_data && (analysisData.graph_data.nodes.length > 0 || analysisData.graph_data.edges.length > 0) && (
+              <section className="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 className="text-2xl font-semibold mb-3 text-blue-300 border-b border-gray-700 pb-2">Graph Visualization</h2>
+                <div className="h-[500px] md:h-[600px] w-full bg-gray-700 rounded">
+                  <GraphVisualization
+                    graphData={analysisData.graph_data}
+                    isLoading={loading}
+                    error={error}
+                    // Optional: Pass specific layout or interaction options
+                  />
+                </div>
+              </section>
+            )}
+
+            {analysisData?.visualizations && analysisData.visualizations.length > 0 && (
+              <section className="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 className="text-2xl font-semibold mb-3 text-blue-300 border-b border-gray-700 pb-2">Generated Visualizations</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {analysisData.visualizations.map((viz, index) => (
+                    <div key={index} className="border border-gray-700 p-3 rounded-md">
+                      <h3 className="text-lg font-medium mb-2 text-gray-300">{viz.filename}</h3>
+                      {viz.type.startsWith('image/') ? (
+                        <img
+                          src={`data:${viz.type};base64,${viz.content}`}
+                          alt={viz.filename}
+                          className="max-w-full h-auto rounded-md"
+                        />
+                      ) : viz.type === 'text/html' ? (
+                        <div className="w-full h-64 overflow-auto border border-gray-600 rounded">
+                          <iframe 
+                              srcDoc={viz.content} 
+                              title={viz.filename} 
+                              className="w-full h-full"
+                              sandbox="allow-scripts allow-same-origin" // Be cautious with sandbox attributes
+                          />
+                        </div>
+                      ) : (
+                        <p className="text-sm text-gray-400">Unsupported visualization type: {viz.type}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+            
+            {analysisData?.code_generated && (
+              <section className="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 className="text-2xl font-semibold mb-3 text-blue-300 border-b border-gray-700 pb-2">Generated Code</h2>
+                <div className="prose prose-sm prose-invert max-w-none bg-gray-700 p-4 rounded-md overflow-x-auto">
+                  <pre><code>{analysisData.code_generated}</code></pre>
+                </div>
+              </section>
+            )}
+
+          </main>
+
+          {/* Right Sidebar / Second Column on smaller screens */}
+          <aside className="lg:col-span-1 space-y-6">
+            {(analysisData?.risk_score !== undefined || analysisData?.confidence !== undefined) && (
+              <section className="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 className="text-xl font-semibold mb-3 text-blue-300 border-b border-gray-700 pb-2">Risk Assessment</h2>
+                <div className="space-y-3">
+                  {analysisData.risk_score !== undefined && (
+                    <div>
+                      <p className="text-sm text-gray-400">Overall Risk Score</p>
+                      <p className={`text-3xl font-bold ${riskScoreColor(analysisData.risk_score)}`}>
+                        {(analysisData.risk_score * 100).toFixed(1)}%
+                      </p>
+                    </div>
+                  )}
+                  {analysisData.confidence !== undefined && (
+                    <div>
+                      <p className="text-sm text-gray-400">Confidence Level</p>
+                      <p className={`text-2xl font-semibold ${confidenceColor(analysisData.confidence)}`}>
+                        {(analysisData.confidence * 100).toFixed(1)}%
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {analysisData?.recommendations && analysisData.recommendations.length > 0 && (
+              <section className="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 className="text-xl font-semibold mb-3 text-blue-300 border-b border-gray-700 pb-2">Recommendations</h2>
+                <ul className="space-y-2">
+                  {analysisData.recommendations.map((rec, index) => (
+                    <li key={index} className="flex items-start text-sm">
+                      <CheckCircle className="h-5 w-5 text-green-500 mr-2 flex-shrink-0 mt-0.5" />
+                      <span>{rec}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {analysisData?.execution_details && (
+              <section className="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 className="text-xl font-semibold mb-3 text-blue-300 border-b border-gray-700 pb-2">Execution Details</h2>
+                <div className="text-xs space-y-1 text-gray-400">
+                  {Object.entries(analysisData.execution_details).map(([key, value]) => (
+                    <p key={key}>
+                      <span className="font-semibold text-gray-300">{key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}: </span> 
+                      <span className="font-mono break-all">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</span>
+                    </p>
+                  ))}
+                </div>
+              </section>
+            )}
+            
+            {analysisData?.crew_inputs && (
+              <section className="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 className="text-xl font-semibold mb-3 text-blue-300 border-b border-gray-700 pb-2">Crew Inputs</h2>
+                <div className="text-xs space-y-1 text-gray-400">
+                  {Object.entries(analysisData.crew_inputs).map(([key, value]) => (
+                    <p key={key}>
+                      <span className="font-semibold text-gray-300">{key}: </span> 
+                      <span className="font-mono break-all">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</span>
+                    </p>
+                  ))}
+                </div>
+              </section>
+            )}
+
+          </aside>
+        </div>
+      )}
+
+      {/* Show a message when task is running but no data yet */}
+      {isTaskRunning && !analysisData?.executive_summary && !analysisData?.detailed_findings && (
+        <div className="bg-gray-800 p-8 rounded-lg shadow-lg text-center">
+          <Loader2 className="h-12 w-12 animate-spin text-blue-500 mx-auto mb-4" />
+          <h2 className="text-2xl font-semibold mb-2 text-blue-300">Analysis in Progress</h2>
+          <p className="text-gray-400 mb-4">
+            Your analysis task is currently running. Results will appear here as they become available.
+          </p>
+          <p className="text-gray-500 text-sm">
+            You can track real-time progress in the section above.
+          </p>
+        </div>
+      )}
+    </div>
   );
-}
+};
+
+export default AnalysisResultsPage;
