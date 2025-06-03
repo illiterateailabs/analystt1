@@ -1,127 +1,108 @@
-# Analyst's Augmentation Agent
+# Analystt1 – AI-Powered Financial Crime Analysis Platform
 
-An AI-powered system that revolutionizes analyst workflows across finance and research domains by integrating multimodal understanding, graph analytics, secure code execution, and standardized tool use.
+> **Phase 4 · Advanced AI Features**  
+> Commit `ab99807` · Last updated 03 Jun 2025
 
-## 🏗️ Architecture
+---
 
-- **FastAPI** – async Python backend, REST API surface  
-- **Next.js** – React-based frontend for chat, graph & dashboards  
-- **Gemini API** – multimodal LLM for reasoning, code generation, and NLU  
-- **Neo4j** – graph database for complex interconnected data analysis  
-- **e2b.dev** – secure cloud execution environment for AI-generated code  
-- **MCP** – Model Context Protocol for standardized tool interaction  
-- **Python** – primary integration & orchestration layer  
+## 📚 Consolidated Documentation
 
-## 🚀 Quick Start
+| Doc | Purpose |
+|-----|---------|
+| [MASTER_STATUS](memory-bank/MASTER_STATUS.md) | Project health, backlog & metrics |
+| [TECHNICAL_ARCHITECTURE](memory-bank/TECHNICAL_ARCHITECTURE.md) | System & data-flow reference |
+| [CAPABILITIES_CATALOG](memory-bank/CAPABILITIES_CATALOG.md) | What the platform can do today |
+| [CONTRIBUTING](CONTRIBUTING.md) | Dev workflow & PR guidelines |
+| [LICENSE](LICENSE) | MIT license text |
 
-### Prerequisites
-- Python 3.9+
-- Node.js 18+
-- Docker (for Neo4j **and** Postgres & Redis via `docker-compose`)
-- Google Cloud API key (Gemini)
-- e2b.dev API key
+_All other markdown files are considered legacy and will be removed after PR #64 merges._
 
-### Installation
+---
 
-1. **Clone and set up environment**:
+## 🏗️ High-Level Architecture
+
+- **FastAPI** backend – Auth, RBAC, crew & template APIs  
+- **CrewAI Engine** – Agents + tools orchestrated via `CrewFactory`  
+- **Next.js (React + MUI)** frontend – Auth, template wizard, results dashboard  
+- **Neo4j 5** – Graph analytics; APOC & GDS plugins  
+- **Gemini API** – LLM for NL → Cypher, code-gen, embeddings  
+- **Redis 7** – Vector store (policy RAG) + JWT blacklist  
+- **e2b.dev** – Firecracker micro-VMs for secure AI-generated code  
+- **Prometheus** – LLM token & cost metrics
+
+---
+
+## 🚀 Getting Started (Dev Stack)
+
+### 1 · Prerequisites
+- Python 3.11  
+- Node 18+  
+- Docker & Docker Compose  
+- Gemini & e2b API keys
+
+### 2 · Clone & Configure
 ```bash
-git clone <repo-url>
+git clone https://github.com/illiterateailabs/analystt1.git
 cd analystt1
-python -m venv venv
-source venv/bin/activate      # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
+cp .env.example .env            # add API keys & secrets
 ```
 
-2. **Install frontend dependencies**:
+### 3 · One-Command Dev Stack
 ```bash
-cd frontend
-npm install
-cd ..
+make dev        # spins up Neo4j, Postgres, Redis, backend (hot-reload) & frontend
 ```
+*Backend*: http://localhost:8000  •  *Frontend*: http://localhost:3000
 
-3. **Set up environment variables**:
+### 4 · Tests & Lint
 ```bash
-cp .env.example .env
-# Edit .env with your API keys
+make test       # ruff + mypy + pytest (≈ 50 % coverage)
 ```
 
-4. **Start services (Neo4j, Postgres, Redis)**:
+---
+
+## ✨ Implemented Features
+
+| Area | Capabilities |
+|------|--------------|
+| **Template System** | AI-powered wizard & CRUD API; YAML hot-reload |
+| **Crew Orchestration** | Shared context, task tracking, pause/resume (HITL) |
+| **Graph Analytics** | NL→Cypher (Gemini), GraphQueryTool, vis-network UI |
+| **Machine Learning** | GNNFraudDetection (GCN / GAT / GraphSAGE) + Optuna tuning |
+| **Code Generation** | CodeGenTool → e2b sandbox, returns JSON & PNG charts |
+| **Compliance RAG** | PolicyDocsTool uses Redis vector search + Gemini |
+| **Crypto Toolkit** | CSV loader, anomaly detector, random TX generator |
+| **Security** | JWT auth, Redis blacklist, granular RBAC |
+| **Observability** | Prometheus: LLM tokens $, crew duration, cost per run |
+
+---
+
+## 🧪 Quick Demo
+
 ```bash
-docker-compose up -d neo4j postgres redis
+# 1. create fraud investigation template (optional)
+curl -X POST /api/v1/templates \
+  -H "Authorization: Bearer $ADMIN" \
+  -d '{"name":"quick_fraud","description":"Ad-hoc FI", "agents":["nlq_translator","graph_analyst","report_writer"]}'
+
+# 2. run a crew
+curl -X POST /api/v1/crew/run \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"crew_name":"fraud_investigation","inputs":{"entity":"0xDEADBEEF"}}'
+
+# 3. open in browser
+http://localhost:3000/analysis/<task_id>
 ```
 
-5. **Run the application**:
-```bash
-# Backend
-python -m uvicorn backend.main:app --reload --port 8000
-
-# Frontend (in another terminal)
-cd frontend && npm run dev
-```
-
-## 📁 Project Structure
-
-```
-analystt1/
-├── backend/                 # FastAPI backend
-│   ├── core/               # Core orchestration & reasoning
-│   ├── integrations/       # External service integrations
-│   ├── models/             # Data models & schemas
-│   ├── services/           # Business logic services
-│   └── api/                # API endpoints
-├── frontend/               # React (Next.js) frontend
-├── neo4j/                  # Neo4j configuration & scripts
-├── e2b_sandboxes/          # e2b.dev sandbox templates
-├── mcp_tools/             # MCP tool implementations
-├── tests/                 # Test suites
-└── docs/                  # Documentation
-```
-
-## 🔧 Development Phases
-
-- **Phase 1**: Core Foundation & PoC ✅ (Completed)
-- **Phase 2**: MVP for Financial Crime Analysis ✅
-- **Phase 3**: Integrations & Ecosystem (Completed)
-- **Phase 4**: Advanced AI & "Data Detective" (Current)
-- **Phase 5**: Ongoing Evolution
-
-## 📊 Features
-
-### Current
-- [x] Gemini API integration
-- [x] FastAPI backend & Next.js UI
-- [x] Neo4j graph database setup
-- [x] e2b.dev secure execution
-- [x] Basic NLQ-to-Cypher translation
-- [x] JWT + RBAC security
-- [x] Prometheus metrics
-
-### Planned
-- [ ] Advanced fraud detection modules
-- [ ] Multimodal document analysis
-- [ ] MCP tool ecosystem expansion
-- [ ] Graph analytics & pattern recognition
-- [ ] AI-assisted hypothesis generation
-
-## 🛡️ Security & Ethics
-
-- Secure API key management
-- Isolated code execution via e2b.dev
-- Data privacy compliance (GDPR/CCPA)
-- Explainable AI (XAI) integration
-- Bias mitigation strategies
-
-## 📚 Documentation
-
-- [Architecture Overview](memory-bank/systemPatterns.md)
-- API Reference – TODO
-- Development Guide – TODO
-- Deployment Guide – TODO
+---
 
 ## 🤝 Contributing
 
-See our forthcoming [CONTRIBUTING.md](CONTRIBUTING.md) for development practices and guidelines.
+PRs welcome!  
+1. Open an issue describing your change.  
+2. Branch off `main`, follow commit lint.  
+3. Ensure `make test` & CI pass.  
+4. Update consolidated docs if behaviour changes.
 
-## 📄 License
+---
 
-This project is licensed under the MIT License – see the [LICENSE](LICENSE) file for details.
+© 2025 IlliterateAI Labs – built by Marian Stanescu & Factory Droids
