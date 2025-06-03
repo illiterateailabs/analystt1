@@ -1,20 +1,21 @@
 """
-Crew API endpoints for running and managing agent crews.
+Crew API endpoints for managing CrewAI crews.
 
-This module provides endpoints for listing available crews,
-running specific crews with inputs, and managing crew execution
-(pause, resume) for human-in-the-loop workflows.
+This module provides endpoints for running, pausing, and resuming CrewAI crews,
+as well as retrieving crew results and status.
 """
 
 import logging
 from typing import Dict, List, Optional, Any, Union
 from fastapi import APIRouter, HTTPException, Depends, Request, status
 from pydantic import BaseModel, Field
+from datetime import datetime, timedelta
 
-from backend.agents.factory import CrewFactory
+from backend.agents.factory import CrewFactory, RUNNING_CREWS
 from backend.auth.rbac import require_roles, Roles, RoleSets
 
 
+# Configure logging
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
@@ -23,260 +24,296 @@ router = APIRouter()
 class CrewRunRequest(BaseModel):
     """Request model for running a crew."""
     crew_name: str = Field(..., description="Name of the crew to run")
-    inputs: Optional[Dict[str, Any]] = Field(default={}, description="Input parameters for the crew")
+    inputs: Optional[Dict[str, Any]] = Field(None, description="Inputs for the crew")
 
 
 class CrewPauseRequest(BaseModel):
     """Request model for pausing a crew."""
-    task_id: str = Field(..., description="Task ID of the running crew")
+    task_id: str = Field(..., description="ID of the task to pause")
     reason: Optional[str] = Field(None, description="Reason for pausing")
+    review_id: Optional[str] = Field(None, description="ID of the associated review")
 
 
 class CrewResumeRequest(BaseModel):
-    """Request model for resuming a paused crew."""
-    task_id: str = Field(..., description="Task ID of the paused crew")
-    approved: bool = Field(..., description="Whether the task is approved to continue")
-    comment: Optional[str] = Field(None, description="Comment from the reviewer")
+    """Request model for resuming a crew."""
+    task_id: str = Field(..., description="ID of the task to resume")
+    review_result: Optional[Dict[str, Any]] = Field(None, description="Result of the review")
 
 
 class CrewResponse(BaseModel):
     """Response model for crew operations."""
     success: bool = Field(..., description="Whether the operation was successful")
-    task_id: Optional[str] = Field(None, description="Task ID for tracking")
-    status: Optional[str] = Field(None, description="Current status of the crew")
-    result: Optional[Any] = Field(None, description="Result of the crew execution")
+    task_id: Optional[str] = Field(None, description="ID of the task")
+    result: Optional[str] = Field(None, description="Result of the crew execution")
     error: Optional[str] = Field(None, description="Error message if any")
 
 
-# Dependency to get CrewFactory
-async def get_crew_factory(request: Request) -> CrewFactory:
-    """Get or create a CrewFactory instance."""
-    if not hasattr(request.app.state, "crew_factory"):
-        logger.info("Creating new CrewFactory instance")
-        request.app.state.crew_factory = CrewFactory()
-    return request.app.state.crew_factory
+class TaskListItem(BaseModel):
+    """Model for a task in the task list."""
+    task_id: str = Field(..., description="Task ID")
+    crew_name: str = Field(..., description="Name of the crew")
+    state: str = Field(..., description="Current state of the task")
+    start_time: str = Field(..., description="Time when the task started")
+    last_updated: str = Field(..., description="Time when the task was last updated")
+    current_agent: Optional[str] = Field(None, description="Current agent processing the task")
+    error: Optional[str] = Field(None, description="Error message if any")
+    review_id: Optional[str] = Field(None, description="ID of associated review if paused for HITL")
 
 
-@router.get("")
-@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
-async def list_crews(
-    crew_factory: CrewFactory = Depends(get_crew_factory)
-):
-    """
-    List all available crews.
-    
-    Returns:
-        List of crew names that can be run
-    """
-    try:
-        crews = crew_factory.get_available_crews()
-        return {"success": True, "crews": crews}
-    except Exception as e:
-        logger.error(f"Failed to get crews: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get crews: {str(e)}"
-        )
+class TaskListResponse(BaseModel):
+    """Response model for listing tasks."""
+    tasks: List[TaskListItem] = Field(..., description="List of tasks")
+    total: int = Field(..., description="Total number of tasks")
 
 
-@router.post("/run")
-@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
+class TaskResultResponse(BaseModel):
+    """Response model for task results."""
+    task_id: str = Field(..., description="Task ID")
+    crew_name: str = Field(..., description="Name of the crew")
+    state: str = Field(..., description="Current state of the task")
+    start_time: str = Field(..., description="Time when the task started")
+    completion_time: Optional[str] = Field(None, description="Time when the task completed")
+    result: Optional[str] = Field(None, description="Raw result of the crew execution")
+    report: Optional[str] = Field(None, description="Formatted report from the crew")
+    visualizations: Optional[List[Dict[str, Any]]] = Field(None, description="Visualizations generated by the crew")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata about the task")
+
+
+# Endpoints
+@router.post(
+    "/run",
+    response_model=CrewResponse,
+    summary="Run a crew",
+    description="Run a CrewAI crew with the specified inputs."
+)
 async def run_crew(
     request: CrewRunRequest,
-    crew_factory: CrewFactory = Depends(get_crew_factory)
+    roles: RoleSets = Depends(require_roles([Roles.ANALYST, Roles.ADMIN]))
 ):
     """
-    Run a crew with the specified inputs.
+    Run a CrewAI crew.
     
     Args:
-        request: Crew run request with crew name and inputs
+        request (CrewRunRequest): Request model with crew name and inputs.
         
     Returns:
-        Crew execution result
+        CrewResponse: Response with task ID and result.
     """
-    try:
-        logger.info(f"Running crew: {request.crew_name}")
-        
-        # Validate crew exists
-        available_crews = crew_factory.get_available_crews()
-        if request.crew_name not in available_crews:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Crew not found: {request.crew_name}"
-            )
-        
-        # Run the crew
-        result = await crew_factory.run_crew(request.crew_name, inputs=request.inputs)
-        
-        # Close the factory to release resources
-        await crew_factory.close()
-        
-        # Return the result
-        if isinstance(result, dict) and result.get("success") is False:
-            # Crew execution failed but API call succeeded
-            return CrewResponse(
-                success=False,
-                error=result.get("error", "Unknown error"),
-                task_id=result.get("task_id"),
-                status=result.get("status", "FAILED")
-            )
-        
-        # Success case
-        return CrewResponse(
-            success=True,
-            task_id=result.get("task_id") if isinstance(result, dict) else None,
-            result=result,
-            status=result.get("status", "COMPLETED") if isinstance(result, dict) else "COMPLETED"
-        )
-        
-    except HTTPException:
-        # Re-raise HTTP exceptions
-        raise
-    except Exception as e:
-        logger.error(f"Failed to run crew: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to run crew: {str(e)}"
-        )
-
-
-@router.post("/{crew_name}")
-@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
-async def run_crew_by_name(
-    crew_name: str,
-    inputs: Dict[str, Any] = {},
-    crew_factory: CrewFactory = Depends(get_crew_factory)
-):
-    """
-    Run a crew by name with the specified inputs.
+    # Create factory
+    factory = CrewFactory()
     
-    Args:
-        crew_name: Name of the crew to run
-        inputs: Input parameters for the crew
-        
-    Returns:
-        Crew execution result
-    """
-    try:
-        logger.info(f"Running crew by name: {crew_name}")
-        
-        # Validate crew exists
-        available_crews = crew_factory.get_available_crews()
-        if crew_name not in available_crews:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Crew not found: {crew_name}"
-            )
-        
-        # Run the crew
-        result = await crew_factory.run_crew(crew_name, inputs=inputs)
-        
-        # Close the factory to release resources
-        await crew_factory.close()
-        
-        # Return the result
-        if isinstance(result, dict) and result.get("success") is False:
-            # Crew execution failed but API call succeeded
-            return CrewResponse(
-                success=False,
-                error=result.get("error", "Unknown error"),
-                task_id=result.get("task_id"),
-                status=result.get("status", "FAILED")
-            )
-        
-        # Success case
-        return CrewResponse(
-            success=True,
-            task_id=result.get("task_id") if isinstance(result, dict) else None,
-            result=result,
-            status=result.get("status", "COMPLETED") if isinstance(result, dict) else "COMPLETED"
-        )
-        
-    except HTTPException:
-        # Re-raise HTTP exceptions
-        raise
-    except Exception as e:
-        logger.error(f"Failed to run crew: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to run crew: {str(e)}"
-        )
+    # Run crew
+    result = await factory.run_crew(request.crew_name, request.inputs)
+    
+    # Create response
+    response = CrewResponse(
+        success=result["success"],
+        task_id=result.get("task_id"),
+        result=result.get("result"),
+        error=result.get("error")
+    )
+    
+    return response
 
 
-@router.patch("/pause")
-@require_roles(RoleSets.COMPLIANCE_TEAM)
+@router.post(
+    "/pause",
+    response_model=CrewResponse,
+    summary="Pause a crew",
+    description="Pause a running CrewAI crew."
+)
 async def pause_crew(
     request: CrewPauseRequest,
-    crew_factory: CrewFactory = Depends(get_crew_factory)
+    roles: RoleSets = Depends(require_roles([Roles.ANALYST, Roles.ADMIN]))
 ):
     """
-    Pause a running crew task.
+    Pause a running CrewAI crew.
     
     Args:
-        request: Crew pause request with task ID and reason
+        request (CrewPauseRequest): Request model with task ID and reason.
         
     Returns:
-        Pause operation result
+        CrewResponse: Response indicating success or failure.
     """
-    try:
-        logger.info(f"Pausing crew task: {request.task_id}")
-        
-        # Pause the crew
-        result = await crew_factory.pause_crew(
-            task_id=request.task_id,
-            reason=request.reason
-        )
-        
-        return CrewResponse(
-            success=result.get("success", False),
-            task_id=request.task_id,
-            status="PAUSED" if result.get("success", False) else "PAUSE_FAILED",
-            error=result.get("error")
-        )
-        
-    except Exception as e:
-        logger.error(f"Failed to pause crew: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to pause crew: {str(e)}"
-        )
+    # Pause crew
+    success = CrewFactory.pause_crew(request.task_id, request.reason, request.review_id)
+    
+    # Create response
+    response = CrewResponse(
+        success=success,
+        task_id=request.task_id,
+        error=None if success else "Failed to pause crew"
+    )
+    
+    return response
 
 
-@router.patch("/resume")
-@require_roles(RoleSets.COMPLIANCE_TEAM)
+@router.post(
+    "/resume",
+    response_model=CrewResponse,
+    summary="Resume a crew",
+    description="Resume a paused CrewAI crew."
+)
 async def resume_crew(
     request: CrewResumeRequest,
-    crew_factory: CrewFactory = Depends(get_crew_factory)
+    roles: RoleSets = Depends(require_roles([Roles.ANALYST, Roles.ADMIN]))
 ):
     """
-    Resume a paused crew task.
+    Resume a paused CrewAI crew.
     
     Args:
-        request: Crew resume request with task ID, approval status, and comment
+        request (CrewResumeRequest): Request model with task ID and review result.
         
     Returns:
-        Resume operation result
+        CrewResponse: Response indicating success or failure.
+    """
+    # Resume crew
+    success = CrewFactory.resume_crew(request.task_id, request.review_result)
+    
+    # Create response
+    response = CrewResponse(
+        success=success,
+        task_id=request.task_id,
+        error=None if success else "Failed to resume crew"
+    )
+    
+    return response
+
+
+@router.get(
+    "/tasks",
+    response_model=TaskListResponse,
+    summary="List tasks",
+    description="List all crew tasks with their current status."
+)
+async def list_tasks(
+    state: Optional[str] = None,
+    crew_name: Optional[str] = None,
+    roles: RoleSets = Depends(require_roles([Roles.ANALYST, Roles.ADMIN]))
+):
+    """
+    List all crew tasks with their current status.
+    
+    Args:
+        state (str, optional): Filter by task state. Defaults to None.
+        crew_name (str, optional): Filter by crew name. Defaults to None.
+        
+    Returns:
+        TaskListResponse: List of tasks.
     """
     try:
-        logger.info(f"Resuming crew task: {request.task_id} (approved: {request.approved})")
+        # Filter tasks
+        filtered_tasks = []
+        for task_id, task_data in RUNNING_CREWS.items():
+            # Apply filters
+            if state and task_data.get("state") != state:
+                continue
+            if crew_name and task_data.get("crew_name") != crew_name:
+                continue
+            
+            # Add to list
+            filtered_tasks.append(TaskListItem(
+                task_id=task_id,
+                crew_name=task_data.get("crew_name", "unknown"),
+                state=task_data.get("state", "UNKNOWN"),
+                start_time=task_data.get("start_time", datetime.now().isoformat()),
+                last_updated=task_data.get("last_updated", datetime.now().isoformat()),
+                current_agent=task_data.get("current_agent"),
+                error=task_data.get("error"),
+                review_id=task_data.get("review_id")
+            ))
         
-        # Resume the crew
-        result = await crew_factory.resume_crew(
-            task_id=request.task_id,
-            approved=request.approved,
-            comment=request.comment
+        # Sort by start_time (newest first)
+        filtered_tasks.sort(key=lambda x: x.start_time, reverse=True)
+        
+        return TaskListResponse(
+            tasks=filtered_tasks,
+            total=len(filtered_tasks)
         )
-        
-        return CrewResponse(
-            success=result.get("success", False),
-            task_id=request.task_id,
-            status="RESUMED" if result.get("success", False) else "RESUME_FAILED",
-            error=result.get("error")
-        )
-        
     except Exception as e:
-        logger.error(f"Failed to resume crew: {e}")
+        logger.error(f"Failed to list tasks: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to resume crew: {str(e)}"
+            detail=f"Failed to list tasks: {str(e)}"
+        )
+
+
+@router.get(
+    "/{task_id}/result",
+    response_model=TaskResultResponse,
+    summary="Get task result",
+    description="Get the result of a crew task."
+)
+async def get_task_result(
+    task_id: str,
+    roles: RoleSets = Depends(require_roles([Roles.ANALYST, Roles.ADMIN]))
+):
+    """
+    Get the result of a crew task.
+    
+    Args:
+        task_id (str): ID of the task.
+        
+    Returns:
+        TaskResultResponse: Task result.
+    """
+    try:
+        # Check if task exists
+        if task_id not in RUNNING_CREWS:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Task '{task_id}' not found"
+            )
+        
+        # Get task data
+        task_data = RUNNING_CREWS[task_id]
+        
+        # Extract result
+        result = task_data.get("result", "")
+        
+        # Extract report (from context if available)
+        report = ""
+        if "_context" in task_data.get("context", {}) and "report" in task_data["context"]["_context"]:
+            report = task_data["context"]["_context"]["report"]
+        
+        # Extract visualizations (from context if available)
+        visualizations = []
+        if "_context" in task_data.get("context", {}) and "visualizations" in task_data["context"]["_context"]:
+            visualizations = task_data["context"]["_context"]["visualizations"]
+        
+        # Build metadata
+        metadata = {}
+        if "inputs" in task_data:
+            metadata["inputs"] = task_data["inputs"]
+        
+        # Add pause duration if applicable
+        if task_data.get("paused_at") and task_data.get("resumed_at"):
+            try:
+                paused_at = datetime.fromisoformat(task_data["paused_at"])
+                resumed_at = datetime.fromisoformat(task_data["resumed_at"])
+                metadata["paused_duration"] = (resumed_at - paused_at).total_seconds()
+            except Exception:
+                pass
+        
+        # Create response
+        response = TaskResultResponse(
+            task_id=task_id,
+            crew_name=task_data.get("crew_name", "unknown"),
+            state=task_data.get("state", "UNKNOWN"),
+            start_time=task_data.get("start_time", datetime.now().isoformat()),
+            completion_time=task_data.get("completion_time"),
+            result=result,
+            report=report,
+            visualizations=visualizations if visualizations else None,
+            metadata=metadata
+        )
+        
+        return response
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get task result: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get task result: {str(e)}"
         )
