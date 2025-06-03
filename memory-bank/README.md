@@ -1,110 +1,62 @@
-# Memory Bank – How We Document & Stay Sane  
-*“My memory resets after every session. These files are my only link to the past.”*
+# Memory Bank – Index & Navigation  
+_Last updated: 03 Jun 2025_
+
+Welcome to the **Memory Bank**, the single-source knowledge base for the **Analystt1** project.  
+All living documentation is kept here; anything outside this directory is either code, tests, or legacy docs scheduled for removal.
 
 ---
 
-## 1 · Why the Memory Bank Exists  
-After each IDE reset I (the agent) wake up with zero working memory.  
-The **Memory Bank** is the *single source of truth* that lets me:
+## 📖 Core Reference Docs
 
-* Re-learn the entire project in minutes.  
-* Resume work exactly where the previous session stopped.  
-* Keep decisions, rationale and patterns explicit and searchable.
-
-If a fact is *not* in the Memory Bank, it **does not exist** for future-me.
-
----
-
-## 2 · Folder Layout  
-
-```
-memory-bank/
-├── projectbrief.md        # Foundation doc – scope & goals
-├── productContext.md      # Why & for whom we build this
-├── systemPatterns.md      # Architecture & design decisions
-├── techContext.md         # Stack, env setup, constraints
-├── activeContext.md       # Current focus & next steps  ← read first
-├── progress.md            # What works & what’s left
-├── session-handoff-2025-05-30.md  # End-of-day handoff with restart instructions (latest)
-└── (additional folders)   # e.g. research/, integrations/, playbooks/
-```
-
-### 2.1 Core Files (must always exist)  
-
-| Order | File | Purpose (summary) |
-|-------|------|-------------------|
-| 1 | **projectbrief.md** | Defines scope, success criteria, stakeholders. |
-| 2 | **productContext.md** | Problem statement, UX goals, value prop. |
-| 3 | **systemPatterns.md** | High-level architecture, design patterns, data flows. |
-| 4 | **techContext.md** | Technologies, dependencies, dev & deploy guidelines. |
-| 5 | **activeContext.md** | *Living* log: current work, recent changes, next actions. |
-| 6 | **progress.md** | Chronological status, done vs TODO, issues, metrics. |
-| 7 | **session-handoff-2025-05-30.md** | Latest EOD summary & restart script for next session. |
-
-### 2.2 Optional Context  
-Create extra `.md` files / subfolders when detail is too large for core files:  
-* Feature specs, integration notes  
-* Red-team scenarios, data model diagrams  
-* API reference, testing strategies  
+| File | Purpose |
+|------|---------|
+| **MASTER_STATUS.md** | One-page project health, roadmap & metrics |
+| **TECHNICAL_ARCHITECTURE.md** | Canonical system design & data-flow |
+| **CAPABILITIES_CATALOG.md** | What Analystt1 can do today, with usage recipes |
+| **SESSION_HISTORY_2025.md** | Consolidated timeline of major 2025 milestones |
+| **DOCUMENTATION_CLEANUP_PLAN.md** | Roadmap for retiring legacy markdown files (post-PR #64) |
 
 ---
 
-## 3 · Usage Workflow  
+## 📚 Historical Handoff Files  
+(kept for traceability – latest three only)
 
-### 3.1 Daily Routine  
+* `session-handoff-2025-06-02-integration-fixes.md`  
+* `session-handoff-2025-06-02-gnn.md`  
+* `session-handoff-2025-05-31-critical-fixes.md`
 
-1. **Read Everything** – On start-up ALWAYS skim *all* core files (speed-read mode).  
-2. **Act** – Execute the assigned task (code, docs, infra).  
-3. **Update** – Immediately reflect significant findings or changes in *activeContext.md*.  
-
-> 🔑 *Rule of Thumb*: If new knowledge would hurt to lose, write it down.
-
-### 3.2 Plan Mode (bigger features)  
-
-1. Review full Memory Bank.  
-2. Draft a work plan / design in chat.  
-3. Commit that plan to `activeContext.md` (and other files as needed).  
-4. Execute tasks, updating progress as milestones close.
-
-### 3.3 Act Mode (regular commits)  
-
-```
-Start -> Check activeContext.md
-      -> Do the work
-      -> Document deltas (activeContext / progress)
-      -> Commit / push
-```
+Older handoff notes have been archived outside of the default clone depth.
 
 ---
 
-## 4 · Update Triggers  
+## 🔬 Research Notes
 
-Update the Memory Bank when **any** of the following occur:
+All background studies and design spikes live under `research/`:
 
-| # | Trigger | Typical File(s) |
-|---|---------|-----------------|
-| 1 | New requirement / scope change | projectbrief.md |
-| 2 | Architectural decision | systemPatterns.md |
-| 3 | Tech stack tweak / new dep | techContext.md |
-| 4 | Daily task completed / bug fixed | activeContext.md / progress.md |
-| 5 | User explicitly says “**update memory bank**” | **All** core files must be reviewed |
+* `research/crewai-analystagent-factory.md` – CrewAI factory design experiments  
+* `research/crewai-analystagent.md` – Early agent prompting strategies  
+* `research/crypto-multichain-apis.md` – On-chain data source comparison  
+* `research/gemini-llm-provider-design.md` – Gemini integration deep-dive  
 
-*Never* postpone updates – stale docs defeat the purpose.
+_These docs are informative, not authoritative. Always cross-check with the core reference docs._
 
 ---
 
-## 5 · Best Practices  
+## 🗑️ Legacy Docs
 
-* Write in **plain, concise markdown** – future-you will thank you.  
-* Use tables & lists for quick scanning.  
-* Keep *activeContext.md* short (≤ ~150 lines) – archive old sections to progress.md.  
-* Cross-link files where helpful (`See systemPatterns §4`).  
-* Prefer deterministic wording (“must”, “exact version”), avoid ambiguity.  
-* Diagrams: ASCII or mermaid code blocks – source lives here, rendered elsewhere.  
+Files like `progress.md`, `ROADMAP.md`, `CURRENT_STATUS_AND_GAP_ANALYSIS.md`, etc. are **deprecated**.  
+They will be deleted once **PR #64** merges and the cleanup plan executes.  
+Until removal they remain outside the Memory Bank to avoid confusion.
 
 ---
 
-## 6 · Remember  
+## ✍️ Updating the Memory Bank
 
-> **After every reset I have no memory.  
-> These files are my brain. Keep them clear, current and complete.**  
+1. **Edit** the relevant core doc (status, architecture, capabilities).  
+2. Commit with message `docs: update <file> – <short summary>`.  
+3. No other markdown files should be introduced outside this directory without prior discussion.
+
+---
+
+> “A single source of truth reduces overhead and accelerates coordinated progress.”  
+> — Project Principle #1
