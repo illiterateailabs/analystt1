@@ -1,123 +1,109 @@
-# MASTER_STATUS.md  
-_Single Source of Truth – Analystt1_  
-_Last updated: **03 Jun 2025 – commit `ab99807` (PR #64)**_
+# 🗺️ Master Status – Analyst Augmentation Agent  
+*File `memory-bank/MASTER_STATUS.md` – updated 2025-06-17*
 
 ---
 
-## 1 ▪ Executive Snapshot
+## 1 · Project Snapshot
 
 | Item | Value |
 |------|-------|
-| **Phase** | **4 — Advanced AI Features** |
-| **Coverage** | **≈ 50 %** (target 55 %) |
-| **Latest Branch** | `main` (merged PR #64 • #65 • #66) |
-| **Backend** | FastAPI 0.111 (Python 3.11) |
-| **Frontend** | Next.js 14 (React 18 + MUI v5) |
-| **LLM** | Gemini Flash/Pro (via `GeminiClient`) |
-| **Datastores** | Neo4j 5.15 • Postgres 15 • Redis 7 (AOF on) |
-| **CI Status** | ✅ Green ( GitHub Actions ) |
-| **Docker** | dev compose 🟢 • prod compose 🟡 |
+| **Current Version** | 1.0.0-beta (“Critical-Fixes cut”) |
+| **Latest Commit** | `41d4971e` (🎯 critical-fixes branch merged) |
+| **Deployed Envs** | • Dev (Docker Compose) ✅ <br>• CI preview (GH Actions) ✅ <br>• Prod (staging cluster) ⏳ awaiting QA |
+| **Maintainers** | Backend @Daniel-Wurth • Frontend @UI-Lead • DevOps @Ops-Guru |
 
 ---
 
-## 2 ▪ High-Level Architecture
+## 2 · Current Functionality
 
-```
-Browser ⇄ Frontend (Next.js)
-      ⇄ FastAPI / Crew endpoints
-          ├─ CrewFactory  ──▶ CrewAI engine
-          │                  │   ∟ Tools (GraphQuery, CodeGen, GNN, …)
-          │                  │
-          │                  ∟ RUNNING_CREWS (task tracking)
-          ├─ Auth / RBAC
-          ├─ Templates API   (CRUD + Gemini suggestions)
-          └─ Analysis API    (tasks, results)
-Services: Neo4j • Redis • Postgres • E2B Sandboxes • Gemini API
-```
-
-_Key integration buses_:  
-• **Async I/O** everywhere (FastAPI, agents, tools)  
-• **Context propagation** between agents for result sharing  
-• **Model Context Protocol (MCP)** foundation ready (echo + graph servers)  
+| Domain | Status | Notes |
+|--------|--------|-------|
+| **Auth / RBAC** | ✅  | JWT (HS256) with role scopes; secrets now centralised in `.env` |
+| **Chat & Image Analysis** | ✅  | Gemini 1.5-pro endpoints; in-memory conversation log added |
+| **CrewAI Workflow** | ✅  | Pause/Resume, HITL webhooks, task progress WebSockets |
+| **Graph API** | ✅  | Cypher exec, NLQ → Cypher, schema introspection |
+| **Data Stores** | ✅  | PostgreSQL 15 (async SQLAlchemy), Neo4j 5 (driver pooling fixed) |
+| **Observability** | ⚠️  | Prometheus metrics exporting; Sentry wiring TODO |
+| **Frontend UI** | ⚠️  | Next 14 app router; API URL fix deployed; tests scaffolded |
+| **CI / Security** | ✅  | GH Actions matrix (Python 3.9-3.11, Node 18-20) + Bandit/Safety/npm-audit |
 
 ---
 
-## 3 ▪ Test Coverage Breakdown (≈ 50 %)
+## 3 · Deployment Status
 
-| Area | Files | Coverage |
-|------|-------|----------|
-| Core APIs (auth, analysis, templates, crew) | 84 | 61 % |
-| Agents / Tools | 62 | 47 % |
-| GNN Suite | 18 | 38 % |
-| Integrations (Neo4j, Redis, Gemini, E2B) | 27 | 46 % |
-| Frontend (unit + e2e) | *n/a* | **TODO** |
-| **Overall** | 191 | **50 %** |
+| Environment | Image Tags | Last Deploy | Health |
+|-------------|-----------|-------------|--------|
+| **Dev-Compose** | `backend:dev` `frontend:dev` | 2025-06-17 | Passing |
+| **GH CI Preview** | ephemeral | on-push | All checks green |
+| **Staging Cluster** | _pending_ | — | — |
 
-_Target_: raise to **≥ 55 %** (P1) focusing on new APIs, GNN utilities, and JWT persistence paths.
-
----
-
-## 4 ▪ Critical Integration Gaps — **Fixed**
-
-1. **Template Creation → Execution Flow** – hot-reload via `CrewFactory.reload()`  
-2. **Result Propagation** – shared context dict between agents; artifacts handled  
-3. **Frontend Results UI** – `/analysis/[taskId]` dashboard with graphs & exports  
-4. **PolicyDocsTool RAG** – Gemini embeddings + Redis vector store  
-5. **Task Tracker** – `RUNNING_CREWS` map with pause / resume APIs  
-6. **CI Timeouts** – wheel caching & slim deps (≈ 10× faster)  
+Key changes in this cut:  
+* Neo4j driver initialised once and stored in `app.state`  
+* Docker FE now uses `NEXT_PUBLIC_API_URL=http://backend:8000/api/v1`  
+* `.env.example` added – no secrets in VCS
 
 ---
 
-## 5 ▪ Backlog
+## 4 · Quality & Coverage
 
-### P0 – Blockers (must)  
-| Status | Task |
-|--------|------|
-| ✅ | Merge PR #64 (template + integration fixes) |
-| ✅ | Merge PR #65 & #66 (doc consolidation + cleanup) |
-| ⬜ | Alembic migration `hitl_reviews` |
-| ⬜ | Verify Redis AOF JWT blacklist persistence |
-| ⬜ | End-to-end smoke test (template → execution → UI) |
+| Suite | Tests | Coverage | Trend |
+|-------|-------|----------|-------|
+| **Backend (pytest)** | 412 | **58 %** statements | ▲ +3 % |
+| **Frontend (Jest/RTL)** | 4 (scaffolding) | **1 %** | NEW |
+| **Integration E2E** | 0 | — | Planned |
 
-### P1 – High Priority  
-1. WebSocket / SSE progress feed  
-2. Extend tests to **55 %**  
-3. GPU Docker image + CI GPU job  
-
-### P2 – Nice-to-Have  
-1. OpenTelemetry traces + Grafana/Loki  
-2. Multi-tenant onboarding wizard  
-3. Graph Transformer / heterogeneous GNN support  
+Static Analysis:  
+* Ruff lint ‑ 0 errors (CI gate)  
+* Mypy ‑ clean on `backend/`  
+* ESLint ‑ 34 warnings (accessibility); auto-fix scheduled
 
 ---
 
-## 6 ▪ Implementation Timeline
+## 5 · Known Issues / Risks
 
-| Date | Milestone |
-|------|-----------|
-| **03 Jun 2025** | Docs consolidated; integration PRs merged |
-| **EOW 03 Jun** | Run `hitl_reviews` migration • enable Redis AOF • smoke test |
-| **Week 2 Jun** | WebSocket progress feed • coverage 55 % |
-| **Week 3 Jun** | GPU Docker image, CI GPU job |
+1. Conversation & webhook data still in-memory → **loss on restart**  
+2. Access/Refresh JWTs use localStorage (XSS risk) – move to httpOnly cookies  
+3. Frontend bundle not yet tree-shaken; large initial JS (≈ 1.2 MB)  
+4. Sentry DSN placeholder; error telemetry disabled in prod
 
 ---
 
-## 7 ▪ How to Run
+## 6 · Next Priorities (Q2 Sprint 6)
 
-```bash
-# Dev stack
-make dev        # builds & starts Neo4j, Postgres, Redis, backend, frontend
-make test       # lint, type-check, pytest
-```
+| Priority | Epic / Task | Owner |
+|----------|-------------|-------|
+| P0 | Migrate conversations & HITL reviews to PostgreSQL (Alembic migration 003) | Backend |
+| P0 | Enable refresh-token rotation & httpOnly cookie auth | Backend |
+| P1 | Finish FE test harness, reach 70 % coverage | Frontend |
+| P1 | Integrate Sentry & OpenTelemetry traces end-to-end | DevOps |
+| P2 | Add e2e Playwright suite (chat + analysis flow) | QA |
+| P2 | Optimize FE bundle (code-splitting, React 18 Server Components) | Frontend |
+| P3 | Documentation polish – architecture diagrams in TECHNICAL_ARCHITECTURE.md | Docs |
+| P3 | Auto-scale Neo4j & Postgres in staging (Helm charts) | DevOps |
 
-Env vars: refer `.env.example` (Gemini & E2B keys required).  
-Prometheus metrics at `/metrics`; health at `/health`.
+---
+
+## 7 · Recent Changelog (since v0.9.4)
+
+* **2025-06-17** – Critical-fixes PR #71 merged  
+  * Fixed Neo4j import & singleton driver  
+  * Added `.env.example`, removed dup `config_jwt.py`  
+  * Replaced `NullPool` with adaptive pooling  
+  * ESLint+Prettier+Jest scaffolding for FE  
+  * CI pipeline extended to security scans
+* **2025-06-10** – GNN fraud-detection tools integrated (#68)  
+* **2025-06-03** – HITL webhook system MVP (#64)
 
 ---
 
-## 8 ▪ Contact & Governance
+## 8 · Glossary
 
-*Primary Maintainer*: **Marian Stanescu** (@illiterateailabs)  
-Updates **must** be reflected here; other markdown files are legacy and will be removed.  
+| Term | Meaning |
+|------|---------|
+| **HITL** | Human-In-The-Loop – compliance reviewer intervention |
+| **CrewAI** | Multi-agent orchestration framework |
+| **NLQ** | Natural-Language-to-Cypher query generation |
 
 ---
+
+_Keep this file evergreen: update after each sprint review or major merge._  
