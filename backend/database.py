@@ -11,6 +11,7 @@ from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy import text
 from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import declarative_base
 
 from backend.config import settings
 
@@ -18,6 +19,12 @@ logger = logging.getLogger(__name__)
 
 # Database URL from environment settings
 DATABASE_URL = settings.DATABASE_URL
+
+# --------------------------------------------------------------------------- #
+# Declarative base
+# --------------------------------------------------------------------------- #
+# All ORM models should inherit from this Base so they share the same metadata.
+Base = declarative_base()
 
 # --------------------------------------------------------------------------- #
 # Engine & pooling strategy
@@ -77,7 +84,8 @@ async def test_db_connection():
     """
     try:
         async with engine.connect() as connection:
-            result = await connection.execute("SELECT 1")
+            # Use SQLAlchemy text construct for portability and explicitness
+            result = await connection.execute(text("SELECT 1"))
             if result.scalar_one() == 1:
                 logger.info("Successfully connected to the database.")
                 return {"success": True, "message": "Database connected successfully."}
@@ -87,3 +95,20 @@ async def test_db_connection():
     except Exception as e:
         logger.error(f"Failed to connect to the database: {e}", exc_info=True)
         return {"success": False, "message": f"Failed to connect to the database: {str(e)}"}
+
+
+# --------------------------------------------------------------------------- #
+# Schema initialisation helper
+# --------------------------------------------------------------------------- #
+async def init_db() -> None:
+    """
+    Create all tables in the database.
+
+    Should be called once at application startup (after migrations, if any).
+    """
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+
+# Allow `from backend.database import Base`
+__all__ = ["Base", "engine", "AsyncSessionLocal", "get_db", "test_db_connection", "init_db"]
