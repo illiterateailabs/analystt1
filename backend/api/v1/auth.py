@@ -1,389 +1,418 @@
 """
-Authentication API endpoints for user registration, login, and token management.
+Authentication API endpoints.
 
-This module provides FastAPI routes for:
-- User registration (POST /register)
-- User login and JWT token generation (POST /login)
-- JWT token refreshing (POST /refresh)
-- User logout (POST /logout)
-- Retrieving current user information (GET /me)
+This module provides endpoints for user registration, login, logout,
+token refresh, and user information retrieval.
 """
 
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, Union
+from typing import Optional, Dict, Any
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
-from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
-from pydantic import BaseModel, Field, EmailStr
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Request, Cookie
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
-import uuid
-import aioredis
+from sqlalchemy import select
 
+from backend.auth.jwt_handler import create_access_token, decode_jwt, get_password_hash, verify_password
+from backend.auth.secure_cookies import (
+    set_auth_cookies, 
+    clear_auth_cookies, 
+    create_user_tokens, 
+    refresh_tokens,
+    get_token_from_cookies_or_header,
+    verify_csrf_token,
+    ACCESS_TOKEN_COOKIE,
+    REFRESH_TOKEN_COOKIE,
+    CSRF_TOKEN_COOKIE,
+    CSRF_HEADER,
+)
+from backend.auth.dependencies import get_current_user
 from backend.database import get_db
 from backend.models.user import User
-from backend.auth.jwt_handler import create_access_token, decode_token
-from backend.auth.dependencies import get_current_user
 from backend.config import settings
 
+# Configure logging
 logger = logging.getLogger(__name__)
 
+# Create router
 router = APIRouter()
 
-# OAuth2 scheme for token authentication
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
-
-# Redis client for token blacklist
-redis_client: Optional[aioredis.Redis] = None
-
-async def get_redis():
-    global redis_client
-    if not redis_client:
-        redis_client = await aioredis.create_redis_pool(
-            settings.REDIS_URL or 'redis://redis:6379',
-            encoding='utf-8'
-        )
-    return redis_client
+# OAuth2 scheme for backward compatibility
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
 
 
-# Pydantic models for request/response validation
+# Request/Response Models
+from pydantic import BaseModel, EmailStr, Field
+
+
 class UserCreate(BaseModel):
-    """Request model for user registration."""
-    email: EmailStr = Field(..., description="User's email address")
-    password: str = Field(..., min_length=8, description="User's password")
-    name: str = Field(..., description="User's full name")
-    role: str = Field("analyst", description="User's role (admin, analyst, compliance)")
+    """User registration request model."""
+    username: str = Field(..., min_length=3, max_length=50)
+    email: EmailStr
+    password: str = Field(..., min_length=8)
+    full_name: Optional[str] = None
 
 
 class UserResponse(BaseModel):
-    """Response model for user information."""
+    """User response model."""
     id: str
+    username: str
     email: str
-    name: str
-    role: str
+    full_name: Optional[str] = None
     is_active: bool
-    created_at: datetime
-    updated_at: datetime
-
-    class Config:
-        from_attributes = True  # Enable ORM mode for Pydantic
+    is_superuser: bool
 
 
 class TokenResponse(BaseModel):
-    """Response model for authentication tokens."""
+    """Token response model for backward compatibility."""
     access_token: str
-    refresh_token: str
-    token_type: str = "bearer"
-    expires_in: int  # Seconds until token expires
+    token_type: str
+    user: UserResponse
 
 
-class RefreshRequest(BaseModel):
-    """Request model for token refresh."""
-    refresh_token: str
+class LoginRequest(BaseModel):
+    """Login request model."""
+    username: str
+    password: str
+    remember_me: bool = False
 
 
-class LogoutRequest(BaseModel):
-    """Request model for logout."""
-    refresh_token: Optional[str] = None
+class RefreshResponse(BaseModel):
+    """Refresh token response model."""
+    user: UserResponse
 
 
 class MessageResponse(BaseModel):
-    """Generic message response."""
+    """Generic message response model."""
     message: str
 
 
-@router.post(
-    "/register",
-    response_model=UserResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Register a new user account"
-)
-async def register_user(
-    user_data: UserCreate,
-    db: AsyncSession = Depends(get_db)
-):
+# Helper functions
+async def authenticate_user(db: AsyncSession, username: str, password: str) -> Optional[User]:
     """
-    Register a new user account.
+    Authenticate a user by username and password.
     
-    Creates a new user with the provided email, password, name, and role.
-    The password is hashed before storage.
+    Args:
+        db: Database session
+        username: Username
+        password: Password
+        
+    Returns:
+        User object if authentication is successful, None otherwise
     """
-    # Check if email already exists
-    result = await db.execute(select(User).where(User.email == user_data.email))
-    existing_user = result.scalar_one_or_none()
-    
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="User with this email already exists"
-        )
-    
-    # Create new user with hashed password
-    hashed_password = User.hash_password(user_data.password)
-    
-    new_user = User(
-        id=uuid.uuid4(),
-        email=user_data.email,
-        hashed_password=hashed_password,
-        name=user_data.name,
-        role=user_data.role.lower(),
-        is_active=True,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow()
-    )
-    
-    db.add(new_user)
-    await db.commit()
-    await db.refresh(new_user)
-    
-    logger.info(f"New user registered: {new_user.email} with role {new_user.role}")
-    return new_user
-
-
-@router.post(
-    "/login",
-    response_model=TokenResponse,
-    summary="Login and get access tokens"
-)
-async def login(
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Authenticate a user and return JWT tokens.
-    
-    Verifies the user's credentials and returns an access token and refresh token
-    if authentication is successful.
-    """
-    # Find user by email
-    result = await db.execute(select(User).where(User.email == form_data.username))
-    user = result.scalar_one_or_none()
-    
-    # Check if user exists and password is correct
-    if not user or not User.verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    # Check if user is active
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is disabled",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    # Generate access token
-    access_token_expires = timedelta(minutes=settings.JWT_EXPIRATION_MINUTES)
-    access_token = create_access_token(
-        data={
-            "sub": user.email,
-            "role": user.role,
-            "name": user.name,
-            "id": str(user.id),
-            "type": "access"
-        },
-        expires_delta=access_token_expires
-    )
-    
-    # Generate refresh token with longer expiration
-    refresh_token_expires = timedelta(minutes=settings.JWT_REFRESH_EXPIRATION_MINUTES)
-    refresh_token = create_access_token(
-        data={
-            "sub": user.email,
-            "id": str(user.id),
-            "type": "refresh"
-        },
-        expires_delta=refresh_token_expires
-    )
-    
-    logger.info(f"User logged in: {user.email}")
-    
-    # Return tokens
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer",
-        "expires_in": settings.JWT_EXPIRATION_MINUTES * 60  # Convert to seconds
-    }
-
-
-@router.post(
-    "/refresh",
-    response_model=TokenResponse,
-    summary="Refresh access token"
-)
-async def refresh_token(
-    refresh_request: RefreshRequest,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Refresh an access token using a refresh token.
-    
-    Validates the refresh token and returns a new access token and refresh token
-    if the refresh token is valid.
-    """
-    refresh_token = refresh_request.refresh_token
-    
-    # Check if token is blacklisted
-    redis = await get_redis()
-    is_blacklisted = await redis.exists(f"blacklist:{refresh_token}")
-    
-    if is_blacklisted:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has been revoked",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
     try:
-        # Decode and validate the refresh token
-        payload = decode_token(refresh_token)
-        
-        # Check if token is a refresh token
-        if payload.get("type") != "refresh":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token type",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        
-        # Get user from token
-        email = payload.get("sub")
-        if not email:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        
-        # Find user in database
-        result = await db.execute(select(User).where(User.email == email))
+        # Query user by username
+        stmt = select(User).where(User.username == username)
+        result = await db.execute(stmt)
         user = result.scalar_one_or_none()
         
-        if not user or not user.is_active:
+        # Check if user exists and password is correct
+        if user and user.verify_password(password):
+            return user
+        
+        return None
+    except Exception as e:
+        logger.error(f"Error authenticating user: {e}")
+        return None
+
+
+# Auth endpoints
+@router.post("/register", response_model=TokenResponse)
+async def register_user(
+    user_data: UserCreate,
+    response: Response,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Register a new user.
+    
+    Args:
+        user_data: User registration data
+        response: FastAPI response object
+        db: Database session
+        
+    Returns:
+        JWT token and user information
+        
+    Raises:
+        HTTPException: If username or email already exists
+    """
+    try:
+        # Check if username already exists
+        stmt = select(User).where(User.username == user_data.username)
+        result = await db.execute(stmt)
+        if result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username already registered"
+            )
+        
+        # Check if email already exists
+        stmt = select(User).where(User.email == user_data.email)
+        result = await db.execute(stmt)
+        if result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+        
+        # Create new user
+        new_user = User(
+            username=user_data.username,
+            email=user_data.email,
+            full_name=user_data.full_name
+        )
+        new_user.set_password(user_data.password)
+        
+        db.add(new_user)
+        await db.commit()
+        await db.refresh(new_user)
+        
+        # Create access and refresh tokens
+        access_token, refresh_token, access_expiry, refresh_expiry = await create_user_tokens(
+            user_id=str(new_user.id),
+            username=new_user.username,
+            is_superuser=new_user.is_superuser
+        )
+        
+        # Set secure cookies
+        set_auth_cookies(
+            response=response,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            access_expiry=access_expiry,
+            refresh_expiry=refresh_expiry
+        )
+        
+        # For backward compatibility, also return token in response body
+        user_response = UserResponse(
+            id=str(new_user.id),
+            username=new_user.username,
+            email=new_user.email,
+            full_name=new_user.full_name,
+            is_active=new_user.is_active,
+            is_superuser=new_user.is_superuser
+        )
+        
+        return TokenResponse(
+            access_token=access_token,
+            token_type="bearer",
+            user=user_response
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error registering user: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error registering user"
+        )
+
+
+@router.post("/login", response_model=TokenResponse)
+async def login(
+    form_data: LoginRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Authenticate a user and return a JWT token.
+    
+    Args:
+        form_data: Login form data
+        response: FastAPI response object
+        db: Database session
+        
+    Returns:
+        JWT token and user information
+        
+    Raises:
+        HTTPException: If authentication fails
+    """
+    try:
+        # Authenticate user
+        user = await authenticate_user(db, form_data.username, form_data.password)
+        if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found or inactive",
+                detail="Incorrect username or password",
                 headers={"WWW-Authenticate": "Bearer"},
             )
         
-        # Generate new access token
-        access_token_expires = timedelta(minutes=settings.JWT_EXPIRATION_MINUTES)
-        access_token = create_access_token(
-            data={
-                "sub": user.email,
-                "role": user.role,
-                "name": user.name,
-                "id": str(user.id),
-                "type": "access"
-            },
-            expires_delta=access_token_expires
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User account is inactive",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        # Set token expiration based on remember_me flag
+        expiration_minutes = settings.JWT_EXPIRATION_MINUTES
+        refresh_expiration_minutes = settings.JWT_REFRESH_EXPIRATION_MINUTES
+        
+        if form_data.remember_me:
+            # Extend token lifetime for "remember me" option
+            expiration_minutes *= 4  # e.g., 4 hours instead of 1 hour
+            refresh_expiration_minutes *= 2  # e.g., 14 days instead of 7 days
+        
+        # Create access and refresh tokens
+        access_token, refresh_token, access_expiry, refresh_expiry = await create_user_tokens(
+            user_id=str(user.id),
+            username=user.username,
+            is_superuser=user.is_superuser,
+            additional_data={"remember_me": form_data.remember_me}
         )
         
-        # Generate new refresh token
-        refresh_token_expires = timedelta(minutes=settings.JWT_REFRESH_EXPIRATION_MINUTES)
-        new_refresh_token = create_access_token(
-            data={
-                "sub": user.email,
-                "id": str(user.id),
-                "type": "refresh"
-            },
-            expires_delta=refresh_token_expires
+        # Set secure cookies
+        set_auth_cookies(
+            response=response,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            access_expiry=access_expiry,
+            refresh_expiry=refresh_expiry
         )
         
-        logger.info(f"Token refreshed for user: {user.email}")
+        # For backward compatibility, also return token in response body
+        user_response = UserResponse(
+            id=str(user.id),
+            username=user.username,
+            email=user.email,
+            full_name=user.full_name,
+            is_active=user.is_active,
+            is_superuser=user.is_superuser
+        )
         
-        # Return new tokens
-        return {
-            "access_token": access_token,
-            "refresh_token": new_refresh_token,
-            "token_type": "bearer",
-            "expires_in": settings.JWT_EXPIRATION_MINUTES * 60  # Convert to seconds
-        }
+        return TokenResponse(
+            access_token=access_token,
+            token_type="bearer",
+            user=user_response
+        )
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Token refresh error: {str(e)}")
+        logger.error(f"Error logging in: {e}")
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-            headers={"WWW-Authenticate": "Bearer"},
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error during login"
         )
 
 
-@router.post(
-    "/logout",
-    response_model=MessageResponse,
-    summary="Logout and invalidate tokens"
-)
-async def logout(
-    logout_request: LogoutRequest,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+@router.post("/refresh", response_model=RefreshResponse)
+async def refresh(
+    request: Request,
+    response: Response,
 ):
     """
-    Logout a user by invalidating their tokens.
+    Refresh the access token using a valid refresh token.
     
-    Adds the refresh token to a blacklist to prevent it from being used again.
-    Uses Redis for persistent token blacklisting.
+    Args:
+        request: FastAPI request object
+        response: FastAPI response object
+        
+    Returns:
+        New access token and user information
+        
+    Raises:
+        HTTPException: If refresh token is invalid
     """
-    # Add refresh token to blacklist if provided
-    if logout_request.refresh_token:
-        redis = await get_redis()
-        # Set expiration to match JWT refresh token expiration (or slightly longer)
-        # This prevents the blacklist from growing indefinitely
-        await redis.setex(
-            f"blacklist:{logout_request.refresh_token}", 
-            int(settings.JWT_REFRESH_EXPIRATION_MINUTES * 60),  # Convert to seconds
-            "1"
+    try:
+        # Refresh tokens and get user information
+        user_info = await refresh_tokens(request, response)
+        
+        # Return user information
+        user_response = UserResponse(
+            id=user_info["user_id"],
+            username=user_info["username"],
+            email="",  # Email not available in token payload
+            is_active=True,  # Assumed active since token is valid
+            is_superuser=user_info.get("is_superuser", False)
         )
-    
-    logger.info(f"User logged out: {current_user.get('sub')}")
-    
-    return {"message": "Successfully logged out"}
+        
+        return RefreshResponse(user=user_response)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error refreshing token: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error refreshing token"
+        )
 
 
-@router.get(
-    "/me",
-    response_model=Dict[str, Any],
-    summary="Get current user information"
-)
+@router.post("/logout", response_model=MessageResponse)
+async def logout(response: Response):
+    """
+    Log out a user by clearing authentication cookies.
+    
+    Args:
+        response: FastAPI response object
+        
+    Returns:
+        Success message
+    """
+    # Clear authentication cookies
+    clear_auth_cookies(response)
+    
+    return MessageResponse(message="Successfully logged out")
+
+
+@router.get("/me", response_model=UserResponse)
 async def get_current_user_info(
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Get information about the currently authenticated user.
     
-    Returns user details based on the JWT token.
+    Args:
+        current_user: Current user from token
+        
+    Returns:
+        User information
     """
-    # Get user from database for most up-to-date information
-    result = await db.execute(select(User).where(User.email == current_user.get("sub")))
-    user = result.scalar_one_or_none()
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-    
-    return {
-        "id": str(user.id),
-        "email": user.email,
-        "name": user.name,
-        "role": user.role,
-        "is_active": user.is_active
-    }
+    return UserResponse(
+        id=str(current_user.id),
+        username=current_user.username,
+        email=current_user.email,
+        full_name=current_user.full_name,
+        is_active=current_user.is_active,
+        is_superuser=current_user.is_superuser
+    )
 
 
-@router.on_event("shutdown")
-async def shutdown_event():
-    """Close Redis connection on application shutdown."""
-    global redis_client
-    if redis_client is not None:
-        redis_client.close()
-        await redis_client.wait_closed()
-        redis_client = None
-        logger.info("Redis connection closed")
+@router.get("/csrf-token")
+async def get_csrf_token(
+    response: Response,
+    csrf_token: Optional[str] = Cookie(None, alias=CSRF_TOKEN_COOKIE)
+):
+    """
+    Get a new CSRF token. This endpoint is useful for SPA applications
+    that need to refresh their CSRF token.
+    
+    Args:
+        response: FastAPI response object
+        csrf_token: Existing CSRF token from cookies
+        
+    Returns:
+        New CSRF token
+    """
+    from backend.auth.secure_cookies import generate_csrf_token
+    
+    # Generate a new CSRF token
+    new_csrf_token = generate_csrf_token()
+    
+    # Set the new CSRF token in a cookie
+    response.set_cookie(
+        key=CSRF_TOKEN_COOKIE,
+        value=new_csrf_token,
+        httponly=False,  # Accessible to JavaScript
+        secure=not settings.DEBUG,
+        samesite="lax",
+        path="/",
+    )
+    
+    # Also return it in the response body
+    return {"csrf_token": new_csrf_token}
