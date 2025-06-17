@@ -8,7 +8,9 @@ from contextlib import asynccontextmanager
 from neo4j import AsyncGraphDatabase, AsyncDriver, AsyncSession
 from neo4j.exceptions import ServiceUnavailable, AuthError
 
-from backend.config import Neo4jConfig
+# Use the global application settings object instead of a standalone Neo4j
+# config class. This prevents drift and ensures a single source of truth.
+from backend.config import settings
 
 
 logger = logging.getLogger(__name__)
@@ -19,7 +21,8 @@ class Neo4jClient:
     
     def __init__(self):
         """Initialize the Neo4j client."""
-        self.config = Neo4jConfig()
+        # Keep a reference to the global settings for convenience.
+        self.config = settings
         self.driver: Optional[AsyncDriver] = None
         self._connected = False
     
@@ -27,12 +30,21 @@ class Neo4jClient:
         """Establish connection to Neo4j database."""
         try:
             self.driver = AsyncGraphDatabase.driver(
-                self.config.URI,
-                auth=(self.config.USERNAME, self.config.PASSWORD),
-                max_connection_lifetime=self.config.MAX_CONNECTION_LIFETIME,
-                max_connection_pool_size=self.config.MAX_CONNECTION_POOL_SIZE,
-                connection_acquisition_timeout=self.config.CONNECTION_ACQUISITION_TIMEOUT,
+                self.config.NEO4J_URI,
+                auth=(
+                    self.config.NEO4J_USERNAME,
+                    self.config.NEO4J_PASSWORD,
+                ),
             )
+                max_connection_lifetime=getattr(
+                    self.config, "NEO4J_MAX_CONNECTION_LIFETIME", 3600
+                ),
+                max_connection_pool_size=getattr(
+                    self.config, "NEO4J_MAX_CONNECTION_POOL_SIZE", 10
+                ),
+                connection_acquisition_timeout=getattr(
+                    self.config, "NEO4J_CONNECTION_ACQUISITION_TIMEOUT", 30
+                ),
             
             # Verify connectivity
             await self.driver.verify_connectivity()
@@ -68,7 +80,7 @@ class Neo4jClient:
         if not self.is_connected:
             raise RuntimeError("Not connected to Neo4j")
         
-        session = self.driver.session(database=database or self.config.DATABASE)
+        session = self.driver.session(database=database or self.config.NEO4J_DATABASE)
         try:
             yield session
         finally:

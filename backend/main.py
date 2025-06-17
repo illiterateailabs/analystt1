@@ -124,7 +124,7 @@ async def health_check() -> Dict[str, Any]:
 
 
 @app.get("/health/neo4j", tags=["Health"])
-async def neo4j_health_check() -> Dict[str, Any]:
+async def neo4j_health_check(request: Request) -> Dict[str, Any]:
     """
     Neo4j health check endpoint.
     
@@ -136,9 +136,14 @@ async def neo4j_health_check() -> Dict[str, Any]:
             "status": "skipped",
             "message": "Neo4j connection not required in this environment",
         }
-    
-    try:
+    # Re-use the singleton client initialised at startup (if any)
+    client: Optional[Neo4jClient] = getattr(request.app.state, "neo4j", None)
+
+    # Fallback: create a transient client if one is not initialised
+    if client is None:
         client = Neo4jClient()
+
+    try:
         result = await client.test_connection()
         if result.get("success", False):
             return {
@@ -168,17 +173,17 @@ async def startup_event() -> None:
     # Initialize event system
     await initialize_events()
     
-    # Check Neo4j connection if required
+    # Initialise and share Neo4j client
     if settings.REQUIRE_NEO4J:
         try:
-            client = Neo4jClient()
-            result = await client.test_connection()
-            if result.get("success", False):
-                logger.info(f"Connected to Neo4j {result.get('version', 'unknown')}")
-            else:
-                logger.warning(f"Neo4j connection test failed: {result.get('error', 'Unknown error')}")
+            neo4j_client = Neo4jClient()
+            await neo4j_client.connect()
+            app.state.neo4j = neo4j_client  # for dependency injection
+            logger.info("Neo4j client initialised and stored in app state")
         except Exception as e:
-            logger.error(f"Failed to connect to Neo4j: {str(e)}")
+            logger.error(f"Failed to initialise Neo4j client: {e}")
+            if settings.ENVIRONMENT == "production":
+                raise  # Hard-fail in prod so misconfiguration is obvious
 
 
 @app.on_event("shutdown")
@@ -189,12 +194,13 @@ async def shutdown_event() -> None:
     # Shutdown event system
     await shutdown_events()
     
-    # Close Neo4j connections if needed
-    try:
-        client = Neo4jClient()
-        await client.close()
-    except Exception as e:
-        logger.error(f"Error closing Neo4j connections: {str(e)}")
+    # Close Neo4j connection if initialised
+    client: Optional[Neo4jClient] = getattr(app.state, "neo4j", None)
+    if client and client.is_connected:
+        try:
+            await client.close()
+        except Exception as e:
+            logger.error(f"Error closing Neo4j connection: {e}")
 
 
 # Run the application if executed directly

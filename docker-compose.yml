@@ -77,7 +77,8 @@ services:
       - DEBUG=true
       - LOG_LEVEL=INFO
       - SECRET_KEY=${SECRET_KEY:-analyst_agent_secret_key_change_in_production}
-      - CORS_ORIGINS=http://localhost:3000,http://frontend:3000,http://localhost:8000
+      # Allow browser requests coming from the frontend containers/host only
+      - CORS_ORIGINS=http://localhost:3000,http://frontend:3000
       - JWT_ALGORITHM=HS256
       - JWT_EXPIRATION_MINUTES=60
       - JWT_REFRESH_EXPIRATION_MINUTES=10080
@@ -118,7 +119,8 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      # Include /api/v1 to point the frontend to the correct backend base path
+      - NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
       - NODE_ENV=development
     volumes:
       - ./frontend:/app
