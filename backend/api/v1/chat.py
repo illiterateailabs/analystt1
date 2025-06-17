@@ -14,6 +14,26 @@ from backend.integrations.e2b_client import E2BClient
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# --------------------------------------------------------------------------- #
+# In-memory conversation store (will be replaced with DB persistence later)
+# --------------------------------------------------------------------------- #
+# Structure:
+#   conversations = {
+#       "conv_id": {
+#           "conversation_id": str,
+#           "messages": List[ChatMessage],
+#           "created_at": datetime,
+#           "updated_at": datetime
+#       }
+#   }
+# NOTE: **NOT** for production use – this is a temporary placeholder until
+#       proper database persistence is implemented.
+# --------------------------------------------------------------------------- #
+from datetime import datetime
+import uuid
+
+conversations: Dict[str, Dict[str, Any]] = {}
+
 
 # Request/Response Models
 class ChatMessage(BaseModel):
@@ -56,7 +76,8 @@ async def get_gemini_client(request: Request) -> GeminiClient:
 
 async def get_neo4j_client(request: Request) -> Neo4jClient:
     """Get Neo4j client from app state."""
-    return request.app.state.neo4j
+    # During unit tests or early startup the client might not exist.
+    return getattr(request.app.state, "neo4j", None)
 
 
 async def get_e2b_client(request: Request) -> E2BClient:
@@ -75,8 +96,11 @@ async def send_message(
     try:
         logger.info(f"Processing chat message: {request.message[:100]}...")
         
+        # Determine / create conversation id
+        conversation_id = request.conversation_id or str(uuid.uuid4())
+
         response_data = {
-            "conversation_id": request.conversation_id or "default",
+            "conversation_id": conversation_id,
             "response": "",
             "cypher_query": None,
             "graph_results": None,
@@ -148,6 +172,40 @@ Graph Database Schema:
             response_data["response"] = response
         
         logger.info("Chat message processed successfully")
+
+        # ------------------------------------------------------------------ #
+        # Conversation persistence (in-memory)
+        # ------------------------------------------------------------------ #
+        # Ensure conversation record exists
+        if conversation_id not in conversations:
+            conversations[conversation_id] = {
+                "conversation_id": conversation_id,
+                "messages": [],
+                "created_at": datetime.utcnow().isoformat(),
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+
+        conv = conversations[conversation_id]
+
+        # Append user message
+        conv["messages"].append(
+            ChatMessage(
+                role="user",
+                content=request.message,
+                timestamp=datetime.utcnow().isoformat(),
+            )
+        )
+        # Append assistant reply
+        conv["messages"].append(
+            ChatMessage(
+                role="assistant",
+                content=response_data["response"],
+                timestamp=datetime.utcnow().isoformat(),
+            )
+        )
+        # Update timestamp
+        conv["updated_at"] = datetime.utcnow().isoformat()
+
         return ChatResponse(**response_data)
         
     except Exception as e:
@@ -225,21 +283,30 @@ Focus on entities like people, organizations, locations, documents, transactions
 
 @router.get("/conversation/{conversation_id}")
 async def get_conversation(conversation_id: str):
-    """Get conversation history (placeholder for future implementation)."""
-    # TODO: Implement conversation storage and retrieval
-    return {
-        "conversation_id": conversation_id,
-        "messages": [],
-        "created_at": None,
-        "updated_at": None
-    }
+    """Retrieve a conversation from the in-memory store."""
+    convo = conversations.get(conversation_id)
+    if not convo:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Conversation {conversation_id} not found"
+        )
+    # FastAPI will serialise Pydantic objects automatically
+    return convo
 
 
 @router.delete("/conversation/{conversation_id}")
 async def delete_conversation(conversation_id: str):
-    """Delete a conversation (placeholder for future implementation)."""
-    # TODO: Implement conversation deletion
-    return {"message": f"Conversation {conversation_id} deleted"}
+    """Delete a conversation from the in-memory store."""
+    if conversation_id not in conversations:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Conversation {conversation_id} not found"
+        )
+    conversations.pop(conversation_id)
+    return {
+        "success": True,
+        "message": f"Conversation {conversation_id} deleted"
+    }
 
 
 async def _store_entities_in_graph(entities: List[Dict[str, Any]], neo4j: Neo4jClient) -> Dict[str, Any]:

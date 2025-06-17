@@ -1,146 +1,187 @@
-name: CI Pipeline
+name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, master]
   pull_request:
-    branches: [ main, develop ]
+    branches: [main, master]
+  workflow_dispatch:
 
 jobs:
-  lint:
-    name: Lint with Ruff
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-      - name: Restore pip cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements-ci-min.txt') }}
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip setuptools wheel
-          pip install --prefer-binary -r requirements-ci-min.txt
-      - name: Lint with Ruff
-        run: |
-          ruff check --output-format=github backend tests
-
-  type-check:
-    name: Type Check with mypy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-      - name: Restore pip cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements-ci-min.txt') }}
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip setuptools wheel
-          pip install --prefer-binary -r requirements-ci-min.txt
-      - name: Type check with mypy
-        env:
-          PYTHONPATH: .
-        run: |
-          mypy backend
-
-  test:
-    name: Test with pytest
+  backend-tests:
+    name: Backend Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ['3.9', '3.10', '3.11']
-    
+        python-version: ["3.9", "3.10", "3.11"]
+
     services:
-      neo4j:
-        image: neo4j:5.15.0
+      postgres:
+        image: postgres:15-alpine
         env:
-          NEO4J_AUTH: neo4j/analyst123
-          NEO4J_ACCEPT_LICENSE_AGREEMENT: yes
+          POSTGRES_USER: analyst
+          POSTGRES_PASSWORD: analyst123
+          POSTGRES_DB: analyst_agent_test
         ports:
-          - 7474:7474
-          - 7687:7687
+          - 5432:5432
         options: >-
-          --health-cmd "wget -q -O - http://localhost:7474 || exit 1"
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
-      - name: Restore pip cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements.txt', 'constraints.txt') }}
+          cache-dependency-path: |
+            requirements.txt
+            requirements-ci-min.txt
+
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip setuptools wheel
-          pip install --prefer-binary --constraint constraints.txt -r requirements.txt
-      - name: Run database migrations
-        env:
-          DATABASE_URL: sqlite:///test.db
+          python -m pip install --upgrade pip
+          pip install -r requirements-ci-min.txt
+          pip install -e .
+
+      - name: Lint with ruff
         run: |
-          alembic upgrade head
+          ruff check .
+          ruff format --check .
+
+      - name: Type check with mypy
+        run: |
+          mypy backend
+
       - name: Test with pytest
         env:
-          NEO4J_URI: bolt://localhost:7687
-          NEO4J_USERNAME: neo4j
-          NEO4J_PASSWORD: analyst123
-          NEO4J_DATABASE: neo4j
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY || 'dummy_key_for_tests' }}
-          E2B_API_KEY: ${{ secrets.E2B_API_KEY || 'dummy_key_for_tests' }}
-          E2B_TEMPLATE_ID: ${{ secrets.E2B_TEMPLATE_ID || 'python3-default' }}
+          DATABASE_URL: postgresql+asyncpg://analyst:analyst123@localhost:5432/analyst_agent_test
+          REDIS_URL: redis://localhost:6379/0
+          REQUIRE_NEO4J: "false"
           SECRET_KEY: test_secret_key
-          JWT_SECRET_KEY: test_secret_key
-          JWT_ALGORITHM: HS256
-          PYTHONPATH: .
+          JWT_SECRET_KEY: test_jwt_secret_key
+          ENVIRONMENT: test
         run: |
-          pytest --cov=backend --cov-report=xml -v
+          pytest -xvs tests/ --cov=backend --cov-report=xml
+          
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
         with:
           file: ./coverage.xml
+          flags: backend
           fail_ci_if_error: false
-
-  docker-build:
-    name: Verify Docker Build
+          
+  frontend-tests:
+    name: Frontend Tests (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [18.x, 20.x]
+        
     steps:
-      - uses: actions/checkout@v3
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-      - name: Build backend image
-        uses: docker/build-push-action@v4
+      - uses: actions/checkout@v4
+      
+      - name: Set up Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
         with:
-          context: .
-          file: ./Dockerfile
-          push: false
-          tags: analyst-agent-backend:test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: Build frontend image
-        uses: docker/build-push-action@v4
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package.json
+          
+      - name: Install dependencies
+        working-directory: ./frontend
+        run: npm ci
+        
+      - name: Lint
+        working-directory: ./frontend
+        run: |
+          npm run lint
+          
+      - name: Type check
+        working-directory: ./frontend
+        run: npm run type-check
+        
+      - name: Run tests
+        working-directory: ./frontend
+        run: npm test -- --coverage
+        
+      - name: Build
+        working-directory: ./frontend
+        run: npm run build
+        
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
         with:
-          context: ./frontend
-          file: ./frontend/Dockerfile
-          push: false
-          tags: analyst-agent-frontend:test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          file: ./frontend/coverage/coverage-final.json
+          flags: frontend
+          fail_ci_if_error: false
+          
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-tests]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          
+      - name: Install security scanning tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install bandit safety
+          
+      - name: Run Bandit (Python security scanner)
+        run: |
+          bandit -r backend/ -x tests/ -ll
+          
+      - name: Check Python dependencies for vulnerabilities
+        run: |
+          safety check -r requirements.txt --full-report
+          
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          
+      - name: Run npm audit
+        working-directory: ./frontend
+        run: |
+          npm audit --production --audit-level=high
+          
+  codeql-analysis:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v2
+        with:
+          languages: python, javascript
+          
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v2

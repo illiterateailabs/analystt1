@@ -9,7 +9,8 @@ import logging
 from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.pool import NullPool
+from sqlalchemy import text
+from sqlalchemy.pool import StaticPool
 
 from backend.config import settings
 
@@ -18,17 +19,31 @@ logger = logging.getLogger(__name__)
 # Database URL from environment settings
 DATABASE_URL = settings.DATABASE_URL
 
-# Create an asynchronous SQLAlchemy engine
-# The poolclass=NullPool is used to prevent connection pooling issues in some async contexts
-# and to ensure connections are closed properly after each use, especially in serverless
-# or short-lived request environments.
-engine = create_async_engine(
-    DATABASE_URL,
-    echo=settings.DEBUG,  # Echo SQL statements if debug is enabled
-    poolclass=NullPool,
-    # Future=True enables 2.0 style API for Session and other components
-    future=True
-)
+# --------------------------------------------------------------------------- #
+# Engine & pooling strategy
+# --------------------------------------------------------------------------- #
+# We switch pooling behaviour depending on the runtime environment:
+#   • development / test : StaticPool  -> single shared connection, easy reload
+#   • staging / production: QueuePool  -> bounded pool with size controls
+# For async engines QueuePool is the default, so we pass explicit sizing args.
+# --------------------------------------------------------------------------- #
+
+engine_kwargs = {
+    "echo": settings.DEBUG,
+    "future": True,
+}
+
+if settings.ENVIRONMENT in {"development", "test"}:
+    # StaticPool keeps a single connection open – convenient for hot-reload in dev
+    engine_kwargs["poolclass"] = StaticPool
+else:
+    # Rely on AsyncAdaptedQueuePool (default) but tune its limits
+    engine_kwargs["pool_size"] = settings.DATABASE_POOL_SIZE
+    engine_kwargs["max_overflow"] = settings.DATABASE_MAX_OVERFLOW
+    engine_kwargs["pool_recycle"] = settings.DATABASE_POOL_RECYCLE
+
+# Create the asynchronous SQLAlchemy engine
+engine = create_async_engine(DATABASE_URL, **engine_kwargs)
 
 # Create a sessionmaker for asynchronous sessions
 AsyncSessionLocal = async_sessionmaker(
