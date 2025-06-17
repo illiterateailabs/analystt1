@@ -9,7 +9,10 @@ import base64
 from backend.integrations.gemini_client import GeminiClient
 from backend.integrations.neo4j_client import Neo4jClient
 from backend.integrations.e2b_client import E2BClient
-
+from backend.database import get_db, AsyncSessionLocal  # DB session dependency
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from backend.models.conversation import Conversation, Message
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -43,10 +46,28 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(..., description="User message")
-    context: Optional[str] = Field(None, description="Additional context")
-    conversation_id: Optional[str] = Field(None, description="Conversation ID for context")
-    include_graph_data: bool = Field(False, description="Include graph database context")
+    # Hard-limit message length to mitigate prompt-injection / DoS
+    message: str = Field(
+        ...,
+        description="User message",
+        min_length=1,
+        max_length=2_000,
+    )
+    context: Optional[str] = Field(
+        None,
+        description="Additional context that should be passed to the LLM",
+        max_length=4_000,
+    )
+    # Validate that any supplied conversation_id is a proper UUID
+    conversation_id: Optional[str] = Field(
+        None,
+        description="Conversation ID for context (UUID v4)",
+        regex=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+    )
+    include_graph_data: bool = Field(
+        False,
+        description="Set to true if the client wants the LLM to use graph context",
+    )
 
 
 class ChatResponse(BaseModel):
@@ -91,13 +112,35 @@ async def send_message(
     gemini: GeminiClient = Depends(get_gemini_client),
     neo4j: Neo4jClient = Depends(get_neo4j_client),
     e2b: E2BClient = Depends(get_e2b_client)
+    db: AsyncSession = Depends(get_db),
 ):
     """Process a chat message and return AI response."""
     try:
         logger.info(f"Processing chat message: {request.message[:100]}...")
         
-        # Determine / create conversation id
-        conversation_id = request.conversation_id or str(uuid.uuid4())
+        # ------------------------------------------------------------------ #
+        # Ensure conversation exists (DB persistence)
+        # ------------------------------------------------------------------ #
+        conversation: Optional[Conversation] = None
+        conversation_id: str
+
+        if request.conversation_id:
+            # Fetch existing conversation
+            stmt = select(Conversation).where(Conversation.id == request.conversation_id)
+            result = await db.execute(stmt)
+            conversation = result.scalar_one_or_none()
+
+        if conversation is None:
+            # Create new conversation (assign title later if needed)
+            conversation = Conversation(
+                title="New Conversation",
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+            )
+            db.add(conversation)
+            await db.flush()  # Populate conversation.id
+
+        conversation_id = conversation.id
 
         response_data = {
             "conversation_id": conversation_id,
@@ -187,24 +230,28 @@ Graph Database Schema:
 
         conv = conversations[conversation_id]
 
-        # Append user message
-        conv["messages"].append(
-            ChatMessage(
-                role="user",
-                content=request.message,
-                timestamp=datetime.utcnow().isoformat(),
-            )
+        # ------------------------------------------------------------------ #
+        # Persist messages to DB
+        # ------------------------------------------------------------------ #
+        user_msg = Message(
+            conversation_id=conversation_id,
+            role="user",
+            content=request.message,
+            timestamp=datetime.utcnow(),
         )
-        # Append assistant reply
-        conv["messages"].append(
-            ChatMessage(
-                role="assistant",
-                content=response_data["response"],
-                timestamp=datetime.utcnow().isoformat(),
-            )
+        assistant_msg = Message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content=response_data["response"],
+            timestamp=datetime.utcnow(),
         )
-        # Update timestamp
-        conv["updated_at"] = datetime.utcnow().isoformat()
+        db.add_all([user_msg, assistant_msg])
+
+        # Update conversation.updated_at
+        conversation.updated_at = datetime.utcnow()
+
+        # Commit transaction
+        await db.commit()
 
         return ChatResponse(**response_data)
         
