@@ -1,180 +1,130 @@
-# CAPABILITIES_CATALOG.md  
-_Analystt1 – Comprehensive Capability Reference_  
-_Last updated: **03 Jun 2025 – commit `ab99807` (PR #64)**_
+# Capabilities Catalog  
+*File `memory-bank/CAPABILITIES_CATALOG.md` · last updated 2025-06-17*
+
+A consolidated index of **features, tools and integrations** that power the Analyst Augmentation Agent.  
+Use this catalog to quickly assess what is already live, what is under active development, and what is on the roadmap.
+
+Legend | Meaning  
+-------|---------  
+✓ Implemented | Feature is live in `main`  
+🚧 In-progress | Work started (open PR / flagged in backlog)  
+🛠 Planned | Approved roadmap item, no code yet  
+❌ Deprecated | Superseded / removed
 
 ---
 
-## 1 ▪ Problems Analystt1 Solves
+## 1 · Core Platform
 
-| Domain Challenge | How Analystt1 Addresses It |
-|------------------|---------------------------|
-| Fragmented fraud investigations across fiat & crypto channels | Unified graph-driven data model (Neo4j) + multi-chain API ingestion |
-| Slow manual workflow design | **AI-powered Template System** generates end-to-end investigations in minutes |
-| Hidden relational fraud patterns | **Graph Analytics + GNN** surface complex rings, mixers, layering tactics |
-| Code/ML results lost between tools | **Context propagation layer** ensures every agent sees prior outputs |
-| Disconnected compliance checks | **PolicyDocsTool (RAG)** cross-references AML/KYC policy corpus in real time |
-| Risky on-prem execution of untrusted code | **E2B Sandboxes** isolate CodeGenTool runs |
-| Auditability & human oversight | **HITL reviews** stored in Postgres; metrics exported to Prometheus |
-| Token leakage & key rotation pain | **JWT blacklist with Redis AOF** guarantees revocation durability |
+| Capability | Module / Path | Status | Notes |
+|------------|---------------|--------|-------|
+| FastAPI REST API | `backend/main.py` + `backend/api/v1/*` | ✓ | Versioned under `/api/v1` |
+| Async Postgres ORM | `backend/database.py` (SQLAlchemy 2 async) | ✓ | StaticPool (dev) / QueuePool (prod) |
+| Auth & RBAC (JWT) | `backend/auth/*` | ✓ | HS256; cookie rotation 🛠 |
+| CrewAI Orchestration | `backend/agents/*` | ✓ | Multi-agent workflows |
+| Task Progress WebSockets | `backend/api/v1/ws_progress.py` | ✓ | Real-time task updates |
 
 ---
 
-## 2 ▪ End-to-End Workflow
+## 2 · AI & Analysis
 
-```
- Analyst ⤏ Browser UI
-     │ 1. create / pick template
-     ▼
-Frontend Wizard (React)
-     │ POST /api/v1/templates
-     ▼
- FastAPI Templates API      ──▶  Gemini Suggestion Engine
-     │ 2. run investigation
-     ▼
- Analysis API  ──▶  CrewFactory.reload()
-     │ enqueue    │                     (hot-reload)
-     ▼            ▼
- RUNNING_CREWS  (in-memory) ──▶  CrewAI Engine
-     │                               │
-     │ 3. agents execute             ▼
-     │                               Tools Layer
-     │                               ├─ GraphQueryTool → Neo4j
-     │                               ├─ GNNFraudDetectionTool → PyTorch/DGL
-     │                               ├─ CodeGenTool → e2b.dev
-     │                               └─ PolicyDocsTool → Redis vector
-     │                              
-     │ 4. context propagated ◄───────┘
-     ▼
- Results persisted (S3 / Postgres) ──▶  HITL Review UI (if required)
-     │
-     ▼
-Frontend Dashboard `/analysis/{taskId}` renders graphs, charts, risk scores
-```
+| Capability | Module / Tool | Status | Notes |
+|------------|---------------|--------|-------|
+| Gemini Text Generation | `GeminiClient` (`backend/integrations/gemini_client.py`) | ✓ | 1.5-pro preview |
+| Gemini Vision (Image) | same as above | ✓ | `/chat/analyze-image` endpoint |
+| Cypher Generation (NLQ) | `GeminiClient.generate_cypher_query` | ✓ | Converts natural language → Cypher |
+| Fraud ML Toolkit (XGBoost removed) | `backend/agents/tools/fraud_ml_tool.py` | ✓ | Traditional classifiers |
+| GNN Fraud Detection | `backend/agents/tools/gnn_*` | 🚧 | Models training pipeline exists; serving API pending |
+| Time-series Anomaly Detection | `backend/agents/tools/crypto_anomaly_tool.py` (ADTK) | ✓ | Crypto market patterns |
+| Code-Execution Sandbox | `e2b.dev` via `e2b_client.py` | ✓ | Runs python notebooks safely |
 
 ---
 
-## 3 ▪ Functional Capability Map
+## 3 · Graph & Data Storage
 
-| Category | Capability | Status | Key Files/Modules |
-|----------|------------|--------|-------------------|
-| **Template System** | 6-step wizard, AI suggestions, YAML storage, hot-reload | ✅ | `backend/api/v1/templates.py`, `frontend/src/components/templates/*`, `agents/factory.py` |
-| **Graph Analytics** | Parameterized Cypher queries, sub-graph extraction, pattern library matching | ✅ | `graph_query_tool.py`, `pattern_library_tool.py`, `backend/neo4j_client.py` |
-| **Machine Learning / GNN** | Fraud detection with GCN/GAT/GraphSAGE, Optuna tuning, model registry stub | ✅ (Phase 4) | `gnn_fraud_detection_tool.py`, `gnn_training_tool.py` |
-| **Code Generation & Execution** | LLM-powered Python/SQL code, isolated run, artifact capture (plots, HTML) | ✅ | `code_gen_tool.py`, E2B integration |
-| **Compliance & RAG** | PolicyDocsTool semantic search over AML/KYC corpus, Gemini embeddings, vector Redis | ✅ | `policy_docs_tool.py` |
-| **Crypto Investigation** | Multi-chain APIs, anomaly tool, random TX generator | ✅ | `crypto_anomaly_tool.py`, `random_tx_generator_tool.py` |
-| **Security** | JWT auth/refresh, RBAC, Redis blacklist with AOF, sandbox exec, GDPR purge helper | ✅ (AOF pending P0) | `auth/*.py`, `redis` service config |
-| **Human-in-the-Loop** | Pause, resume, approve, reject review endpoints; metrics; Postgres storage | 🟡 (migration P0) | `metrics.py`, forthcoming `hitl_reviews` table |
-| **Observability** | Prometheus metrics (LLM tokens, cost, crew durations, HITL), structured logs | ✅ | `backend/core/metrics.py` |
-| **Real-time UX** | WebSocket/SSE progress feed | 🟡 P1 | planned `ws_progress.py`, frontend hooks |
-| **MCP Integration** | Echo & Graph servers, dynamic tool hot-plug | ✅ Phase 0 | `mcp/client.py`, `mcp_servers/*` |
-
-Legend: ✅ implemented • 🟡 planned/in-progress • 🔲 future
+| Capability | Module / Path | Status | Notes |
+|------------|---------------|--------|-------|
+| Neo4j 5 Driver (Bolt) | `backend/integrations/neo4j_client.py` | ✓ | Singleton pool; schema auto-init |
+| Graph Schema Introspection API | `GET /graph/schema` | ✓ | Exposes labels, rel types, indexes |
+| Cypher Query API | `POST /graph/query` | ✓ | Raw Cypher exec |
+| Natural-Language Graph Query | `POST /graph/nlq` | ✓ | NLQ → Cypher |
+| Graph Centrality Metrics | `POST /graph/centrality` | 🛠 | Planned GDS algorithms endpoint |
+| Graph-based Entity Storage | `_store_entities_in_graph` helper | 🚧 | Basic node insert; rel logic TODO |
 
 ---
 
-## 4 ▪ API Examples
+## 4 · Workflow & HITL
 
-### Authentication
-
-```bash
-# Login
-curl -X POST /api/v1/auth/login \
-     -d '{"username":"alice","password":"secret"}'
-# -> { "access_token":"...", "refresh_token":"..." }
-```
-
-### Create Investigation Template
-
-```bash
-curl -X POST /api/v1/templates \
-     -H "Authorization: Bearer $TOKEN" \
-     -F "yaml=@aml_investigation.yaml"
-```
-
-### Run Analysis Task
-
-```bash
-curl -X POST /api/v1/analysis \
-     -H "Authorization: Bearer $TOKEN" \
-     -d '{"template":"aml_investigation"}'
-# -> { "task_id":"123e..." }
-```
-
-### Fetch Results
-
-```bash
-curl /api/v1/analysis/123e/results \
-     -H "Authorization: Bearer $TOKEN"
-```
-
-_HITL endpoints_: `/api/v1/hitl/{taskId}/approve`, `/reject`, `/pause`.
+| Capability | Module / Path | Status | Notes |
+|------------|---------------|--------|-------|
+| Crew Pause / Resume | `backend/api/v1/crew.py` | ✓ | Awaiting human review |
+| Compliance Review Webhooks | `backend/api/v1/webhooks.py` | ✓ | Slack/Email/Teams + custom URL |
+| Review Callback Handling | same file | ✓ | Updates task status |
+| Persistent Review Storage | — | 🛠 | Planned Postgres schema `hitl_reviews` |
+| Conversation Persistence | `backend/api/v1/chat.py` | 🚧 | In-memory → Postgres migration 🛠 |
 
 ---
 
-## 5 ▪ Integration Patterns
+## 5 · Security & Compliance
 
-| Pattern | Description |
-|---------|-------------|
-| **CrewAI Orchestration** | YAML → `CrewFactory` → dynamic agents/tools instantiation |
-| **Context Propagation** | Shared dict passed through agents; eliminates brittle I/O edges |
-| **Model Context Protocol (MCP)** | Tool processes can run as separate servers; client abstracts transport |
-| **Redis Vector Search** | Gemini embeddings stored with `HNSW` index (`redis-py 5.x`) |
-| **Append-Only Redis** | `appendonly yes` ensures JWT blacklist survives restarts |
-| **Alembic Migrations** | `alembic revision --autogenerate` tracks Postgres schema (init + HITL) |
-| **E2B Sandbox Isolation** | Code execution in remote container, artifacts streamed back |
-| **Prometheus Pull Model** | `/metrics` endpoint scraped; optional Pushgateway for batch jobs |
+| Capability | Module | Status | Notes |
+|------------|--------|--------|-------|
+| JWT Access & Refresh | `auth/jwt_handler.py` | ✓ | Refresh rotation roadmap 🛠 |
+| Role-based Access Control | `auth/rbac.py` | ✓ | Fine-grained scopes |
+| Rate Limiting | SlowAPI (config pending) | 🛠 | Not yet enabled |
+| Secrets via `.env` | `.env.example` | ✓ | Docker secrets integration roadmap 🛠 |
+| Security Scanning CI | Bandit, Safety, npm-audit | ✓ | GH Actions job `security-scan` |
 
 ---
 
-## 6 ▪ Roadmap (Phase 4 → 6)
+## 6 · Observability & DevOps
 
-| Phase | Focus | Target Date | Key Deliverables |
-|-------|-------|-------------|------------------|
-| **4 – Advanced AI Features** | Integration fixes, template system, docs consolidation | ✅ Jun 2025 | PR #64 – #66 merged |
-| **4.x Blockers (P0)** | _See below_ | **EOW 03 Jun 2025** | ALEMBIC `hitl_reviews` migration, Redis AOF, smoke test |
-| **5 – Real-Time & GPU** | WebSocket progress, 55 % test coverage, GPU image & CI job | mid Jun 2025 | live updates, CUDA Dockerfile, nightly GNN tests |
-| **6 – Observability & Scaling** | OpenTelemetry traces, tenant onboarding wizard, Graph Transformer | Jul 2025 | OTel ➜ Grafana, multi-tenant mode, HGT experiments |
-
----
-
-## 7 ▪ Current P0 Tasks
-
-| # | Task | Owner | Status |
-|---|------|-------|--------|
-| 1 | **Enable Redis AOF for JWT blacklist persistence** | DevOps | 🔄 verifying in all envs |
-| 2 | **Alembic migration: `hitl_reviews` table** | Backend | 🚧 to-do |
-| 3 | **End-to-end smoke test** (template → execution → UI) | QA | ⏳ |
-| 4 | **Merge PR #64** (integration fixes + template) | ✅ | done |
-| 5 | **Merge PR #65 & #66** (docs consolidation & cleanup) | ✅ | done |
+| Capability | Module / Tool | Status | Notes |
+|------------|---------------|--------|-------|
+| Structured JSON Logging | `backend/core/logging.py` (structlog) | ✓ | Console + file |
+| Prometheus Metrics | `backend/core/metrics.py` | ✓ | `/metrics` endpoint |
+| Sentry Error Reporting | Integration scaffold | 🚧 | DSN placeholder |
+| GitHub Actions CI Matrix | `.github/workflows/ci.yml` | ✓ | Python & Node versions |
+| Code Coverage Upload | Codecov | ✓ | Separate flags: backend / frontend |
+| CodeQL Static Analysis | GH `codeql-analysis` job | ✓ | Python + JS |
 
 ---
 
-## 8 ▪ Extending Analystt1
+## 7 · Front-end UI
 
-1. **Add a new Tool**  
-   • Implement class in `backend/agents/tools/` adhering to `ToolProtocol`  
-   • Register in `tools/__init__.py` & `ToolFactory`  
-   • Reference name in agent YAML
-
-2. **Create a new Template**  
-   • POST YAML via `/api/v1/templates` or use Frontend wizard  
-   • Hot-reload makes it instantly available
-
-3. **Onboard another Data Source**  
-   • Write ETL script, store raw in S3, nodes/edges in Neo4j  
-   • Extend GraphQueryTool config with new labels / relationships
+| Capability | Path | Status | Notes |
+|------------|------|--------|-------|
+| Next.js 14 App Router | `frontend/src/app` | ✓ | TS, Tailwind |
+| Auth Pages (Login/Register) | `frontend/src/app/login`, `/register` | ✓ | Hooks to JWT API |
+| Analysis Dashboard | `/analysis`, `/dashboard` | ✓ | Graph vis + risk scoring |
+| Prompt Management UI | `/prompts` | ✓ | Agent prompt CRUD |
+| React Query v5 Integration | global provider | ✓ | Server-state cache |
+| ESLint + Prettier | config files | ✓ | CI gate |
+| Unit / Component Tests | Jest + RTL | 🚧 | Scaffold ready (coverage goal 70 %) |
+| E2E Tests (Playwright) | — | 🛠 | Roadmap Q2 |
 
 ---
 
-## 9 ▪ References & Links
+## 8 · Testing & Quality Gates
 
-* `MASTER_STATUS.md` – project health & backlog  
-* `TECHNICAL_ARCHITECTURE.md` – in-depth system design  
-* `TESTING_GUIDE.md` – how to run & extend tests  
-* CrewAI docs – https://github.com/joaomdmoura/crewai
+| Capability | Tool | Status | Notes |
+|------------|------|--------|-------|
+| Backend Unit & Integration Tests | Pytest (+asyncio, cov) | ✓ | ~58 % coverage |
+| Frontend Unit Tests | Jest + RTL | 🚧 | Seed tests committed |
+| API Contract Tests | Pytest ‑ `test_api_*` | ✓ | FastAPI testclient |
+| Lint / Type-check Gates | Ruff, Mypy, ESLint, tsc | ✓ | Fail build on error |
+| CI Security Gates | Bandit, Safety, npm-audit | ✓ | High severity blocking |
 
 ---
 
-© 2025 IlliterateAI Labs – Built by Marian Stanescu & Factory Droids  
-_All new capabilities must be recorded in this catalog._
+## 9 · Deprecated / Removed
+
+| Item | Reason | Replacement |
+|------|--------|-------------|
+| `xgboost` dep | Large wheels, CI timeouts | Standard scikit-learn models |
+| `spacy`, `transformers` | Gemini handles NLP | — |
+| `web3`, `eth-account` | No on-chain tx signing required | — |
+
+---
+
+*Maintain this catalog with every significant feature merge.  
+Add new rows, adjust status, and remove deprecated items to keep the team aligned.*  

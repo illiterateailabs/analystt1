@@ -1,62 +1,95 @@
-# Memory Bank – Index & Navigation  
-_Last updated: 03 Jun 2025_
+# Memory-Bank Documentation Hub
 
-Welcome to the **Memory Bank**, the single-source knowledge base for the **Analystt1** project.  
-All living documentation is kept here; anything outside this directory is either code, tests, or legacy docs scheduled for removal.
-
----
-
-## 📖 Core Reference Docs
-
-| File | Purpose |
-|------|---------|
-| **MASTER_STATUS.md** | One-page project health, roadmap & metrics |
-| **TECHNICAL_ARCHITECTURE.md** | Canonical system design & data-flow |
-| **CAPABILITIES_CATALOG.md** | What Analystt1 can do today, with usage recipes |
-| **SESSION_HISTORY_2025.md** | Consolidated timeline of major 2025 milestones |
-| **DOCUMENTATION_CLEANUP_PLAN.md** | Roadmap for retiring legacy markdown files (post-PR #64) |
+Welcome to the **Memory-Bank** &mdash; the living knowledge base for the Analyst Augmentation Agent project (`anal-ist1`).  
+This folder centralises **architecture diagrams, design notes, research, hand-off logs and operational status records** so that every contributor can quickly find the “why” behind the code.
 
 ---
 
-## 📚 Historical Handoff Files  
-(kept for traceability – latest three only)
+## 📑 Quick Links
 
-* `session-handoff-2025-06-02-integration-fixes.md`  
-* `session-handoff-2025-06-02-gnn.md`  
-* `session-handoff-2025-05-31-critical-fixes.md`
+| Domain | Document | Purpose |
+| ------ | -------- | ------- |
+| **Project Status** | [`MASTER_STATUS.md`](MASTER_STATUS.md) | Single-source high-level status (roadmap, open risks, release notes). |
+| **Architecture** | [`TECHNICAL_ARCHITECTURE.md`](TECHNICAL_ARCHITECTURE.md) | Component breakdown of the FastAPI + Next.js + Neo4j/PostgreSQL stack. |
+| **Capabilities** | [`CAPABILITIES_CATALOG.md`](CAPABILITIES_CATALOG.md) | Catalogue of built-in analysis & fraud-detection capabilities. |
+| **Sessions / Hand-offs** | `session-handoff-YYYY-MM-DD-*.md` | Daily transfer logs to preserve decision context across shifts. |
+| **Research** | [`research/`](research) | External notes, competitive analysis, API deep-dives. |
+| **Docs Improvement Plans** | `DOCUMENTATION_*` files | Planned clean-ups & doc debt tasks. |
 
-Older handoff notes have been archived outside of the default clone depth.
-
----
-
-## 🔬 Research Notes
-
-All background studies and design spikes live under `research/`:
-
-* `research/crewai-analystagent-factory.md` – CrewAI factory design experiments  
-* `research/crewai-analystagent.md` – Early agent prompting strategies  
-* `research/crypto-multichain-apis.md` – On-chain data source comparison  
-* `research/gemini-llm-provider-design.md` – Gemini integration deep-dive  
-
-_These docs are informative, not authoritative. Always cross-check with the core reference docs._
+> Looking for **code**? See `/backend`, `/frontend` and `/tests` at project root.  
+> Looking for **run instructions**? See repository [`README.md`](../README.md).
 
 ---
 
-## 🗑️ Legacy Docs
+## 🏗️ Current Architecture Snapshot (June 2025)
 
-Files like `progress.md`, `ROADMAP.md`, `CURRENT_STATUS_AND_GAP_ANALYSIS.md`, etc. are **deprecated**.  
-They will be deleted once **PR #64** merges and the cleanup plan executes.  
-Until removal they remain outside the Memory Bank to avoid confusion.
+```
+Users ⟶ Next.js Front-End (TS/React 18)
+               │
+               ▼
+ FastAPI Backend (Python 3.11)
+    ├─ Authentication & RBAC
+    ├─ CrewAI Workflow Engine
+    ├─ Chat & Image Analysis (Gemini)
+    ├─ Graph Endpoints (Cypher, NLQ)
+    ├─ HITL Webhooks & Reviews
+    └─ Observability (Prometheus, Sentry)
+
+Persistent Stores
+    ├─ PostgreSQL 15 (async SQLAlchemy)
+    └─ Neo4j 5 (Graph DB)
+
+Async Workers / Sandbox
+    └─ e2b.dev for code execution
+```
+
+For deeper detail read [`TECHNICAL_ARCHITECTURE.md`](TECHNICAL_ARCHITECTURE.md).
 
 ---
 
-## ✍️ Updating the Memory Bank
+## 🗂️ Folder Structure
 
-1. **Edit** the relevant core doc (status, architecture, capabilities).  
-2. Commit with message `docs: update <file> – <short summary>`.  
-3. No other markdown files should be introduced outside this directory without prior discussion.
+```
+memory-bank/
+├─ CAPABILITIES_CATALOG.md        # Feature index
+├─ DOCUMENTATION_*.md             # Doc cleanup & plans
+├─ MASTER_STATUS.md               # Project health dashboard
+├─ TECHNICAL_ARCHITECTURE.md      # System diagrams & flows
+├─ research/                      # External research notes
+├─ session-handoff-*.md           # Shift-change / on-call logs
+└─ (additional reference files)
+```
+
+Obsolete or duplicated docs have been removed; if you find outdated material open an issue or PR.
 
 ---
 
-> “A single source of truth reduces overhead and accelerates coordinated progress.”  
-> — Project Principle #1
+## ✍️ Contributing to Documentation
+
+1. **Keep it source-controlled.** Always place docs in this folder so they version with code.  
+2. **Prefer Markdown.** Use headings and tables for readability.  
+3. **Timestamp logs.** Name hand-off files `session-handoff-YYYY-MM-DD-topic.md`.  
+4. **Cross-link generously.** Link code files with the `@` mention in Factory or relative paths.  
+5. **Review like code.** Submit a PR; reviewers look for clarity, accuracy and redundancy removal.
+
+---
+
+## 🔄 Update Cadence
+
+| Doc Type | Owner | Refresh Cycle |
+| -------- | ----- | ------------- |
+| **MASTER_STATUS.md** | Tech Lead | Weekly (Friday) |
+| **Architecture & Capabilities** | Lead Architect | On every major feature merge |
+| **Hand-off Logs** | On-call / Pair | End of shift |
+| **Research Notes** | Feature Squad | Ad-hoc |
+
+---
+
+## 🤝 Need Help?
+
+* **Slack**: `#analyst-agent`  
+* **Issues**: tag with `documentation` label  
+* **Maintainers**: @Daniel-Wurth (Backend), @UI-Lead (Frontend), @Data-Graph (Graph/Neo4j)
+
+Let’s keep knowledge fresh and discoverable.  
+Happy documenting! 📚
