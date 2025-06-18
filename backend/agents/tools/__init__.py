@@ -46,6 +46,45 @@ try:
 except ImportError:
     RandomTxGeneratorTool = None
 
+# --------------------------------------------------------------------------- #
+# Sim API tools (multichain blockchain data via Sim)                          #
+# --------------------------------------------------------------------------- #
+
+try:
+    from backend.agents.tools.sim_balances_tool import SimBalancesTool
+except ImportError:
+    SimBalancesTool = None
+
+try:
+    from backend.agents.tools.sim_activity_tool import SimActivityTool
+except ImportError:
+    SimActivityTool = None
+
+try:
+    from backend.agents.tools.sim_collectibles_tool import SimCollectiblesTool
+except ImportError:
+    SimCollectiblesTool = None
+
+try:
+    from backend.agents.tools.sim_token_info_tool import SimTokenInfoTool
+except ImportError:
+    SimTokenInfoTool = None
+
+try:
+    from backend.agents.tools.sim_token_holders_tool import SimTokenHoldersTool
+except ImportError:
+    SimTokenHoldersTool = None
+
+try:
+    from backend.agents.tools.sim_svm_balances_tool import SimSVMBalancesTool
+except ImportError:
+    SimSVMBalancesTool = None
+
+try:
+    from backend.agents.tools.sim_graph_ingestion_tool import SimGraphIngestionTool
+except ImportError:
+    SimGraphIngestionTool = None
+
 # Import GNN tools
 try:
     from backend.agents.tools.gnn_fraud_detection_tool import GNNFraudDetectionTool
@@ -85,6 +124,14 @@ def get_all_tools():
         RandomTxGeneratorTool,
         GNNFraudDetectionTool,
         GNNTrainingTool,
+        # Sim API tools
+        SimBalancesTool,
+        SimActivityTool,
+        SimCollectiblesTool,
+        SimTokenInfoTool,
+        SimTokenHoldersTool,
+        SimSVMBalancesTool,
+        SimGraphIngestionTool,
     ]:
         if tool_class is not None:
             try:
@@ -117,6 +164,14 @@ __all__ = [
         "RandomTxGeneratorTool",
         "GNNFraudDetectionTool",
         "GNNTrainingTool",
+        # Sim tools
+        "SimBalancesTool",
+        "SimActivityTool",
+        "SimCollectiblesTool",
+        "SimTokenInfoTool",
+        "SimTokenHoldersTool",
+        "SimSVMBalancesTool",
+        "SimGraphIngestionTool",
         "get_all_tools",
     ]
     if globals().get(name) is not None

@@ -7,8 +7,8 @@ _File: `memory-bank/MASTER_STATUS.md` – updated 2025-06-18_
 ## 1 · Project Snapshot
 | Item | Value |
 |------|-------|
-| **Current Version** | **1.5.0-beta** (“Auth Security cut”) |
-| **Latest Commit** | `AUTH-SEC` (🔐 Auth security upgrade) |
+| **Current Version** | **1.6.1-beta** (“Backend Sim Tools Fixes cut”) |
+| **Latest Commit** | `SIM-TOOLS-FIX` (🛠 Backend Sim Tools wiring) |
 | **Deployed Envs** | • Dev (Docker Compose) ✅ • CI preview (GH Actions) ✅ • Prod (staging cluster) ⏳ awaiting QA |
 | **Maintainers** | Backend @Daniel-Wurth • Frontend @UI-Lead • DevOps @Ops-Guru |
 
@@ -115,6 +115,13 @@ Static Analysis
   * Wallet **Risk-Score** endpoint + heuristics (liquidity, approvals, velocity)  
   * Front-end: Collectibles tab (NFT grid), Token-details drawer, Risk-score banner, infinite-scroll activity feed  
   * Bumped version to **1.6.0-beta**; all Sim datasets now first-class citizens across FE+BE  
+
+* **2025-06-19 – Backend Sim Tools Wiring Fixes (🛠 #sim-tools-fix)**  
+  * Created universal `BaseTool` for CrewAI custom tools  
+  * Added all Sim tools to `backend/agents/tools/__init__.py` and `factory.py`  
+  * Factory now exposes: `sim_balances_tool`, `sim_activity_tool`, `sim_collectibles_tool`, `sim_token_info_tool`, `sim_token_holders_tool`, `sim_svm_balances_tool`, `sim_graph_ingestion_tool`  
+  * Ensures new tools are discoverable in crew YAML configs and chat function-calls  
+  * Version bumped to **1.6.1-beta**  
 
 ---
 

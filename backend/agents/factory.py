@@ -39,6 +39,16 @@ from backend.agents.tools import (
     RandomTxGeneratorTool,
     create_crypto_tools
 )
+# --- Sim API tools (separate import to avoid tuple syntax issues) ---
+from backend.agents.tools import (
+    SimBalancesTool,
+    SimActivityTool,
+    SimCollectiblesTool,
+    SimTokenInfoTool,
+    SimTokenHoldersTool,
+    SimSVMBalancesTool,
+    SimGraphIngestionTool,
+)
 from backend.integrations.neo4j_client import Neo4jClient
 from backend.integrations.gemini_client import GeminiClient
 from backend.integrations.e2b_client import E2BClient
@@ -85,6 +95,24 @@ def get_all_tools():
     # Add crypto-specific tools
     crypto_tools = create_crypto_tools()
     tools.update(crypto_tools)
+
+    # ------------------------------------------------------------------
+    # Sim API tools (multichain blockchain data via Sim)
+    # ------------------------------------------------------------------
+    if SimBalancesTool is not None:
+        tools["sim_balances_tool"] = SimBalancesTool()
+    if SimActivityTool is not None:
+        tools["sim_activity_tool"] = SimActivityTool()
+    if SimCollectiblesTool is not None:
+        tools["sim_collectibles_tool"] = SimCollectiblesTool()
+    if SimTokenInfoTool is not None:
+        tools["sim_token_info_tool"] = SimTokenInfoTool()
+    if SimTokenHoldersTool is not None:
+        tools["sim_token_holders_tool"] = SimTokenHoldersTool()
+    if SimSVMBalancesTool is not None:
+        tools["sim_svm_balances_tool"] = SimSVMBalancesTool()
+    if SimGraphIngestionTool is not None:
+        tools["sim_graph_ingestion_tool"] = SimGraphIngestionTool()
     
     return tools
 
