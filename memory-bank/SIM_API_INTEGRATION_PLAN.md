@@ -91,12 +91,12 @@ SET tb.amount = b.amount,
 
 | Order | Feature | Endpoints | Effort | Owner |
 |-------|---------|-----------|--------|-------|
-| P0 | **Wallet Balances + Activity ingestion** | Balances, Activity | 2 d BE / 1 d FE | Backend + UI |
-| P1 | **Graph enrichment & ML features** | Balances, Activity, Token-Info | 1 d BE | Data Graph |
-| P2 | **NFT Collectibles gallery** | Collectibles | 0.5 d FE | Frontend |
-| P3 | **Liquidity-aware spam filter** | Token-Info | 0.5 d BE | Backend |
-| P4 | **Whale / Sybil detection widgets** | Token-Holders | 2 d BE + FE | Fraud-ML |
-| P5 | **Solana support** | SVM Balances/Tx | 1 d BE | Backend |
+| ~~P0~~ ✅ | **Wallet Balances + Activity ingestion** | Balances, Activity | 2 d BE / 1 d FE | Backend + UI |
+| ~~P1~~ ✅ | **Graph enrichment & ML features** | Balances, Activity, Token-Info | 1 d BE | Data Graph |
+| ~~P2~~ ✅ | **NFT Collectibles gallery** | Collectibles | 0.5 d FE | Frontend |
+| ~~P3~~ ✅ | **Liquidity-aware spam filter** | Token-Info | 0.5 d BE | Backend |
+| ~~P4~~ ✅ | **Whale / Sybil detection widgets** | Token-Holders | 2 d BE + FE | Fraud-ML |
+| ~~P5~~ ✅ | **Solana support** | SVM Balances/Tx | 1 d BE | Backend |
 
 ---
 
@@ -139,8 +139,29 @@ Graph-GNN retraining to incorporate new edge types will follow P2.
 - [ ] CrewAI chat tool “Get wallet balances” returns Sim data  
 - [ ] Added unit tests ≥ 80 % for tool wrappers  
 - [ ] Memory-bank docs updated & MR approved
+- [x] All P0 endpoints live in Dev & CI preview  
+- [x] Graph nodes/edges appear for test wallet `0xd8da…`  
+- [x] UI KPI cards show non-zero values  
+- [x] CrewAI chat tool “Get wallet balances” returns Sim data  
+- [x] Added unit tests ≥ 80 % for tool wrappers  
+- [x] Memory-bank docs updated & MR approved
 
 ---
+
+## 9 Status Summary
+
+All planned Sim API integration milestones (P0 → P5) have been delivered.  
+Backend, Graph, and Front-end now consume real-time **multichain** data (EVM + SVM).  
+Key achievements:
+
+* Balances, Activity, Collectibles, Token-Info, Token-Holders, SVM routes all live  
+* Neo4j graph enriched with on-chain entities and relationships  
+* Front-end KPI cards, Activity timeline, NFT gallery and Risk-Score banner fully wired  
+* CrewAI tools expose one-click “Fetch wallet ____” functions in chat  
+* Unit-test coverage ≥ 80 % for new tool wrappers  
+
+The Analyst Augmentation Agent now offers **full-stack, real-time, multichain
+data capabilities** powered by Sim APIs.
 
 _“Cook & Push — but always measure the hash rate.”_  
 — AAA Core Team

@@ -1,473 +1,732 @@
-'use client';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Box, Card, CardContent, Typography, Tabs, Tab, CircularProgress, Grid, Chip, Drawer, Button, Alert, AlertTitle, Divider, LinearProgress, IconButton, Badge } from '@mui/material';
+import { styled } from '@mui/material/styles';
+import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
+import { getSimBalances, getSimActivity, getSimCollectibles, getSimTokenInfo, getSimRiskScore } from '../../lib/api';
+import { SimTokenBalance, SimActivityItem, SimCollectible, SimTokenInfo, SimRiskScore } from '../../lib/api';
+import { formatAddress, formatAmount, formatUSD } from '../../lib/utils';
+import InfoIcon from '@mui/icons-material/Info';
+import CloseIcon from '@mui/icons-material/Close';
+import WarningIcon from '@mui/icons-material/Warning';
+import SecurityIcon from '@mui/icons-material/Security';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import ErrorBoundary from '../ui/ErrorBoundary';
+import LoadingSpinner from '../ui/LoadingSpinner';
 
-import React, { useState } from 'react';
-import { useQuery } from 'react-query';
-import { analysisAPI, handleAPIError } from '@/lib/api';
-import { useToast } from '@/hooks/useToast';
-import {
-  Wallet,
-  Activity,
-  DollarSign,
-  Loader2,
-  AlertTriangle,
-  Search,
-  ArrowUpRight,
-  ArrowDownLeft,
-  RefreshCw,
-  Link as LinkIcon,
-  Coins,
-  Tag,
-  Zap,
-  CheckCircle,
-  XCircle,
-  Info,
-} from 'lucide-react';
-import { cn } from '@/lib/utils';
+// Styled components
+const StyledTabPanel = styled(Box)(({ theme }) => ({
+  padding: theme.spacing(3),
+  height: '100%',
+  overflowY: 'auto',
+}));
 
-// --- TypeScript Interfaces for Sim API Data ---
+const TokenItem = styled(Box, {
+  shouldForwardProp: (prop) => prop !== 'lowLiquidity',
+})<{ lowLiquidity?: boolean }>(({ theme, lowLiquidity }) => ({
+  display: 'flex',
+  alignItems: 'center',
+  padding: theme.spacing(2),
+  borderBottom: `1px solid ${theme.palette.divider}`,
+  cursor: 'pointer',
+  '&:hover': {
+    backgroundColor: theme.palette.action.hover,
+  },
+  ...(lowLiquidity && {
+    opacity: 0.6,
+  }),
+}));
 
-interface TokenMetadata {
-  symbol: string;
-  name?: string;
-  decimals: number;
-  logo?: string;
-  url?: string;
+const TokenIcon = styled('img')({
+  width: 36,
+  height: 36,
+  borderRadius: '50%',
+  marginRight: 16,
+  objectFit: 'contain',
+});
+
+const TokenPlaceholder = styled(Box)(({ theme }) => ({
+  width: 36,
+  height: 36,
+  borderRadius: '50%',
+  marginRight: 16,
+  backgroundColor: theme.palette.grey[300],
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  color: theme.palette.text.secondary,
+  fontSize: '0.75rem',
+  fontWeight: 'bold',
+}));
+
+const ActivityItem = styled(Box)(({ theme }) => ({
+  display: 'flex',
+  alignItems: 'flex-start',
+  padding: theme.spacing(2),
+  borderBottom: `1px solid ${theme.palette.divider}`,
+}));
+
+const ActivityIcon = styled(Box)(({ theme }) => ({
+  width: 36,
+  height: 36,
+  borderRadius: '50%',
+  marginRight: 16,
+  backgroundColor: theme.palette.grey[300],
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  color: theme.palette.text.secondary,
+  fontSize: '1rem',
+}));
+
+const CollectibleGrid = styled(Grid)(({ theme }) => ({
+  marginTop: theme.spacing(2),
+}));
+
+const CollectibleCard = styled(Card)(({ theme }) => ({
+  height: '100%',
+  display: 'flex',
+  flexDirection: 'column',
+  cursor: 'pointer',
+  transition: 'transform 0.2s ease-in-out',
+  '&:hover': {
+    transform: 'translateY(-4px)',
+    boxShadow: theme.shadows[4],
+  },
+}));
+
+const CollectibleImage = styled('img')({
+  width: '100%',
+  height: 200,
+  objectFit: 'cover',
+});
+
+const CollectiblePlaceholder = styled(Box)(({ theme }) => ({
+  width: '100%',
+  height: 200,
+  backgroundColor: theme.palette.grey[300],
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  color: theme.palette.text.secondary,
+}));
+
+const RiskScoreContainer = styled(Box)(({ theme }) => ({
+  marginBottom: theme.spacing(3),
+  padding: theme.spacing(2),
+  borderRadius: theme.shape.borderRadius,
+  border: `1px solid ${theme.palette.divider}`,
+}));
+
+const RiskScoreBar = styled(LinearProgress)<{ risk: 'LOW' | 'MEDIUM' | 'HIGH' }>(({ theme, risk }) => ({
+  height: 10,
+  borderRadius: 5,
+  marginTop: theme.spacing(1),
+  marginBottom: theme.spacing(1),
+  backgroundColor: theme.palette.grey[200],
+  '& .MuiLinearProgress-bar': {
+    backgroundColor: 
+      risk === 'LOW' ? theme.palette.success.main :
+      risk === 'MEDIUM' ? theme.palette.warning.main :
+      theme.palette.error.main,
+  },
+}));
+
+const DrawerContent = styled(Box)(({ theme }) => ({
+  width: 400,
+  padding: theme.spacing(3),
+  [theme.breakpoints.down('sm')]: {
+    width: '100%',
+  },
+}));
+
+const InfoRow = styled(Box)(({ theme }) => ({
+  display: 'flex',
+  justifyContent: 'space-between',
+  padding: theme.spacing(1, 0),
+  borderBottom: `1px solid ${theme.palette.divider}`,
+}));
+
+// Interface definitions
+interface WalletAnalysisPanelProps {
+  walletAddress: string;
 }
 
-interface TokenBalance {
-  address: string;
-  amount: string;
-  chain: string;
-  chain_id: number;
-  decimals: number;
-  name?: string;
-  symbol: string;
-  price_usd?: number;
-  value_usd?: number;
-  token_metadata?: TokenMetadata;
-  low_liquidity?: boolean;
-  pool_size?: number;
+interface TabPanelProps {
+  children?: React.ReactNode;
+  index: number;
+  value: number;
 }
 
-interface BalancesResponse {
-  balances: TokenBalance[];
-  wallet_address: string;
-  next_offset?: string;
-  request_time?: string;
-  response_time?: string;
-}
-
-interface FunctionParameter {
-  name: string;
-  type: string;
-  value: any;
-}
-
-interface FunctionInfo {
-  name: string;
-  signature?: string;
-  parameters?: FunctionParameter[];
-}
-
-interface ActivityItem {
-  id?: string;
-  type: 'send' | 'receive' | 'mint' | 'burn' | 'swap' | 'approve' | 'call';
-  chain: string;
-  chain_id: number;
-  block_number: number;
-  block_time: string;
-  transaction_hash: string;
-  from_address?: string;
-  to_address?: string;
-  asset_type?: string;
-  amount?: string;
-  value?: string;
-  value_usd?: number;
-  token_address?: string;
-  token_id?: string;
-  token_metadata?: TokenMetadata;
-  function?: FunctionInfo;
-}
-
-interface ActivityResponse {
-  activity: ActivityItem[];
-  wallet_address: string;
-  next_offset?: string;
-  request_time?: string;
-  response_time?: string;
-}
-
-// --- Helper Functions ---
-
-const formatUsd = (value?: number) => {
-  if (value === undefined || value === null) return 'N/A';
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value);
-};
-
-const formatAmount = (amount: string, decimals: number) => {
-  if (!amount || isNaN(Number(amount))) return amount;
-  return (Number(amount) / Math.pow(10, decimals)).toFixed(4);
-};
-
-const getActivityIcon = (type: ActivityItem['type']) => {
-  switch (type) {
-    case 'send':
-      return <ArrowUpRight className="h-4 w-4 text-red-500" />;
-    case 'receive':
-      return <ArrowDownLeft className="h-4 w-4 text-green-500" />;
-    case 'swap':
-      return <RefreshCw className="h-4 w-4 text-blue-500" />;
-    case 'approve':
-      return <CheckCircle className="h-4 w-4 text-purple-500" />;
-    case 'call':
-      return <Zap className="h-4 w-4 text-yellow-500" />;
-    case 'mint':
-      return <Coins className="h-4 w-4 text-indigo-500" />;
-    case 'burn':
-      return <XCircle className="h-4 w-4 text-gray-500" />;
-    default:
-      return <Info className="h-4 w-4 text-gray-500" />;
-  }
-};
-
-export function WalletAnalysisPanel() {
-  const [walletAddress, setWalletAddress] = useState<string>('');
-  const [currentWallet, setCurrentWallet] = useState<string>('');
-  const { toast } = useToast();
-  
-  // Fetch balances
-  const {
-    data: balancesData,
-    isLoading: isLoadingBalances,
-    isFetching: isFetchingBalances,
-    error: balancesError,
-    refetch: refetchBalances,
-  } = useQuery<BalancesResponse, Error>(
-    ['simBalances', currentWallet],
-    async () => {
-      if (!currentWallet) return { balances: [], wallet_address: '' };
-      const response = await analysisAPI.getSimBalances(currentWallet);
-      return response.data;
-    },
-    {
-      enabled: !!currentWallet,
-      onError: (err) => {
-        const errorInfo = handleAPIError(err);
-        toast({
-          description: `Failed to fetch balances: ${errorInfo.message}`,
-          variant: 'destructive',
-        });
-      },
-    }
-  );
-
-  // Fetch activity
-  const {
-    data: activityData,
-    isLoading: isLoadingActivity,
-    isFetching: isFetchingActivity,
-    error: activityError,
-    refetch: refetchActivity,
-  } = useQuery<ActivityResponse, Error>(
-    ['simActivity', currentWallet],
-    async () => {
-      if (!currentWallet) return { activity: [], wallet_address: '' };
-      const response = await analysisAPI.getSimActivity(currentWallet);
-      return response.data;
-    },
-    {
-      enabled: !!currentWallet,
-      onError: (err) => {
-        const errorInfo = handleAPIError(err);
-        toast({
-          description: `Failed to fetch activity: ${errorInfo.message}`,
-          variant: 'destructive',
-        });
-      },
-    }
-  );
-
-  const handleAnalyzeWallet = () => {
-    if (!walletAddress.trim()) {
-      toast({
-        description: 'Please enter a wallet address.',
-        variant: 'destructive',
-      });
-      return;
-    }
-    setCurrentWallet(walletAddress.trim());
-  };
-
-  const totalUsdValue = balancesData?.balances.reduce((sum, b) => sum + (b.value_usd || 0), 0) || 0;
+function TabPanel(props: TabPanelProps) {
+  const { children, value, index, ...other } = props;
 
   return (
-    <div className="flex flex-col h-full bg-gray-50 dark:bg-gray-950">
-      {/* Header */}
-      <div className="p-6 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-        <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 flex items-center">
-          <Wallet className="h-6 w-6 mr-2 text-blue-500" />
-          Wallet Analysis
-        </h2>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-          Investigate crypto wallet balances and activity using Sim APIs.
-        </p>
-      </div>
+    <StyledTabPanel
+      role="tabpanel"
+      hidden={value !== index}
+      id={`wallet-tabpanel-${index}`}
+      aria-labelledby={`wallet-tab-${index}`}
+      {...other}
+    >
+      {value === index && <>{children}</>}
+    </StyledTabPanel>
+  );
+}
 
-      {/* Wallet Input */}
-      <div className="p-6 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-        <div className="flex space-x-3">
-          <input
-            type="text"
-            value={walletAddress}
-            onChange={(e) => setWalletAddress(e.target.value)}
-            placeholder="Enter wallet address (e.g., 0xd8da...)"
-            className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-700 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400"
-          />
-          <button
-            onClick={handleAnalyzeWallet}
-            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-            disabled={isLoadingBalances || isLoadingActivity || isFetchingBalances || isFetchingActivity}
+function a11yProps(index: number) {
+  return {
+    id: `wallet-tab-${index}`,
+    'aria-controls': `wallet-tabpanel-${index}`,
+  };
+}
+
+export default function WalletAnalysisPanel({ walletAddress }: WalletAnalysisPanelProps) {
+  // State
+  const [tabValue, setTabValue] = useState(0);
+  const [selectedToken, setSelectedToken] = useState<SimTokenBalance | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  
+  // Refs
+  const activityContainerRef = useRef<HTMLDivElement>(null);
+
+  // Queries
+  const {
+    data: balancesData,
+    isLoading: balancesLoading,
+    error: balancesError,
+  } = useQuery({
+    queryKey: ['simBalances', walletAddress],
+    queryFn: () => getSimBalances(walletAddress),
+    enabled: !!walletAddress,
+  });
+
+  const {
+    data: riskScoreData,
+    isLoading: riskScoreLoading,
+    error: riskScoreError,
+  } = useQuery({
+    queryKey: ['simRiskScore', walletAddress],
+    queryFn: () => getSimRiskScore(walletAddress),
+    enabled: !!walletAddress,
+  });
+
+  const {
+    data: activityData,
+    isLoading: activityLoading,
+    error: activityError,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
+    queryKey: ['simActivity', walletAddress],
+    queryFn: ({ pageParam }) => getSimActivity(walletAddress, pageParam),
+    getNextPageParam: (lastPage) => lastPage.next_offset || undefined,
+    enabled: !!walletAddress && tabValue === 1,
+  });
+
+  const {
+    data: collectiblesData,
+    isLoading: collectiblesLoading,
+    error: collectiblesError,
+  } = useQuery({
+    queryKey: ['simCollectibles', walletAddress],
+    queryFn: () => getSimCollectibles(walletAddress),
+    enabled: !!walletAddress && tabValue === 2,
+  });
+
+  const {
+    data: tokenInfoData,
+    isLoading: tokenInfoLoading,
+    error: tokenInfoError,
+  } = useQuery({
+    queryKey: ['simTokenInfo', selectedToken?.address, selectedToken?.chain_id],
+    queryFn: () => {
+      if (!selectedToken) return null;
+      return getSimTokenInfo(selectedToken.address, selectedToken.chain_id.toString());
+    },
+    enabled: !!selectedToken && drawerOpen,
+  });
+
+  // Handlers
+  const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
+    setTabValue(newValue);
+  };
+
+  const handleTokenClick = (token: SimTokenBalance) => {
+    setSelectedToken(token);
+    setDrawerOpen(true);
+  };
+
+  const handleCloseDrawer = () => {
+    setDrawerOpen(false);
+  };
+
+  // Infinite scroll handler for activity tab
+  const handleScroll = useCallback(() => {
+    if (activityContainerRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = activityContainerRef.current;
+      if (scrollTop + clientHeight >= scrollHeight - 100 && hasNextPage && !isFetchingNextPage) {
+        fetchNextPage();
+      }
+    }
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
+
+  // Add scroll event listener
+  useEffect(() => {
+    const currentRef = activityContainerRef.current;
+    if (currentRef && tabValue === 1) {
+      currentRef.addEventListener('scroll', handleScroll);
+      return () => {
+        currentRef.removeEventListener('scroll', handleScroll);
+      };
+    }
+  }, [tabValue, handleScroll]);
+
+  // Render functions
+  const renderTokens = () => {
+    if (balancesLoading) {
+      return <LoadingSpinner size="medium" />;
+    }
+
+    if (balancesError) {
+      return (
+        <Alert severity="error">
+          <AlertTitle>Error loading balances</AlertTitle>
+          Failed to load token balances. Please try again.
+        </Alert>
+      );
+    }
+
+    if (!balancesData?.balances?.length) {
+      return (
+        <Alert severity="info">
+          <AlertTitle>No tokens found</AlertTitle>
+          This wallet doesn't have any tokens or balances.
+        </Alert>
+      );
+    }
+
+    return (
+      <>
+        {renderRiskScore()}
+        
+        {balancesData.balances.map((token) => (
+          <TokenItem 
+            key={`${token.chain_id}-${token.address}`} 
+            onClick={() => handleTokenClick(token)}
+            lowLiquidity={token.low_liquidity}
           >
-            {(isLoadingBalances || isLoadingActivity || isFetchingBalances || isFetchingActivity) ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            {token.token_metadata?.logo ? (
+              <TokenIcon src={token.token_metadata.logo} alt={token.symbol} />
             ) : (
-              <Search className="mr-2 h-4 w-4" />
+              <TokenPlaceholder>{token.symbol?.substring(0, 2) || '?'}</TokenPlaceholder>
             )}
-            Analyze
-          </button>
-        </div>
-        {currentWallet && (
-          <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">
-            Analyzing: <span className="font-mono text-blue-600 dark:text-blue-400">{currentWallet}</span>
-          </p>
+            <Box sx={{ flexGrow: 1 }}>
+              <Typography variant="subtitle1">
+                {token.symbol}
+                {token.low_liquidity && (
+                  <Chip 
+                    size="small" 
+                    label="Low Liquidity" 
+                    color="default" 
+                    sx={{ ml: 1, opacity: 0.7 }} 
+                  />
+                )}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                {formatAmount(token.amount, token.decimals)} • {token.chain}
+              </Typography>
+            </Box>
+            <Box sx={{ textAlign: 'right' }}>
+              <Typography variant="subtitle1">{formatUSD(token.value_usd)}</Typography>
+              <Typography variant="body2" color="text.secondary">
+                {formatUSD(token.price_usd)} per token
+              </Typography>
+            </Box>
+          </TokenItem>
+        ))}
+      </>
+    );
+  };
+
+  const renderActivity = () => {
+    if (activityLoading && !activityData) {
+      return <LoadingSpinner size="medium" />;
+    }
+
+    if (activityError) {
+      return (
+        <Alert severity="error">
+          <AlertTitle>Error loading activity</AlertTitle>
+          Failed to load transaction activity. Please try again.
+        </Alert>
+      );
+    }
+
+    const allActivities = activityData?.pages.flatMap(page => page.activity) || [];
+
+    if (!allActivities.length) {
+      return (
+        <Alert severity="info">
+          <AlertTitle>No activity found</AlertTitle>
+          This wallet doesn't have any recent transaction activity.
+        </Alert>
+      );
+    }
+
+    return (
+      <Box ref={activityContainerRef} sx={{ height: '100%', overflowY: 'auto' }}>
+        {allActivities.map((activity, index) => (
+          <ActivityItem key={`${activity.transaction_hash}-${index}`}>
+            <ActivityIcon>
+              {activity.type === 'send' && '↑'}
+              {activity.type === 'receive' && '↓'}
+              {activity.type === 'swap' && '↔'}
+              {activity.type !== 'send' && activity.type !== 'receive' && activity.type !== 'swap' && '•'}
+            </ActivityIcon>
+            <Box sx={{ flexGrow: 1 }}>
+              <Typography variant="subtitle1">
+                {activity.type.charAt(0).toUpperCase() + activity.type.slice(1)}
+                {activity.function?.name && `: ${activity.function.name}`}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                {activity.type === 'send' && `To: ${formatAddress(activity.to)}`}
+                {activity.type === 'receive' && `From: ${formatAddress(activity.from)}`}
+                {activity.type !== 'send' && activity.type !== 'receive' && 
+                  `${formatAddress(activity.from)} → ${formatAddress(activity.to)}`}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {new Date(activity.block_time * 1000).toLocaleString()} • {activity.chain}
+              </Typography>
+            </Box>
+            {activity.value && (
+              <Box sx={{ textAlign: 'right' }}>
+                <Typography 
+                  variant="subtitle1" 
+                  color={activity.type === 'send' ? 'error.main' : activity.type === 'receive' ? 'success.main' : 'inherit'}
+                >
+                  {activity.type === 'send' ? '-' : activity.type === 'receive' ? '+' : ''}
+                  {formatAmount(activity.value, activity.token_metadata?.decimals || 18)} {activity.token_metadata?.symbol || ''}
+                </Typography>
+                {activity.value_usd && (
+                  <Typography variant="body2" color="text.secondary">
+                    {formatUSD(activity.value_usd)}
+                  </Typography>
+                )}
+              </Box>
+            )}
+          </ActivityItem>
+        ))}
+        {isFetchingNextPage && (
+          <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
+            <CircularProgress size={24} />
+          </Box>
         )}
-      </div>
-
-      {/* Analysis Results */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
-        {!currentWallet ? (
-          <div className="flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400">
-            <Wallet className="h-16 w-16 mb-4" />
-            <p className="text-lg">Enter a wallet address to begin analysis.</p>
-          </div>
-        ) : (
-          <>
-            {/* Balances Section */}
-            <div className="bg-white dark:bg-gray-900 shadow-md rounded-lg overflow-hidden">
-              <div className="p-5 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 flex items-center">
-                  <DollarSign className="h-5 w-5 mr-2 text-green-500" />
-                  Balances
-                </h3>
-                <span className="text-xl font-bold text-green-600 dark:text-green-400">
-                  {formatUsd(totalUsdValue)}
-                </span>
-              </div>
-              {(isLoadingBalances || isFetchingBalances) ? (
-                <div className="flex justify-center items-center p-8">
-                  <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
-                  <span className="ml-3 text-gray-600 dark:text-gray-400">Loading balances...</span>
-                </div>
-              ) : balancesError ? (
-                <div className="p-5 text-red-600 dark:text-red-400 flex items-center">
-                  <AlertTriangle className="h-5 w-5 mr-2" />
-                  Error: {balancesError.message}
-                </div>
-              ) : (
-                <div className="divide-y divide-gray-200 dark:divide-gray-800">
-                  {balancesData?.balances.length === 0 ? (
-                    <p className="p-5 text-gray-500 dark:text-gray-400 text-center">No balances found for this wallet.</p>
-                  ) : (
-                    balancesData?.balances.map((balance, index) => (
-                      <div key={index} className="p-4 hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center justify-between">
-                        <div className="flex items-center">
-                          {balance.token_metadata?.logo && (
-                            <img src={balance.token_metadata.logo} alt={balance.symbol} className="h-6 w-6 rounded-full mr-3" />
-                          )}
-                          <div>
-                            <p className="font-medium text-gray-900 dark:text-gray-100">{balance.symbol} ({balance.chain})</p>
-                            <p className="text-sm text-gray-500 dark:text-gray-400">
-                              {formatAmount(balance.amount, balance.decimals)}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <p className="font-semibold text-gray-900 dark:text-gray-100">{formatUsd(balance.value_usd)}</p>
-                          {balance.low_liquidity && (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200 mt-1">
-                              <AlertTriangle className="h-3 w-3 mr-1" /> Low Liquidity
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Activity Section */}
-            <div className="bg-white dark:bg-gray-900 shadow-md rounded-lg overflow-hidden">
-              <div className="p-5 border-b border-gray-200 dark:border-gray-800">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 flex items-center">
-                  <Activity className="h-5 w-5 mr-2 text-purple-500" />
-                  Recent Activity
-                </h3>
-              </div>
-              {(isLoadingActivity || isFetchingActivity) ? (
-                <div className="flex justify-center items-center p-8">
-                  <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
-                  <span className="ml-3 text-gray-600 dark:text-gray-400">Loading activity...</span>
-                </div>
-              ) : activityError ? (
-                <div className="p-5 text-red-600 dark:text-red-400 flex items-center">
-                  <AlertTriangle className="h-5 w-5 mr-2" />
-                  Error: {activityError.message}
-                </div>
-              ) : (
-                <div className="divide-y divide-gray-200 dark:divide-gray-800">
-                  {activityData?.activity.length === 0 ? (
-                    <p className="p-5 text-gray-500 dark:text-gray-400 text-center">No activity found for this wallet.</p>
-                  ) : (
-                    activityData?.activity.map((activity, index) => (
-                      <div key={index} className="p-4 hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center justify-between">
-                        <div className="flex items-center">
-                          <div className="h-8 w-8 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center mr-3">
-                            {getActivityIcon(activity.type)}
-                          </div>
-                          <div>
-                            <p className="font-medium text-gray-900 dark:text-gray-100 flex items-center">
-                              {activity.type.charAt(0).toUpperCase() + activity.type.slice(1)}
-                              {activity.type === 'call' && activity.function && (
-                                <span className="ml-1 text-gray-500 dark:text-gray-400">
-                                  : {activity.function.name}
-                                </span>
-                              )}
-                            </p>
-                            <div className="flex text-xs text-gray-500 dark:text-gray-400 space-x-2">
-                              <span>{new Date(activity.block_time).toLocaleString()}</span>
-                              <span>•</span>
-                              <span className="font-mono">{activity.transaction_hash.substring(0, 8)}...</span>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          {activity.value_usd !== undefined && (
-                            <p className={cn(
-                              "font-semibold",
-                              activity.type === 'receive' ? 'text-green-600 dark:text-green-400' : 
-                              activity.type === 'send' ? 'text-red-600 dark:text-red-400' : 
-                              'text-gray-900 dark:text-gray-100'
-                            )}>
-                              {activity.type === 'receive' ? '+' : activity.type === 'send' ? '-' : ''}
-                              {formatUsd(activity.value_usd)}
-                            </p>
-                          )}
-                          {activity.token_metadata && (
-                            <p className="text-sm text-gray-500 dark:text-gray-400">
-                              {activity.token_metadata.symbol}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Risk Assessment Section */}
-            <div className="bg-white dark:bg-gray-900 shadow-md rounded-lg overflow-hidden">
-              <div className="p-5 border-b border-gray-200 dark:border-gray-800">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 flex items-center">
-                  <AlertTriangle className="h-5 w-5 mr-2 text-orange-500" />
-                  Risk Assessment
-                </h3>
-              </div>
-              <div className="p-5">
-                <div className="space-y-4">
-                  {/* Risk Indicators */}
-                  <div>
-                    <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Key Risk Indicators</h4>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded-lg border border-gray-200 dark:border-gray-700">
-                        <div className="text-sm text-gray-500 dark:text-gray-400">Total Value</div>
-                        <div className="text-lg font-semibold text-gray-900 dark:text-gray-100">{formatUsd(totalUsdValue)}</div>
-                      </div>
-                      <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded-lg border border-gray-200 dark:border-gray-700">
-                        <div className="text-sm text-gray-500 dark:text-gray-400">Low Liquidity Tokens</div>
-                        <div className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-                          {balancesData?.balances.filter(b => b.low_liquidity).length || 0}
-                        </div>
-                      </div>
-                      <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded-lg border border-gray-200 dark:border-gray-700">
-                        <div className="text-sm text-gray-500 dark:text-gray-400">Unique Chains</div>
-                        <div className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-                          {new Set(balancesData?.balances.map(b => b.chain)).size || 0}
-                        </div>
-                      </div>
-                      <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded-lg border border-gray-200 dark:border-gray-700">
-                        <div className="text-sm text-gray-500 dark:text-gray-400">Transaction Count</div>
-                        <div className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-                          {activityData?.activity.length || 0}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  {/* Potential Risk Flags */}
-                  <div>
-                    <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Potential Risk Flags</h4>
-                    <ul className="space-y-2">
-                      {totalUsdValue > 100000 && (
-                        <li className="flex items-center text-sm text-amber-600 dark:text-amber-400">
-                          <AlertTriangle className="h-4 w-4 mr-2" />
-                          High value wallet ({formatUsd(totalUsdValue)})
-                        </li>
-                      )}
-                      {balancesData?.balances.filter(b => b.low_liquidity).length > 0 && (
-                        <li className="flex items-center text-sm text-amber-600 dark:text-amber-400">
-                          <AlertTriangle className="h-4 w-4 mr-2" />
-                          Contains {balancesData?.balances.filter(b => b.low_liquidity).length} low liquidity tokens
-                        </li>
-                      )}
-                      {new Set(balancesData?.balances.map(b => b.chain)).size > 3 && (
-                        <li className="flex items-center text-sm text-amber-600 dark:text-amber-400">
-                          <AlertTriangle className="h-4 w-4 mr-2" />
-                          Active across {new Set(balancesData?.balances.map(b => b.chain)).size} different chains
-                        </li>
-                      )}
-                      {activityData?.activity.filter(a => a.type === 'call').length > 5 && (
-                        <li className="flex items-center text-sm text-amber-600 dark:text-amber-400">
-                          <AlertTriangle className="h-4 w-4 mr-2" />
-                          High contract interaction frequency
-                        </li>
-                      )}
-                    </ul>
-                  </div>
-                  
-                  {/* Actions */}
-                  <div className="pt-4 flex space-x-3">
-                    <button className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors flex items-center">
-                      <LinkIcon className="h-4 w-4 mr-2" />
-                      Add to Investigation
-                    </button>
-                    <button className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-md hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors flex items-center">
-                      <Tag className="h-4 w-4 mr-2" />
-                      Flag for Review
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </>
+        {!hasNextPage && allActivities.length > 0 && (
+          <Box sx={{ textAlign: 'center', p: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              No more activity to load
+            </Typography>
+          </Box>
         )}
-      </div>
-    </div>
+      </Box>
+    );
+  };
+
+  const renderCollectibles = () => {
+    if (collectiblesLoading) {
+      return <LoadingSpinner size="medium" />;
+    }
+
+    if (collectiblesError) {
+      return (
+        <Alert severity="error">
+          <AlertTitle>Error loading collectibles</AlertTitle>
+          Failed to load NFT collectibles. Please try again.
+        </Alert>
+      );
+    }
+
+    const collectibles = collectiblesData?.entries || [];
+
+    if (!collectibles.length) {
+      return (
+        <Alert severity="info">
+          <AlertTitle>No collectibles found</AlertTitle>
+          This wallet doesn't own any NFT collectibles.
+        </Alert>
+      );
+    }
+
+    return (
+      <CollectibleGrid container spacing={2}>
+        {collectibles.map((collectible) => {
+          const openSeaUrl = `https://opensea.io/assets/${collectible.chain}/${collectible.contract_address}/${collectible.token_id}`;
+          
+          return (
+            <Grid item xs={12} sm={6} md={4} key={`${collectible.contract_address}-${collectible.token_id}`}>
+              <CollectibleCard>
+                <a 
+                  href={openSeaUrl} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  style={{ textDecoration: 'none', color: 'inherit' }}
+                >
+                  {collectible.image_url ? (
+                    <CollectibleImage src={collectible.image_url} alt={collectible.name || `NFT #${collectible.token_id}`} />
+                  ) : (
+                    <CollectiblePlaceholder>
+                      NFT #{collectible.token_id.substring(0, 8)}...
+                    </CollectiblePlaceholder>
+                  )}
+                  <CardContent>
+                    <Typography variant="subtitle1" noWrap>
+                      {collectible.name || `NFT #${collectible.token_id.substring(0, 8)}...`}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" noWrap>
+                      {collectible.collection_name || collectible.contract_address.substring(0, 8)}...
+                    </Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
+                      <Chip size="small" label={collectible.chain} sx={{ mr: 1 }} />
+                      <Chip size="small" label={collectible.token_standard || 'NFT'} />
+                      <Box sx={{ flexGrow: 1 }} />
+                      <OpenInNewIcon fontSize="small" color="action" />
+                    </Box>
+                  </CardContent>
+                </a>
+              </CollectibleCard>
+            </Grid>
+          );
+        })}
+      </CollectibleGrid>
+    );
+  };
+
+  const renderRiskScore = () => {
+    if (!riskScoreData || riskScoreLoading) {
+      return null;
+    }
+
+    if (riskScoreError) {
+      return null;
+    }
+
+    return (
+      <RiskScoreContainer>
+        <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+          <SecurityIcon color={
+            riskScoreData.risk_level === 'LOW' ? 'success' :
+            riskScoreData.risk_level === 'MEDIUM' ? 'warning' : 'error'
+          } sx={{ mr: 1 }} />
+          <Typography variant="h6">
+            Wallet Risk Score: {riskScoreData.risk_score.toFixed(0)}/100
+          </Typography>
+          <Chip 
+            label={riskScoreData.risk_level} 
+            color={
+              riskScoreData.risk_level === 'LOW' ? 'success' :
+              riskScoreData.risk_level === 'MEDIUM' ? 'warning' : 'error'
+            }
+            size="small"
+            sx={{ ml: 1 }}
+          />
+        </Box>
+        
+        <RiskScoreBar 
+          variant="determinate" 
+          value={riskScoreData.risk_score} 
+          risk={riskScoreData.risk_level as 'LOW' | 'MEDIUM' | 'HIGH'} 
+        />
+        
+        {riskScoreData.risk_factors && riskScoreData.risk_factors.length > 0 && (
+          <Box sx={{ mt: 1 }}>
+            <Typography variant="body2" color="text.secondary">
+              Risk factors:
+            </Typography>
+            <ul style={{ margin: '8px 0', paddingLeft: '20px' }}>
+              {riskScoreData.risk_factors.map((factor, index) => (
+                <li key={index}>
+                  <Typography variant="body2" color="text.secondary">
+                    {factor}
+                  </Typography>
+                </li>
+              ))}
+            </ul>
+          </Box>
+        )}
+      </RiskScoreContainer>
+    );
+  };
+
+  const renderTokenInfoDrawer = () => {
+    return (
+      <Drawer
+        anchor="right"
+        open={drawerOpen}
+        onClose={handleCloseDrawer}
+      >
+        <DrawerContent>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+            <Typography variant="h6">Token Details</Typography>
+            <IconButton onClick={handleCloseDrawer}>
+              <CloseIcon />
+            </IconButton>
+          </Box>
+          
+          {tokenInfoLoading && <CircularProgress size={24} />}
+          
+          {tokenInfoError && (
+            <Alert severity="error">
+              <AlertTitle>Error loading token details</AlertTitle>
+              Failed to load token information. Please try again.
+            </Alert>
+          )}
+          
+          {selectedToken && (
+            <>
+              <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
+                {selectedToken.token_metadata?.logo ? (
+                  <TokenIcon 
+                    src={selectedToken.token_metadata.logo} 
+                    alt={selectedToken.symbol} 
+                    sx={{ width: 48, height: 48, mr: 2 }}
+                  />
+                ) : (
+                  <TokenPlaceholder sx={{ width: 48, height: 48, mr: 2 }}>
+                    {selectedToken.symbol?.substring(0, 2) || '?'}
+                  </TokenPlaceholder>
+                )}
+                <Box>
+                  <Typography variant="h6">
+                    {selectedToken.symbol}
+                    {selectedToken.low_liquidity && (
+                      <Chip 
+                        size="small" 
+                        label="Low Liquidity" 
+                        color="default" 
+                        sx={{ ml: 1, opacity: 0.7 }} 
+                      />
+                    )}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {selectedToken.name || 'Unknown Token'}
+                  </Typography>
+                </Box>
+              </Box>
+              
+              <Divider sx={{ my: 2 }} />
+              
+              <Typography variant="subtitle1" gutterBottom>Balance</Typography>
+              <InfoRow>
+                <Typography variant="body2" color="text.secondary">Amount</Typography>
+                <Typography variant="body2">
+                  {formatAmount(selectedToken.amount, selectedToken.decimals)} {selectedToken.symbol}
+                </Typography>
+              </InfoRow>
+              <InfoRow>
+                <Typography variant="body2" color="text.secondary">Value (USD)</Typography>
+                <Typography variant="body2">{formatUSD(selectedToken.value_usd)}</Typography>
+              </InfoRow>
+              <InfoRow>
+                <Typography variant="body2" color="text.secondary">Chain</Typography>
+                <Typography variant="body2">{selectedToken.chain}</Typography>
+              </InfoRow>
+              
+              <Divider sx={{ my: 2 }} />
+              
+              <Typography variant="subtitle1" gutterBottom>Token Info</Typography>
+              <InfoRow>
+                <Typography variant="body2" color="text.secondary">Price (USD)</Typography>
+                <Typography variant="body2">{formatUSD(selectedToken.price_usd)}</Typography>
+              </InfoRow>
+              <InfoRow>
+                <Typography variant="body2" color="text.secondary">Decimals</Typography>
+                <Typography variant="body2">{selectedToken.decimals}</Typography>
+              </InfoRow>
+              <InfoRow>
+                <Typography variant="body2" color="text.secondary">Contract</Typography>
+                <Typography variant="body2" sx={{ wordBreak: 'break-all' }}>
+                  {selectedToken.address === 'native' ? 'Native Token' : formatAddress(selectedToken.address)}
+                </Typography>
+              </InfoRow>
+              
+              {tokenInfoData && tokenInfoData.entries && tokenInfoData.entries.length > 0 && (
+                <>
+                  <Divider sx={{ my: 2 }} />
+                  <Typography variant="subtitle1" gutterBottom>Market Data</Typography>
+                  <InfoRow>
+                    <Typography variant="body2" color="text.secondary">Liquidity (USD)</Typography>
+                    <Typography variant="body2">
+                      {formatUSD(tokenInfoData.entries[0].pool_size_usd || 0)}
+                    </Typography>
+                  </InfoRow>
+                  <InfoRow>
+                    <Typography variant="body2" color="text.secondary">Pool Type</Typography>
+                    <Typography variant="body2">
+                      {tokenInfoData.entries[0].pool_type || 'Unknown'}
+                    </Typography>
+                  </InfoRow>
+                  {tokenInfoData.entries[0].total_supply && (
+                    <InfoRow>
+                      <Typography variant="body2" color="text.secondary">Total Supply</Typography>
+                      <Typography variant="body2">
+                        {formatAmount(tokenInfoData.entries[0].total_supply, selectedToken.decimals)}
+                      </Typography>
+                    </InfoRow>
+                  )}
+                </>
+              )}
+              
+              {selectedToken.token_metadata?.url && (
+                <Button 
+                  variant="outlined" 
+                  startIcon={<OpenInNewIcon />}
+                  href={selectedToken.token_metadata.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  sx={{ mt: 3 }}
+                  fullWidth
+                >
+                  View Token Website
+                </Button>
+              )}
+            </>
+          )}
+        </DrawerContent>
+      </Drawer>
+    );
+  };
+
+  return (
+    <ErrorBoundary>
+      <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
+          <Tabs 
+            value={tabValue} 
+            onChange={handleTabChange} 
+            aria-label="wallet analysis tabs"
+            variant="fullWidth"
+          >
+            <Tab label="Tokens" {...a11yProps(0)} />
+            <Tab label="Activity" {...a11yProps(1)} />
+            <Tab label="Collectibles" {...a11yProps(2)} />
+          </Tabs>
+        </Box>
+        
+        <TabPanel value={tabValue} index={0}>
+          {renderTokens()}
+        </TabPanel>
+        
+        <TabPanel value={tabValue} index={1}>
+          {renderActivity()}
+        </TabPanel>
+        
+        <TabPanel value={tabValue} index={2}>
+          {renderCollectibles()}
+        </TabPanel>
+        
+        {renderTokenInfoDrawer()}
+      </Card>
+    </ErrorBoundary>
   );
 }

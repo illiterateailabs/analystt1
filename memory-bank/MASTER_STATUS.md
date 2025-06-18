@@ -107,6 +107,15 @@ Static Analysis
 * **2025-06-10 – GNN fraud-detection tools integrated (#68)**  
 * **2025-06-03 – HITL webhook system MVP (#64)**  
 
+* **2025-06-19 – Full Sim Integration (🪄 #sim-phase2)**  
+  * Added backend tools: `SimCollectiblesTool`, `SimTokenInfoTool`, `SimTokenHoldersTool`, `SimSVMBalancesTool`  
+  * `SimClient` upgraded with async support, cursor pagination, Redis caching hints  
+  * New API routes:  
+    `/sim/collectibles`, `/sim/token-info`, `/sim/token-holders`, `/sim/svm/balances`, `/sim/risk-score`  
+  * Wallet **Risk-Score** endpoint + heuristics (liquidity, approvals, velocity)  
+  * Front-end: Collectibles tab (NFT grid), Token-details drawer, Risk-score banner, infinite-scroll activity feed  
+  * Bumped version to **1.6.0-beta**; all Sim datasets now first-class citizens across FE+BE  
+
 ---
 
 ## 8 · Glossary

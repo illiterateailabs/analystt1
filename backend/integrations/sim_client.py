@@ -13,6 +13,8 @@ import time
 from typing import Dict, List, Optional, Any, Union
 from urllib.parse import urljoin
 
+import asyncio
+import httpx
 import requests
 from pydantic import BaseModel
 from tenacity import (
@@ -75,6 +77,9 @@ class SimClient:
         
         logger.info(f"SimClient initialized with base URL: {self.base_url}")
     
+        # Async httpx client (lazy)
+        self._async_client: Optional[httpx.AsyncClient] = None
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
@@ -174,6 +179,121 @@ class SimClient:
             record_api_latency('sim', endpoint_name, duration, 0)  # 0 indicates failure
             raise SimApiError(f"Request failed: {str(e)}")
     
+    # --------------------------------------------------------------------- #
+    #                              ASYNC SUPPORT                             #
+    # --------------------------------------------------------------------- #
+
+    async def __aenter__(self):
+        """Support “async with SimClient() as cli:” usage."""
+        if self._async_client is None:
+            self._async_client = httpx.AsyncClient(base_url=self.base_url, headers=self.headers, timeout=30)
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        if self._async_client:
+            await self._async_client.aclose()
+            self._async_client = None
+
+    async def _async_request(
+        self,
+        method: str,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        data: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Async version of _request using httpx.AsyncClient.
+        Keeps identical semantics/metrics.
+        """
+        if self._async_client is None:
+            # Fallback – create a transient client
+            async with httpx.AsyncClient(base_url=self.base_url, headers=self.headers, timeout=30) as client:
+                return await self._async_request_inner(client, method, endpoint, params, data)
+        return await self._async_request_inner(self._async_client, method, endpoint, params, data)
+
+    async def _async_request_inner(
+        self,
+        client: httpx.AsyncClient,
+        method: str,
+        endpoint: str,
+        params: Optional[Dict[str, Any]],
+        data: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        url = endpoint  # base_url already set on client if persistent
+
+        # simple rate-limit wait (shares state with sync path)
+        if self.rate_limit_remaining is not None and self.rate_limit_remaining <= 1:
+            if self.rate_limit_reset is not None:
+                wait_time = max(0, self.rate_limit_reset - time.time())
+                if wait_time > 0:
+                    await asyncio.sleep(wait_time)
+
+        start = time.time()
+        endpoint_name = endpoint.split("/")[2] if len(endpoint.split("/")) > 2 else endpoint
+
+        try:
+            resp: httpx.Response = await client.request(method, url, params=params, json=data)
+
+            # update RL headers
+            if "X-Rate-Limit-Remaining" in resp.headers:
+                self.rate_limit_remaining = int(resp.headers["X-Rate-Limit-Remaining"])
+            if "X-Rate-Limit-Reset" in resp.headers:
+                self.rate_limit_reset = int(resp.headers["X-Rate-Limit-Reset"])
+
+            duration = time.time() - start
+            record_api_latency("sim", endpoint_name, duration, resp.status_code)
+
+            if resp.status_code >= 400:
+                try:
+                    err_json = resp.json()
+                except Exception:
+                    err_json = {"text": resp.text}
+                error_code = err_json.get("error", {}).get("code") if isinstance(err_json.get("error"), dict) else None
+                message = err_json.get("error", {}).get("message") if isinstance(err_json.get("error"), dict) else str(
+                    err_json
+                )
+                raise SimApiError(
+                    f"Sim API error: {resp.status_code} - {message}",
+                    status_code=resp.status_code,
+                    error_code=error_code,
+                    response=err_json,
+                )
+            return resp.json()
+        except (httpx.HTTPError, httpx.TimeoutException) as e:
+            duration = time.time() - start
+            record_api_latency("sim", endpoint_name, duration, 0)
+            raise SimApiError(f"Async request failed: {e}")
+
+    # -------- Generic async helpers -------- #
+    async def aget(self, endpoint: str, **params) -> Dict[str, Any]:
+        """Generic async GET helper (defaults to GET)."""
+        return await self._async_request("GET", endpoint, params=params)
+
+    async def apaged_get(self, endpoint: str, page_key: str = "next_offset", **params):
+        """
+        Async generator yielding successive pages until no cursor is returned.
+        Example:
+            async for page in sim_client.apaged_get('/v1/evm/activity/0x..', limit=100):
+                ...
+        """
+        next_cursor: Optional[str] = None
+        while True:
+            query = dict(params)  # shallow copy
+            if next_cursor:
+                query["offset"] = next_cursor
+            data = await self._async_request("GET", endpoint, params=query)
+            yield data
+            next_cursor = data.get(page_key)
+            if not next_cursor:
+                break
+
+    # Sample async wrappers (others can use aget or tools can call directly)
+    async def get_balances_async(self, wallet: str, **params):
+        return await self.aget(f"/v1/evm/balances/{wallet}", **params)
+
+    async def get_activity_async(self, wallet: str, **params):
+        return await self.aget(f"/v1/evm/activity/{wallet}", **params)
+
     def get_balances(self, wallet: str, limit: int = 100, offset: Optional[str] = None,
                    chain_ids: str = "all", metadata: str = "url,logo") -> Dict[str, Any]:
         """

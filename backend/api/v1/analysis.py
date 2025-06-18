@@ -2,7 +2,7 @@
 
 import logging
 from typing import Dict, List, Optional, Any
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, Query
 from pydantic import BaseModel, Field
 
 from backend.integrations.gemini_client import GeminiClient
@@ -191,6 +191,243 @@ async def get_sim_wallet_activity(
         raise HTTPException(status_code=e.status_code or 502, detail=str(e))
     except Exception as e:
         logger.exception("Unexpected error calling Sim activity")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/sim/collectibles/{wallet}")
+@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
+async def get_sim_wallet_collectibles(
+    wallet: str,
+    limit: int = Query(50, ge=1, le=100),
+    offset: Optional[str] = None,
+    chain_ids: Optional[str] = None,
+    sim: SimClient = Depends(get_sim_client),
+):
+    """
+    Proxy endpoint that retrieves **NFT collectibles** for a wallet address
+    via Sim APIs.
+    """
+    logger.info(f"Sim collectibles request: wallet={wallet} limit={limit} offset={offset} chain_ids={chain_ids}")
+    try:
+        return sim.get_collectibles(wallet, limit=limit, offset=offset, chain_ids=chain_ids)
+    except SimApiError as e:
+        logger.error(f"Sim collectibles error ({e.status_code}): {e}")
+        raise HTTPException(status_code=e.status_code or 502, detail=str(e))
+    except Exception as e:
+        logger.exception("Unexpected error calling Sim collectibles")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/sim/token-info/{token_address}")
+@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
+async def get_sim_token_information(
+    token_address: str,
+    chain_ids: str = Query(..., description="Comma-separated list of chain IDs (e.g., '1,137'). Mandatory."),
+    sim: SimClient = Depends(get_sim_client),
+):
+    """
+    Proxy endpoint that retrieves **detailed token metadata and pricing** for a token
+    via Sim APIs.
+    """
+    logger.info(f"Sim token info request: token_address={token_address} chain_ids={chain_ids}")
+    try:
+        return sim.get_token_info(token_address, chain_ids=chain_ids)
+    except SimApiError as e:
+        logger.error(f"Sim token info error ({e.status_code}): {e}")
+        raise HTTPException(status_code=e.status_code or 502, detail=str(e))
+    except Exception as e:
+        logger.exception("Unexpected error calling Sim token info")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/sim/token-holders/{chain_id}/{token_address}")
+@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
+async def get_sim_token_holders(
+    chain_id: str,
+    token_address: str,
+    limit: int = Query(100, ge=1, le=100),
+    offset: Optional[str] = None,
+    sim: SimClient = Depends(get_sim_client),
+):
+    """
+    Proxy endpoint that retrieves **token holder distribution** for a given token
+    on a specific chain via Sim APIs.
+    """
+    logger.info(f"Sim token holders request: chain_id={chain_id} token_address={token_address} limit={limit} offset={offset}")
+    try:
+        return sim.get_token_holders(chain_id, token_address, limit=limit, offset=offset)
+    except SimApiError as e:
+        logger.error(f"Sim token holders error ({e.status_code}): {e}")
+        raise HTTPException(status_code=e.status_code or 502, detail=str(e))
+    except Exception as e:
+        logger.exception("Unexpected error calling Sim token holders")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/sim/svm/balances/{wallet}")
+@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
+async def get_sim_svm_wallet_balances(
+    wallet: str,
+    limit: int = Query(50, ge=1, le=100),
+    offset: Optional[str] = None,
+    chains: str = "all",
+    sim: SimClient = Depends(get_sim_client),
+):
+    """
+    Proxy endpoint that retrieves **Solana (SVM) token balances** for a wallet address
+    via Sim APIs.
+    """
+    logger.info(f"Sim SVM balances request: wallet={wallet} limit={limit} offset={offset} chains={chains}")
+    try:
+        return sim.get_svm_balances(wallet, limit=limit, offset=offset, chains=chains)
+    except SimApiError as e:
+        logger.error(f"Sim SVM balances error ({e.status_code}): {e}")
+        raise HTTPException(status_code=e.status_code or 502, detail=str(e))
+    except Exception as e:
+        logger.exception("Unexpected error calling Sim SVM balances")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/sim/risk-score/{wallet}")
+@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
+async def get_sim_wallet_risk_score(
+    wallet: str,
+    sim: SimClient = Depends(get_sim_client),
+):
+    """
+    Calculates a risk score for a wallet based on its balances and activity.
+    Analyzes factors like suspicious token holdings, transaction patterns,
+    and liquidity risks to generate a comprehensive risk assessment.
+    """
+    logger.info(f"Calculating risk score for wallet: {wallet}")
+    try:
+        # Step 1: Fetch balances and activity data
+        balances_data = sim.get_balances(wallet, limit=100, metadata="url,logo")
+        activity_data = sim.get_activity(wallet, limit=50)
+        
+        balances = balances_data.get("balances", [])
+        activities = activity_data.get("activity", [])
+        
+        # Step 2: Calculate risk factors and overall score
+        risk_factors = []
+        risk_score = 0
+        
+        # Balance-based risk factors
+        total_value_usd = 0
+        low_liquidity_tokens = 0
+        high_value_tokens = 0
+        
+        for balance in balances:
+            value_usd = float(balance.get("value_usd", 0))
+            total_value_usd += value_usd
+            
+            # Check for low liquidity tokens
+            if balance.get("low_liquidity", False):
+                low_liquidity_tokens += 1
+                if value_usd > 1000:
+                    risk_factors.append(f"High value in low liquidity token: {balance.get('symbol', 'Unknown')} (${value_usd:.2f})")
+                    risk_score += 2
+            
+            # Check for high value tokens
+            if value_usd > 50000:
+                high_value_tokens += 1
+        
+        # Calculate percentage of low liquidity tokens
+        if balances:
+            low_liquidity_percentage = (low_liquidity_tokens / len(balances)) * 100
+            if low_liquidity_percentage > 50:
+                risk_factors.append(f"{low_liquidity_percentage:.1f}% of tokens have low liquidity")
+                risk_score += 3
+        
+        # Activity-based risk factors
+        if activities:
+            # Count transaction types
+            tx_types = {}
+            approvals = 0
+            large_outflows = 0
+            small_rapid_txs = 0
+            recent_activity_count = 0
+            
+            # Track timestamps for velocity analysis
+            timestamps = []
+            
+            for activity in activities:
+                tx_type = activity.get("type", "unknown")
+                tx_types[tx_type] = tx_types.get(tx_type, 0) + 1
+                
+                # Check for approvals (potential security risk)
+                if tx_type == "approve":
+                    approvals += 1
+                
+                # Check for large outflows
+                if tx_type == "send" and float(activity.get("value_usd", 0)) > 10000:
+                    large_outflows += 1
+                    
+                # Track timestamp for velocity analysis
+                if "block_time" in activity:
+                    timestamps.append(activity["block_time"])
+                    
+                # Count recent activity (last 30 days)
+                if "block_time" in activity:
+                    import time
+                    current_time = time.time()
+                    block_time = activity["block_time"]
+                    if (current_time - block_time) < (30 * 24 * 60 * 60):  # 30 days in seconds
+                        recent_activity_count += 1
+            
+            # Assess approval risk
+            if approvals > 5:
+                risk_factors.append(f"High number of token approvals: {approvals}")
+                risk_score += 2
+            
+            # Assess large outflow risk
+            if large_outflows > 0:
+                risk_factors.append(f"Large value outflows detected: {large_outflows}")
+                risk_score += large_outflows
+            
+            # Assess transaction velocity
+            if len(timestamps) >= 2:
+                timestamps.sort()
+                time_span = timestamps[-1] - timestamps[0]
+                if time_span > 0:
+                    tx_per_day = (len(timestamps) / time_span) * 86400  # Convert to per day
+                    if tx_per_day > 20:
+                        risk_factors.append(f"High transaction velocity: {tx_per_day:.1f} tx/day")
+                        risk_score += 2
+        
+        # Calculate overall risk score (0-100 scale)
+        normalized_risk_score = min(100, risk_score * 5)
+        
+        # Determine risk level
+        risk_level = "LOW"
+        if normalized_risk_score >= 75:
+            risk_level = "HIGH"
+        elif normalized_risk_score >= 40:
+            risk_level = "MEDIUM"
+        
+        # Prepare response
+        response = {
+            "wallet_address": wallet,
+            "risk_score": normalized_risk_score,
+            "risk_level": risk_level,
+            "risk_factors": risk_factors if risk_factors else ["No significant risk factors detected."],
+            "summary": {
+                "total_value_usd": total_value_usd,
+                "token_count": len(balances),
+                "low_liquidity_tokens": low_liquidity_tokens,
+                "high_value_tokens": high_value_tokens,
+                "transaction_count": len(activities),
+                "transaction_types": tx_types
+            }
+        }
+        
+        return response
+        
+    except SimApiError as e:
+        logger.error(f"Risk score calculation error ({e.status_code}): {e}")
+        raise HTTPException(status_code=e.status_code or 502, detail=str(e))
+    except Exception as e:
+        logger.exception("Unexpected error calculating risk score")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
