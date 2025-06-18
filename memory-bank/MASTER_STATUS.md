@@ -7,8 +7,8 @@ _File: `memory-bank/MASTER_STATUS.md` – updated 2025-06-18_
 ## 1 · Project Snapshot
 | Item | Value |
 |------|-------|
-| **Current Version** | **1.4.0-beta** (“Data Persistence cut”) |
-| **Latest Commit** | `POSTGRES-MIG` (📦 Data persistence) |
+| **Current Version** | **1.5.0-beta** (“Auth Security cut”) |
+| **Latest Commit** | `AUTH-SEC` (🔐 Auth security upgrade) |
 | **Deployed Envs** | • Dev (Docker Compose) ✅ • CI preview (GH Actions) ✅ • Prod (staging cluster) ⏳ awaiting QA |
 | **Maintainers** | Backend @Daniel-Wurth • Frontend @UI-Lead • DevOps @Ops-Guru |
 
@@ -18,7 +18,7 @@ _File: `memory-bank/MASTER_STATUS.md` – updated 2025-06-18_
 
 | Domain | Status | Notes |
 |--------|--------|-------|
-| **Auth / RBAC** | ✅ | JWT (HS256) with role scopes; secrets centralised in `.env` |
+| **Auth / RBAC** | ✅ | JWT (HS256) with role scopes; **secure HttpOnly cookies + refresh rotation** |
 | **Sim API Ingestion** | ✅ Backend & Frontend | Balances, Activity wired to UI; Graph events emit |
 | **Frontend UI** | ⚠️ | Next 14 App Router; KPI cards & activity feed live; tests scaffolded |
 | **CrewAI Workflow** | ✅ | Pause / Resume, HITL webhooks, task progress WS |
@@ -60,10 +60,9 @@ Static Analysis
 ---
 
 ## 5 · Known Issues / Risks
-1. Access / Refresh JWTs use localStorage (XSS risk) – move to httpOnly cookies  
-2. Frontend still displays **mock** balances / activity → user confusion  
-3. Sentry DSN placeholder; error telemetry disabled in prod  
-4. Bundle not yet tree-shaken; large initial JS (≈ 1 MB)
+1. Frontend still displays **mock** balances / activity → user confusion  
+2. Sentry DSN placeholder; error telemetry disabled in prod  
+3. Bundle not yet tree-shaken; large initial JS (≈ 1 MB)
 
 ---
 
@@ -72,8 +71,8 @@ Static Analysis
 | Priority | Epic / Task | Owner |
 |----------|-------------|-------|
 | ~~P0~~ | ✅ Conversations & HITL reviews migrated to PostgreSQL (Alembic 003) | Backend |
-| **P1** | Enable refresh-token rotation & httpOnly cookie auth | Backend |
-| **P2** | Finish FE test harness (reach 70 % coverage) | Frontend |
+| ~~P1~~ | ✅ Enable refresh-token rotation & httpOnly cookie auth | Backend |
+| **P1** | Finish FE test harness (reach 70 % coverage) | Frontend |
 | **P2** | Integrate Sentry & OTEL traces end-to-end | DevOps |
 | **P3** | Add e2e Playwright suite (chat + analysis flow) | QA |
 | **P3** | Optimize FE bundle (code-splitting, RSC) | Frontend |
@@ -81,6 +80,12 @@ Static Analysis
 ---
 
 ## 7 · Recent Changelog (since v1.0.0-beta)
+
+* **2025-06-18 – Auth Security Upgrade (🔐 #auth-sec)**  
+  * Implemented secure HttpOnly cookies for access & refresh tokens  
+  * Added single-use refresh-token rotation + Redis blacklist fallback  
+  * CSRF protection via double-submit cookie, `X-CSRF-Token` header  
+  * Removed localStorage token storage — **eliminates XSS token theft risk**  
 
 * **2025-06-18 – Data Persistence Migration (📦 #postgres-mig)**  
   * Added `Conversation` & `Message` SQLAlchemy models  

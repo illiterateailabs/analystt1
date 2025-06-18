@@ -3,6 +3,16 @@ import { useRouter } from 'next/router';
 import { api } from '@/lib/api';
 import { useToast } from '@/hooks/useToast';
 
+/**
+ * Extract the `csrf_token` value from document.cookie.
+ * Returns `undefined` on server-side or if the cookie is missing.
+ */
+const getCsrfToken = (): string | undefined => {
+  if (typeof document === 'undefined') return undefined; // SSR safety
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : undefined;
+};
+
 // User type definition
 export interface User {
   id: string;
@@ -57,9 +67,18 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   // Refresh token
   const refreshToken = async (): Promise<boolean> => {
     try {
-      await api.post('/auth/refresh');
+      const csrf = getCsrfToken();
+      const config = csrf ? { headers: { 'X-CSRF-Token': csrf } } : {};
+      await api.post('/auth/refresh', {}, config);
       return true;
     } catch (error) {
+      // Token refresh failed – clear user state & redirect to login
+      setUser(null);
+      toast({
+        description: 'Session expired, please log in again.',
+        variant: 'destructive',
+      });
+      router.push('/login');
       return false;
     }
   };
@@ -68,7 +87,13 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   const login = async (email: string, password: string, rememberMe = false): Promise<void> => {
     try {
       setIsLoading(true);
-      const response = await api.post('/auth/login', { email, password, rememberMe });
+      const response = await api.post(
+        '/auth/login',
+        { email, password, rememberMe },
+        {
+          headers: { 'X-CSRF-Token': getCsrfToken() },
+        }
+      );
       setUser(response.data.user);
       
       toast({
@@ -93,7 +118,13 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   const register = async (username: string, email: string, password: string): Promise<void> => {
     try {
       setIsLoading(true);
-      await api.post('/auth/register', { username, email, password });
+      await api.post(
+        '/auth/register',
+        { username, email, password },
+        {
+          headers: { 'X-CSRF-Token': getCsrfToken() },
+        }
+      );
       
       toast({
         description: 'Registration successful. Please log in.',
@@ -116,7 +147,13 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   // Logout function
   const logout = async (): Promise<void> => {
     try {
-      await api.post('/auth/logout');
+      await api.post(
+        '/auth/logout',
+        {},
+        {
+          headers: { 'X-CSRF-Token': getCsrfToken() },
+        }
+      );
       setUser(null);
       
       toast({

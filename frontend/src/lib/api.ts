@@ -4,25 +4,95 @@ import axios from 'axios';
 // Base API URL - configurable via environment
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
-// Axios instance with default config
+// -------------------------------------------------------------
+// Cookie-based Axios instance (httpOnly auth, CSRF protection)
+// -------------------------------------------------------------
+
+/**
+ * Extract CSRF token that backend sets as a cookie (e.g. `csrf_token=<uuid>`).
+ */
+const getCsrfToken = (): string | null => {
+  if (typeof document === 'undefined') return null;
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+};
+
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
+  headers: { 'Content-Type': 'application/json' },
+  withCredentials: true, // always send cookies
 });
 
-// Add request interceptor for auth token
+// Attach CSRF token & ensure credentials on every request
 apiClient.interceptors.request.use(
   (config) => {
-    // Get token from local storage if available
-    const token = localStorage.getItem('auth_token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+    // Ensure cookies are sent
+    config.withCredentials = true;
+
+    // Include CSRF token on state-changing requests
+    const method = (config.method || 'get').toUpperCase();
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+      const csrf = getCsrfToken();
+      if (csrf) {
+        config.headers['X-CSRF-Token'] = csrf;
+      }
     }
     return config;
   },
   (error) => Promise.reject(error)
+);
+
+// Automatically try to refresh token on 401 responses
+let isRefreshing = false;
+let failedQueue: Array<{
+  resolve: (value?: unknown) => void;
+  reject: (reason?: any) => void;
+}> = [];
+
+const processQueue = (error: any, tokenRefreshed: boolean) => {
+  failedQueue.forEach((prom) => {
+    if (tokenRefreshed) prom.resolve();
+    else prom.reject(error);
+  });
+  failedQueue = [];
+};
+
+apiClient.interceptors.response.use(
+  (res) => res,
+  async (error) => {
+    const originalRequest = error.config;
+
+    // Avoid infinite loop
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      if (isRefreshing) {
+        return new Promise((resolve, reject) => {
+          failedQueue.push({ resolve, reject });
+        })
+          .then(() => apiClient(originalRequest))
+          .catch((err) => Promise.reject(err));
+      }
+
+      originalRequest._retry = true;
+      isRefreshing = true;
+
+      try {
+        await apiClient.post(
+          '/auth/refresh',
+          {},
+          { headers: { 'X-CSRF-Token': getCsrfToken() || '' } }
+        );
+        processQueue(null, true);
+        return apiClient(originalRequest);
+      } catch (refreshErr) {
+        processQueue(refreshErr, false);
+        return Promise.reject(refreshErr);
+      } finally {
+        isRefreshing = false;
+      }
+    }
+
+    return Promise.reject(error);
+  }
 );
 
 // Error handling helper
