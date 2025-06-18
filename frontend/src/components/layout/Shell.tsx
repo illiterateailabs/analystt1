@@ -75,20 +75,15 @@ const Shell: React.FC<ShellProps> = ({ children }) => {
     setSearchOpen: state.setSearchOpen,
   }));
   
-  // Local helper overrides remain (toggleTheme defined later)
-  
-  // ------------------------------------------------------------------ #
-  // Key handlers use global store actions
-  // ------------------------------------------------------------------ #
-      description: `Switched to ${theme === 'dark' ? 'light' : 'dark'} mode`,
+  // Toggle theme function
+  const toggleTheme = useCallback(() => {
+    const newTheme = theme === 'dark' ? 'light' : 'dark';
+    setTheme(newTheme);
+    toast({
+      description: `Switched to ${newTheme} mode`,
       variant: 'info',
     });
   }, [theme, setTheme, toast]);
-  
-  // Toggle context ribbon
-  const toggleContextRibbon = useCallback(() => {
-        setSearchOpen(true);
-  }, []);
   
   // Handle keyboard shortcuts
   useEffect(() => {
