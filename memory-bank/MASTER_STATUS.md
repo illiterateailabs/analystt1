@@ -7,8 +7,8 @@ _File: `memory-bank/MASTER_STATUS.md` – updated 2025-06-18_
 ## 1 · Project Snapshot
 | Item | Value |
 |------|-------|
-| **Current Version** | **1.1.0-beta** (“Sim-Data cut”) |
-| **Latest Commit** | `9680149d` (🚀 Sim API integration) |
+| **Current Version** | **1.2.0-beta** (“Sim-Data UI cut”) |
+| **Latest Commit** | `a10fcb0a` (🔗 Sim UI integration) |
 | **Deployed Envs** | • Dev (Docker Compose) ✅ • CI preview (GH Actions) ✅ • Prod (staging cluster) ⏳ awaiting QA |
 | **Maintainers** | Backend @Daniel-Wurth • Frontend @UI-Lead • DevOps @Ops-Guru |
 
@@ -19,8 +19,8 @@ _File: `memory-bank/MASTER_STATUS.md` – updated 2025-06-18_
 | Domain | Status | Notes |
 |--------|--------|-------|
 | **Auth / RBAC** | ✅ | JWT (HS256) with role scopes; secrets centralised in `.env` |
-| **Sim API Ingestion** | ✅ Backend · ⚠️ FE wiring | Balances & Activity tools merged; Graph events emit; UI still uses mocks |
-| **Chat & Image Analysis** | ✅ | Gemini 1.5-pro; persistent convo log TODO |
+| **Sim API Ingestion** | ✅ Backend & Frontend | Balances, Activity wired to UI; Graph events emit |
+| **Frontend UI** | ⚠️ | Next 14 App Router; KPI cards & activity feed live; tests scaffolded |
 | **CrewAI Workflow** | ✅ | Pause / Resume, HITL webhooks, task progress WS |
 | **Graph API** | ✅ | Cypher exec, NLQ → Cypher, schema introspection |
 | **Data Stores** | ✅ | PostgreSQL 15 (async SQLAlchemy), Neo4j 5 |
@@ -72,7 +72,6 @@ Static Analysis
 
 | Priority | Epic / Task | Owner |
 |----------|-------------|-------|
-| **P0** | Wire Sim **Balances & Activity** into UI components | Frontend |
 | **P0** | Migrate conversations & HITL reviews to PostgreSQL (Alembic 003) | Backend |
 | **P1** | Graph enrichment job for Sim data (Neo4j loader) | Data Graph |
 | **P1** | Enable refresh-token rotation & httpOnly cookie auth | Backend |
