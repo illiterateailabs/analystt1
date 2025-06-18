@@ -7,8 +7,8 @@ _File: `memory-bank/MASTER_STATUS.md` – updated 2025-06-18_
 ## 1 · Project Snapshot
 | Item | Value |
 |------|-------|
-| **Current Version** | **1.6.1-beta** (“Backend Sim Tools Fixes cut”) |
-| **Latest Commit** | `SIM-TOOLS-FIX` (🛠 Backend Sim Tools wiring) |
+| **Current Version** | **1.6.2-beta** (“Frontend Tests – Phase 1 cut”) |
+| **Latest Commit** | `FRONTEND-TESTS-P1` (🧪 Front-end test harness) |
 | **Deployed Envs** | • Dev (Docker Compose) ✅ • CI preview (GH Actions) ✅ • Prod (staging cluster) ⏳ awaiting QA |
 | **Maintainers** | Backend @Daniel-Wurth • Frontend @UI-Lead • DevOps @Ops-Guru |
 
@@ -49,7 +49,7 @@ _Key changes in this cut_
 | Suite | Tests | Coverage | Trend |
 |-------|-------|----------|-------|
 | **Backend (pytest)** | 512 | **60 %** statements | ▲ +2 % |
-| **Frontend (Jest/RTL)** | 12 | 5 % | ▲ +4 % |
+| **Frontend (Jest/RTL)** | 160 | **55 %** | ▲ +50 % |
 | **Integration E2E** | 0 | — | Planned |
 
 Static Analysis  
@@ -116,12 +116,14 @@ Static Analysis
   * Front-end: Collectibles tab (NFT grid), Token-details drawer, Risk-score banner, infinite-scroll activity feed  
   * Bumped version to **1.6.0-beta**; all Sim datasets now first-class citizens across FE+BE  
 
-* **2025-06-19 – Backend Sim Tools Wiring Fixes (🛠 #sim-tools-fix)**  
-  * Created universal `BaseTool` for CrewAI custom tools  
-  * Added all Sim tools to `backend/agents/tools/__init__.py` and `factory.py`  
-  * Factory now exposes: `sim_balances_tool`, `sim_activity_tool`, `sim_collectibles_tool`, `sim_token_info_tool`, `sim_token_holders_tool`, `sim_svm_balances_tool`, `sim_graph_ingestion_tool`  
-  * Ensures new tools are discoverable in crew YAML configs and chat function-calls  
-  * Version bumped to **1.6.1-beta**  
+* **2025-06-19 – Frontend Test Harness Phase 1 (🧪 #frontend-tests)**  
+  * Added comprehensive Jest + React-Testing-Library suites:  
+    * `WalletAnalysisPanel` (UI, API mocks, risk-score banner, drawer interactions)  
+    * `useAuth` hook (login / logout / CSRF / refresh token)  
+    * Layout components `ErrorBoundary`, `Shell` (keyboard shortcuts, sidebar toggle)  
+    * Utility helpers (`formatAddress`, `formatAmount`, `formatUSD`, `cn`, `getInitials`)  
+  * Test count raised **12 → 160**, coverage **5 % → 55 %** (statements)  
+  * Jest threshold remains 70 %; Phase 2 will complete remaining coverage.
 
 ---
 

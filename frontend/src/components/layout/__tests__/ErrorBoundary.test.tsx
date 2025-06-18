@@ -1,207 +1,325 @@
-import React, { ErrorInfo } from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import React from 'react';
+import { render, screen, act, waitFor, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom';
 import ErrorBoundary from '../ErrorBoundary';
 
-// Mock console.error to prevent test output pollution
-const originalConsoleError = console.error;
-beforeAll(() => {
-  console.error = jest.fn();
-});
+// Mock console.error to prevent test logs from cluttering the console
+const mockConsoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
 
-afterAll(() => {
-  console.error = originalConsoleError;
-});
-
-// Reset console.error mock between tests
-beforeEach(() => {
-  (console.error as jest.Mock).mockClear();
-});
-
-// Component that throws an error when shouldThrow is true
-const ErrorThrowingComponent = ({ shouldThrow = false, message = 'Test error' }) => {
+// Component that throws an error during render
+const ErrorThrowingComponent = ({ shouldThrow = true }) => {
   if (shouldThrow) {
-    throw new Error(message);
+    throw new Error('Test Error: Render error');
   }
-  return <div data-testid="normal-component">Normal Component Content</div>;
+  return <div>No error thrown</div>;
 };
 
-describe('ErrorBoundary', () => {
-  test('renders children when no error occurs', () => {
-    render(
-      <ErrorBoundary>
-        <ErrorThrowingComponent shouldThrow={false} />
-      </ErrorBoundary>
-    );
-
-    expect(screen.getByTestId('normal-component')).toBeInTheDocument();
-    expect(screen.getByText('Normal Component Content')).toBeInTheDocument();
-  });
-
-  test('displays default fallback UI when error occurs', () => {
-    // Suppress React error boundary warning in test output
-    const spy = jest.spyOn(console, 'error');
-    spy.mockImplementation(() => {});
-
-    render(
-      <ErrorBoundary>
-        <ErrorThrowingComponent shouldThrow={true} message="Test error message" />
-      </ErrorBoundary>
-    );
-
-    // Verify fallback UI is shown
-    expect(screen.getByText('Something went wrong')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument();
-
-    // In development mode, error details should be visible
-    if (process.env.NODE_ENV === 'development') {
-      expect(screen.getByText('Error Details (visible in development only):')).toBeInTheDocument();
-      expect(screen.getByText('Error: Test error message')).toBeInTheDocument();
+// Component that throws an error in an event handler
+const EventErrorComponent = ({ shouldThrow = false }) => {
+  const handleClick = () => {
+    if (shouldThrow) {
+      throw new Error('Test Error: Event handler error');
     }
+  };
 
-    spy.mockRestore();
+  return (
+    <button onClick={handleClick} data-testid="error-button">
+      Click to throw error
+    </button>
+  );
+};
+
+// Component that throws an error in useEffect
+const EffectErrorComponent = ({ shouldThrow = false }) => {
+  React.useEffect(() => {
+    if (shouldThrow) {
+      throw new Error('Test Error: Effect error');
+    }
+  }, [shouldThrow]);
+
+  return <div>Effect component</div>;
+};
+
+// Custom fallback component for testing
+const CustomFallback = ({ error, resetErrorBoundary }) => (
+  <div data-testid="custom-fallback">
+    <h2>Custom Error UI</h2>
+    <p data-testid="error-message">{error.message}</p>
+    <button onClick={resetErrorBoundary} data-testid="reset-button">
+      Reset
+    </button>
+  </div>
+);
+
+describe('ErrorBoundary', () => {
+  beforeEach(() => {
+    mockConsoleError.mockClear();
   });
 
-  test('displays custom fallback UI when provided', () => {
-    const customFallback = <div data-testid="custom-fallback">Custom Error UI</div>;
-    
+  afterAll(() => {
+    mockConsoleError.mockRestore();
+  });
+
+  // 1. Normal rendering when no errors occur
+  test('renders children normally when no errors occur', () => {
     render(
-      <ErrorBoundary fallback={customFallback}>
-        <ErrorThrowingComponent shouldThrow={true} />
+      <ErrorBoundary>
+        <div data-testid="child-content">Child Content</div>
       </ErrorBoundary>
     );
 
+    expect(screen.getByTestId('child-content')).toBeInTheDocument();
+    expect(screen.getByText('Child Content')).toBeInTheDocument();
+    expect(mockConsoleError).not.toHaveBeenCalled();
+  });
+
+  // 2. Error catching and fallback UI display
+  test('renders fallback UI when child component throws', () => {
+    // Using act because error boundaries use lifecycle methods that require it
+    act(() => {
+      render(
+        <ErrorBoundary>
+          <ErrorThrowingComponent />
+        </ErrorBoundary>
+      );
+    });
+
+    // Default fallback UI should be shown
+    expect(screen.getByText('Something went wrong.')).toBeInTheDocument();
+    expect(screen.getByText('Test Error: Render error')).toBeInTheDocument();
+    expect(screen.queryByText('No error thrown')).not.toBeInTheDocument();
+  });
+
+  // 3. Error logging to console
+  test('logs errors to console.error', () => {
+    act(() => {
+      render(
+        <ErrorBoundary>
+          <ErrorThrowingComponent />
+        </ErrorBoundary>
+      );
+    });
+
+    // Error should be logged to console
+    expect(mockConsoleError).toHaveBeenCalled();
+    // React 18 calls console.error twice during development - once for the error itself and once for the component stack
+    expect(mockConsoleError.mock.calls[0][0]).toBeInstanceOf(Error);
+    expect(mockConsoleError.mock.calls[0][0].message).toBe('Test Error: Render error');
+  });
+
+  // 4. Reset functionality
+  test('resets error state when reset function is called', async () => {
+    const onReset = jest.fn();
+    const user = userEvent.setup();
+
+    // Render with a component that will throw
+    act(() => {
+      render(
+        <ErrorBoundary onReset={onReset} fallback={CustomFallback}>
+          <ErrorThrowingComponent />
+        </ErrorBoundary>
+      );
+    });
+
+    // Verify error state
+    expect(screen.getByTestId('custom-fallback')).toBeInTheDocument();
+    expect(screen.getByTestId('error-message')).toHaveTextContent('Test Error: Render error');
+
+    // Click reset button
+    await user.click(screen.getByTestId('reset-button'));
+
+    // Verify onReset was called
+    expect(onReset).toHaveBeenCalledTimes(1);
+  });
+
+  test('renders children again after reset with resetKeys', async () => {
+    const TestComponent = ({ shouldThrow }) => {
+      return shouldThrow ? <ErrorThrowingComponent /> : <div>No error now</div>;
+    };
+
+    const { rerender } = render(
+      <ErrorBoundary fallback={CustomFallback} resetKeys={[true]}>
+        <TestComponent shouldThrow={true} />
+      </ErrorBoundary>
+    );
+
+    // Verify error state
+    expect(screen.getByTestId('custom-fallback')).toBeInTheDocument();
+
+    // Rerender with different resetKeys to trigger reset
+    rerender(
+      <ErrorBoundary fallback={CustomFallback} resetKeys={[false]}>
+        <TestComponent shouldThrow={false} />
+      </ErrorBoundary>
+    );
+
+    // Verify component renders normally after reset
+    await waitFor(() => {
+      expect(screen.queryByTestId('custom-fallback')).not.toBeInTheDocument();
+      expect(screen.getByText('No error now')).toBeInTheDocument();
+    });
+  });
+
+  // 5. Different error types (render errors, async errors)
+  test('catches errors thrown in event handlers', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ErrorBoundary>
+        <EventErrorComponent shouldThrow={true} />
+      </ErrorBoundary>
+    );
+
+    // Trigger the error
+    await user.click(screen.getByTestId('error-button'));
+
+    // Verify error is caught and fallback is shown
+    await waitFor(() => {
+      expect(screen.getByText('Something went wrong.')).toBeInTheDocument();
+      expect(screen.getByText('Test Error: Event handler error')).toBeInTheDocument();
+    });
+  });
+
+  test('catches errors thrown in useEffect', async () => {
+    act(() => {
+      render(
+        <ErrorBoundary>
+          <EffectErrorComponent shouldThrow={true} />
+        </ErrorBoundary>
+      );
+    });
+
+    // Verify error is caught and fallback is shown
+    await waitFor(() => {
+      expect(screen.getByText('Something went wrong.')).toBeInTheDocument();
+      expect(screen.getByText('Test Error: Effect error')).toBeInTheDocument();
+    });
+  });
+
+  // 6. Custom fallback UI
+  test('renders custom fallback UI when provided', () => {
+    act(() => {
+      render(
+        <ErrorBoundary fallback={CustomFallback}>
+          <ErrorThrowingComponent />
+        </ErrorBoundary>
+      );
+    });
+
+    // Verify custom fallback is used
     expect(screen.getByTestId('custom-fallback')).toBeInTheDocument();
     expect(screen.getByText('Custom Error UI')).toBeInTheDocument();
+    expect(screen.getByTestId('error-message')).toHaveTextContent('Test Error: Render error');
+    expect(screen.getByTestId('reset-button')).toBeInTheDocument();
   });
 
-  test('calls onError callback when error occurs', () => {
-    const handleError = jest.fn();
-    
-    render(
-      <ErrorBoundary onError={handleError}>
-        <ErrorThrowingComponent shouldThrow={true} message="Callback test error" />
-      </ErrorBoundary>
-    );
-
-    // Verify onError was called with the error
-    expect(handleError).toHaveBeenCalledTimes(1);
-    expect(handleError.mock.calls[0][0].message).toBe('Callback test error');
-    expect(handleError.mock.calls[0][1]).toBeDefined(); // ErrorInfo object
-  });
-
-  test('resets error state when Try again button is clicked', () => {
-    // We need to mock React's setState since we're testing a class component
-    const ErrorResetComponent = () => {
-      const [shouldThrow, setShouldThrow] = React.useState(true);
-      
-      // Reset the error state after the component has thrown once
-      React.useEffect(() => {
-        if (shouldThrow) {
-          setTimeout(() => setShouldThrow(false), 0);
-        }
-      }, [shouldThrow]);
-      
-      if (shouldThrow) {
-        throw new Error('Initial error');
-      }
-      
-      return <div data-testid="reset-success">Component Reset Successfully</div>;
-    };
-
-    render(
-      <ErrorBoundary>
-        <ErrorResetComponent />
-      </ErrorBoundary>
-    );
-
-    // First we should see the error UI
-    expect(screen.getByText('Something went wrong')).toBeInTheDocument();
-    
-    // Click the reset button
-    fireEvent.click(screen.getByRole('button', { name: /try again/i }));
-    
-    // After reset, we should see the normal component
-    expect(screen.getByTestId('reset-success')).toBeInTheDocument();
-    expect(screen.getByText('Component Reset Successfully')).toBeInTheDocument();
-  });
-
-  test('resets when resetKey prop changes', () => {
-    // Component that renders ErrorBoundary with changing resetKey
-    const ResetKeyWrapper = () => {
-      const [resetKey, setResetKey] = React.useState(0);
-      const [shouldThrow, setShouldThrow] = React.useState(true);
-      
-      const handleReset = () => {
-        setShouldThrow(false);
-        setResetKey(prev => prev + 1);
-      };
-      
-      return (
-        <div>
-          <ErrorBoundary resetKey={resetKey}>
-            <ErrorThrowingComponent shouldThrow={shouldThrow} />
+  // 7. Error boundary nesting
+  test('inner error boundary catches errors without affecting outer boundary', () => {
+    act(() => {
+      render(
+        <ErrorBoundary fallback={({ error }) => <div data-testid="outer-fallback">{error.message}</div>}>
+          <div data-testid="outer-content">Outer content</div>
+          <ErrorBoundary fallback={({ error }) => <div data-testid="inner-fallback">{error.message}</div>}>
+            <ErrorThrowingComponent />
           </ErrorBoundary>
-          <button onClick={handleReset} data-testid="external-reset">External Reset</button>
-        </div>
-      );
-    };
-
-    render(<ResetKeyWrapper />);
-    
-    // First we should see the error UI
-    expect(screen.getByText('Something went wrong')).toBeInTheDocument();
-    
-    // Click the external reset button
-    fireEvent.click(screen.getByTestId('external-reset'));
-    
-    // After reset, we should see the normal component
-    expect(screen.getByTestId('normal-component')).toBeInTheDocument();
-    expect(screen.getByText('Normal Component Content')).toBeInTheDocument();
-  });
-
-  test('handles nested error boundaries correctly', () => {
-    render(
-      <ErrorBoundary fallback={<div data-testid="outer-fallback">Outer Error</div>}>
-        <div>Outer Content</div>
-        <ErrorBoundary fallback={<div data-testid="inner-fallback">Inner Error</div>}>
-          <ErrorThrowingComponent shouldThrow={true} />
         </ErrorBoundary>
-      </ErrorBoundary>
-    );
+      );
+    });
 
-    // The inner error boundary should catch the error
+    // Inner error boundary should catch the error
     expect(screen.getByTestId('inner-fallback')).toBeInTheDocument();
-    expect(screen.getByText('Inner Error')).toBeInTheDocument();
+    expect(screen.getByTestId('inner-fallback')).toHaveTextContent('Test Error: Render error');
     
-    // The outer content should still be visible
-    expect(screen.getByText('Outer Content')).toBeInTheDocument();
+    // Outer content should still be visible
+    expect(screen.getByTestId('outer-content')).toBeInTheDocument();
     
-    // The outer fallback should not be shown
+    // Outer fallback should not be rendered
     expect(screen.queryByTestId('outer-fallback')).not.toBeInTheDocument();
   });
 
-  test('integrates with Sentry if available', () => {
-    // Mock window.Sentry
-    const mockCaptureException = jest.fn();
-    const originalWindow = { ...window };
-    
-    // @ts-ignore - Adding Sentry to window for testing
-    window.Sentry = { 
-      captureException: mockCaptureException 
-    };
-    
-    render(
-      <ErrorBoundary>
-        <ErrorThrowingComponent shouldThrow={true} message="Sentry test error" />
-      </ErrorBoundary>
-    );
+  test('outer error boundary catches errors when inner boundary is absent', () => {
+    act(() => {
+      render(
+        <ErrorBoundary fallback={({ error }) => <div data-testid="outer-fallback">{error.message}</div>}>
+          <ErrorThrowingComponent />
+        </ErrorBoundary>
+      );
+    });
 
-    // Verify Sentry.captureException was called
-    expect(mockCaptureException).toHaveBeenCalledTimes(1);
-    expect(mockCaptureException.mock.calls[0][0].message).toBe('Sentry test error');
+    // Outer error boundary should catch the error
+    expect(screen.getByTestId('outer-fallback')).toBeInTheDocument();
+    expect(screen.getByTestId('outer-fallback')).toHaveTextContent('Test Error: Render error');
+  });
+
+  // 8. Props handling during error states
+  test('passes error and resetErrorBoundary to fallback component', () => {
+    const onReset = jest.fn();
     
-    // Restore original window
-    window = originalWindow;
+    act(() => {
+      render(
+        <ErrorBoundary 
+          fallback={({ error, resetErrorBoundary }) => (
+            <div>
+              <span data-testid="error-type">{error.name}</span>
+              <span data-testid="error-message">{error.message}</span>
+              <button onClick={resetErrorBoundary} data-testid="reset-fn-button">Reset</button>
+            </div>
+          )}
+          onReset={onReset}
+        >
+          <ErrorThrowingComponent />
+        </ErrorBoundary>
+      );
+    });
+
+    // Verify error props are passed correctly
+    expect(screen.getByTestId('error-type')).toHaveTextContent('Error');
+    expect(screen.getByTestId('error-message')).toHaveTextContent('Test Error: Render error');
+    
+    // Verify resetErrorBoundary function is passed and works
+    fireEvent.click(screen.getByTestId('reset-fn-button'));
+    expect(onReset).toHaveBeenCalledTimes(1);
+  });
+
+  test('onError callback is called when an error occurs', () => {
+    const onError = jest.fn();
+    
+    act(() => {
+      render(
+        <ErrorBoundary onError={onError}>
+          <ErrorThrowingComponent />
+        </ErrorBoundary>
+      );
+    });
+
+    // Verify onError was called with the error and component stack
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0]).toBeInstanceOf(Error);
+    expect(onError.mock.calls[0][0].message).toBe('Test Error: Render error');
+    expect(onError.mock.calls[0][1]).toHaveProperty('componentStack');
+  });
+
+  test('handles additional props passed to ErrorBoundary', () => {
+    const testId = 'custom-error-boundary';
+    const className = 'error-container';
+    
+    act(() => {
+      render(
+        <ErrorBoundary 
+          data-testid={testId} 
+          className={className}
+          fallback={({ error }) => <div data-testid="fallback-with-props">{error.message}</div>}
+        >
+          <ErrorThrowingComponent />
+        </ErrorBoundary>
+      );
+    });
+
+    // Verify additional props are applied
+    const fallback = screen.getByTestId('fallback-with-props');
+    expect(fallback).toBeInTheDocument();
+    expect(fallback.parentElement).toHaveAttribute('data-testid', testId);
+    expect(fallback.parentElement).toHaveClass(className);
   });
 });
