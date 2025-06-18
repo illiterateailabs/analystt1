@@ -8,29 +8,51 @@ import time
 from enum import Enum
 from typing import Dict, List, Optional, Union, Callable
 
-from fastapi import Depends, HTTPException, Request, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2AuthorizationCodeBearer, HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import Depends, HTTPException, Request, status, Cookie
+from fastapi.security import OAuth2PasswordBearer, HTTPBearer
 from jose import JWTError
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.status import HTTP_429_TOO_MANY_REQUESTS
 
-from backend.auth.jwt_handler import JWTHandler
+from backend.auth.jwt_handler import decode_jwt
+from backend.auth.secure_cookies import (
+    get_token_from_cookies_or_header,
+    verify_csrf_token,
+    ACCESS_TOKEN_COOKIE,
+    CSRF_TOKEN_COOKIE
+)
+from backend.database import get_db
+from backend.models.user import User
 from backend.config import settings
 
-# OAuth2 scheme for token extraction from requests
+# OAuth2 scheme for token extraction from requests (backward compatibility)
 oauth2_scheme = OAuth2PasswordBearer(
-    tokenUrl="/api/v1/auth/token",
+    tokenUrl="/api/v1/auth/login",
     auto_error=False  # Don't auto-raise for optional auth
 )
 
-# HTTP Bearer scheme (alternative to OAuth2)
+# HTTP Bearer scheme (alternative to OAuth2, backward compatibility)
 http_bearer = HTTPBearer(auto_error=False)
 
 
 class UserRole(str, Enum):
-    """User role enumeration for RBAC."""
+    """
+    Simplified role enumeration.
+
+    The `User` SQLAlchemy model only contains an `is_superuser` flag – there is
+    no per-user role column.  We therefore reduce RBAC checks to two effective
+    permission levels:
+
+    * ``ADMIN`` → `user.is_superuser` is **True**
+    * ``USER``  → any authenticated (non-admin) account
+
+    Extra roles that previously existed (e.g. *analyst*, *viewer*) have been
+    collapsed into the generic *USER* level to avoid referencing a non-existent
+    `role` attribute.
+    """
+
     ADMIN = "admin"
-    ANALYST = "analyst"
-    VIEWER = "viewer"
+    USER = "user"
 
 
 # Simple in-memory rate limiting store
@@ -39,47 +61,46 @@ _rate_limit_store: Dict[str, Dict[str, Union[int, float]]] = {}
 
 
 async def get_current_user(
-    token: Optional[str] = Depends(oauth2_scheme),
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(http_bearer),
-    request: Optional[Request] = None
-) -> Dict:
+    request: Request,
+    access_token: Optional[str] = Cookie(None, alias=ACCESS_TOKEN_COOKIE),
+    csrf_token: Optional[str] = Cookie(None, alias=CSRF_TOKEN_COOKIE),
+    db: AsyncSession = Depends(get_db)
+) -> User:
     """
-    Validate JWT token and return current user.
+    Validate authentication and return current user.
     
-    This dependency extracts and validates the JWT token from either:
-    - OAuth2 Authorization header (Bearer token)
-    - HTTP Bearer Authorization header
+    This dependency extracts and validates the authentication token from cookies
+    or Authorization header (for backward compatibility), then loads the user
+    from the database.
     
     Args:
-        token: OAuth2 token from Authorization header
-        credentials: HTTP Bearer credentials
-        request: FastAPI request object for storing user in state
+        request: FastAPI request object
+        access_token: Access token from cookies
+        csrf_token: CSRF token from cookies
+        db: Database session
         
     Returns:
-        Dict containing user information from token
+        User object for the authenticated user
         
     Raises:
-        HTTPException: If token is missing or invalid
+        HTTPException: If authentication fails
     """
-    # Get token from either OAuth2 or HTTP Bearer
-    final_token = None
-    if token:
-        final_token = token
-    elif credentials:
-        final_token = credentials.credentials
-        
-    if not final_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
     try:
-        # Decode and validate token
-        payload = await JWTHandler.decode_token(final_token)
+        # Get token using the secure cookies system (with fallback to Bearer)
+        token = await get_token_from_cookies_or_header(
+            request=request,
+            access_token=access_token,
+            csrf_token=csrf_token
+        )
         
-        # Extract user data
+        # For non-GET requests, verify CSRF token
+        if request.method not in ["GET", "HEAD", "OPTIONS"]:
+            verify_csrf_token(request, csrf_token)
+        
+        # Decode and validate token
+        payload = decode_jwt(token)
+        
+        # Extract user ID
         user_id = payload.get("sub")
         if not user_id:
             raise HTTPException(
@@ -87,24 +108,33 @@ async def get_current_user(
                 detail="Invalid token: missing user identifier",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-            
-        # Get additional user data if present
-        user_data = payload.get("user_data", {})
         
-        # Construct user object
-        user = {
-            "id": user_id,
-            "role": user_data.get("role", UserRole.ANALYST),  # Default to ANALYST
-            **user_data
-        }
+        # Get user from database
+        user = await db.get(User, user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         
-        # Store user in request state if request is provided
-        if request is not None:
-            setattr(request.state, 'user', user)
+        # Check if user is active
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Inactive user",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        # Store user in request state for easy access
+        request.state.user = user
         
         return user
         
-    except JWTError:
+    except (JWTError, HTTPException) as e:
+        if isinstance(e, HTTPException):
+            raise e
+        
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication credentials",
@@ -113,20 +143,25 @@ async def get_current_user(
 
 
 async def get_optional_user(
-    current_user: Optional[Dict] = Depends(get_current_user)
-) -> Optional[Dict]:
+    request: Request,
+    current_user: Optional[User] = Depends(get_current_user)
+) -> Optional[User]:
     """
     Get current user if authenticated, otherwise return None.
     
     This dependency is useful for endpoints that can work with or without authentication.
     
     Args:
+        request: FastAPI request object
         current_user: User from token validation dependency
         
     Returns:
-        User dict if authenticated, None otherwise
+        User object if authenticated, None otherwise
     """
-    return current_user
+    try:
+        return current_user
+    except HTTPException:
+        return None
 
 
 def require_roles(allowed_roles: List[UserRole]):
@@ -139,35 +174,33 @@ def require_roles(allowed_roles: List[UserRole]):
     Returns:
         Dependency function that validates user roles
     """
-    async def role_checker(current_user: Dict = Depends(get_current_user)):
-        user_role = current_user.get("role")
+    async def role_checker(current_user: User = Depends(get_current_user)):
+        """
+        Validate user's role against the required roles.
         
-        # Convert to UserRole enum if string
-        if isinstance(user_role, str):
-            try:
-                user_role = UserRole(user_role)
-            except ValueError:
+        If ADMIN role is the only role required, only superusers are allowed.
+        If USER role is included in allowed_roles, any authenticated user is allowed.
+        """
+        # If only ADMIN role is required, ensure the user is a superuser
+        if UserRole.ADMIN in allowed_roles and UserRole.USER not in allowed_roles:
+            if not current_user.is_superuser:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Invalid role: {user_role}"
+                    detail="Admin privileges required",
                 )
         
-        # Check if user has required role
-        if user_role not in allowed_roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Insufficient permissions. Required roles: {[role.value for role in allowed_roles]}"
-            )
-        
+        # If we got here, the user is authenticated and has the required role
+        # (either they're an admin when admin is required, or USER role is allowed)
         return current_user
     
     return role_checker
 
 
 # Convenience role dependencies
+# Convenience dependencies after simplification
 require_admin = require_roles([UserRole.ADMIN])
-require_analyst = require_roles([UserRole.ADMIN, UserRole.ANALYST])
-require_viewer = require_roles([UserRole.ADMIN, UserRole.ANALYST, UserRole.VIEWER])
+# Generic authenticated user (non-admin) – use in place of analyst/viewer
+require_authenticated = require_roles([UserRole.USER])
 
 
 def rate_limit(
@@ -260,8 +293,8 @@ def get_user_rate_limit_key(request: Request) -> str:
     # Try to get user from request state (set by auth middleware)
     user = getattr(request.state, "user", None)
     
-    if user and user.get("id"):
-        return f"user:{user['id']}"
+    if user and hasattr(user, "id"):
+        return f"user:{user.id}"
     
     # Fall back to IP address
     forwarded = request.headers.get("X-Forwarded-For")

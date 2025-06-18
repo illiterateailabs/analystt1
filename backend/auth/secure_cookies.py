@@ -15,8 +15,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from backend.config import settings
-from backend.auth.jwt_handler import create_access_token, decode_jwt
-
+from backend.auth.jwt_handler import create_access_token, decode_jwt, add_token_to_blacklist
 
 # Constants for cookie names
 ACCESS_TOKEN_COOKIE = "access_token"
@@ -85,9 +84,9 @@ def set_auth_cookies(
     # Common cookie settings
     cookie_settings = {
         "httponly": True,
-        "secure": not settings.DEBUG,  # True in production, False in development
-        "samesite": "lax",  # Prevents CSRF while allowing normal navigation
-        "domain": settings.COOKIE_DOMAIN or None,  # Use configured domain or default to current domain
+        "secure": settings.COOKIE_SECURE if not settings.DEBUG else False,  # True in production, False in development
+        "samesite": settings.COOKIE_SAMESITE,  # Prevents CSRF while allowing normal navigation
+        "domain": settings.COOKIE_DOMAIN,  # Use configured domain or default to current domain
         "path": "/",  # Available across all paths
     }
     
@@ -117,8 +116,9 @@ def set_auth_cookies(
         max_age=refresh_max_age,  # Same lifetime as refresh token
         expires=refresh_expiry,
         httponly=False,  # Accessible to JavaScript
-        secure=not settings.DEBUG,
-        samesite="lax",
+        secure=settings.COOKIE_SECURE if not settings.DEBUG else False,
+        samesite=settings.COOKIE_SAMESITE,
+        domain=settings.COOKIE_DOMAIN,
         path="/",
     )
     
@@ -136,9 +136,9 @@ def clear_auth_cookies(response: Response) -> None:
     # Common cookie settings for clearing
     cookie_settings = {
         "httponly": True,
-        "secure": not settings.DEBUG,
-        "samesite": "lax",
-        "domain": settings.COOKIE_DOMAIN or None,
+        "secure": settings.COOKIE_SECURE if not settings.DEBUG else False,
+        "samesite": settings.COOKIE_SAMESITE,
+        "domain": settings.COOKIE_DOMAIN,
         "path": "/",
         "expires": datetime.utcnow(),
         "max_age": 0,
@@ -151,8 +151,9 @@ def clear_auth_cookies(response: Response) -> None:
         key=CSRF_TOKEN_COOKIE,
         value="",
         httponly=False,
-        secure=not settings.DEBUG,
-        samesite="lax",
+        secure=settings.COOKIE_SECURE if not settings.DEBUG else False,
+        samesite=settings.COOKIE_SAMESITE,
+        domain=settings.COOKIE_DOMAIN,
         path="/",
         expires=datetime.utcnow(),
         max_age=0,
@@ -163,7 +164,8 @@ async def create_user_tokens(
     user_id: str, 
     username: str, 
     is_superuser: bool = False, 
-    additional_data: Optional[Dict[str, Any]] = None
+    additional_data: Optional[Dict[str, Any]] = None,
+    remember_me: bool = False
 ) -> Tuple[str, str, datetime, datetime]:
     """
     Create access and refresh tokens for a user.
@@ -173,13 +175,22 @@ async def create_user_tokens(
         username: User's username
         is_superuser: Whether the user has superuser privileges
         additional_data: Additional data to include in the token payload
+        remember_me: Whether to extend token expiration for "remember me" functionality
         
     Returns:
         Tuple of (access_token, refresh_token, access_expiry, refresh_expiry)
     """
     # Calculate expiration times
-    access_expiry = datetime.utcnow() + timedelta(minutes=settings.JWT_EXPIRATION_MINUTES)
-    refresh_expiry = datetime.utcnow() + timedelta(minutes=settings.JWT_REFRESH_EXPIRATION_MINUTES)
+    expiration_minutes = settings.JWT_EXPIRATION_MINUTES
+    refresh_expiration_minutes = settings.JWT_REFRESH_EXPIRATION_MINUTES
+    
+    if remember_me:
+        # Extend token lifetime for "remember me" option
+        expiration_minutes *= 4  # e.g., 4 hours instead of 1 hour
+        refresh_expiration_minutes *= 2  # e.g., 14 days instead of 7 days
+    
+    access_expiry = datetime.utcnow() + timedelta(minutes=expiration_minutes)
+    refresh_expiry = datetime.utcnow() + timedelta(minutes=refresh_expiration_minutes)
     
     # Create tokens
     access_token_data = {
@@ -199,8 +210,15 @@ async def create_user_tokens(
         "jti": secrets.token_urlsafe(16),
     }
     
-    access_token = create_access_token(access_token_data, expires_delta=access_expiry)
-    refresh_token = create_access_token(refresh_token_data, expires_delta=refresh_expiry)
+    access_token = create_access_token(
+        data=access_token_data, 
+        expires_delta=access_expiry
+    )
+    
+    refresh_token = create_access_token(
+        data=refresh_token_data, 
+        expires_delta=refresh_expiry
+    )
     
     return access_token, refresh_token, access_expiry, refresh_expiry
 
@@ -306,9 +324,13 @@ async def refresh_tokens(
                 detail="Invalid token type",
             )
         
-        # TODO: Check if this refresh token has been revoked
-        # This would require a database or Redis check against a blacklist
-        # of revoked refresh tokens
+        # Extract the JTI (JWT ID) for blacklisting
+        jti = payload.get("jti")
+        if not jti:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token: missing JTI",
+            )
         
         # Extract user information
         user_id = payload.get("sub")
@@ -337,8 +359,9 @@ async def refresh_tokens(
             csrf_token=generate_csrf_token(),  # Generate a new CSRF token
         )
         
-        # TODO: Add the old refresh token to a revocation list
+        # Add the old refresh token to the blacklist
         # This prevents refresh token reuse
+        await add_token_to_blacklist(refresh_token, jti)
         
         # Return user information
         return {

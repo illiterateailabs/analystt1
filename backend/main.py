@@ -24,6 +24,7 @@ from backend.core.metrics import setup_metrics
 from backend.core.events import initialize_events, shutdown_events
 from backend.api.v1 import auth, chat, analysis, graph, crew, prompts, webhooks, ws_progress
 from backend.integrations.neo4j_client import Neo4jClient
+from backend.auth.secure_cookies import SecurityHeadersMiddleware  # ← security headers
 
 # Configure logging
 configure_logging()
@@ -59,6 +60,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --------------------------------------------------------------------------- #
+# Security headers middleware
+# --------------------------------------------------------------------------- #
+# Must be added AFTER CORS so those headers are preserved.
+app.add_middleware(SecurityHeadersMiddleware)
 
 # Include API routers
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])

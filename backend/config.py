@@ -104,6 +104,30 @@ class SecuritySettings(BaseSettings):
         description="List of allowed CORS origins"
     )
 
+    # ------------------------------------------------------------------
+    # Cookie-based authentication parameters (used by secure_cookies.py)
+    # ------------------------------------------------------------------
+    COOKIE_DOMAIN: Optional[str] = Field(
+        None,
+        description="Domain attribute for auth cookies (e.g. '.example.com'). "
+                    "Leave empty in development to default to current host.",
+    )
+    COOKIE_SECURE: bool = Field(
+        True,
+        description="Whether cookies should be marked 'Secure' (HTTPS-only). "
+                    "Automatically overridden to False when DEBUG=True.",
+    )
+    COOKIE_SAMESITE: str = Field(
+        "lax",
+        description="SameSite attribute for cookies: 'lax', 'strict', or 'none'.",
+    )
+
+    # Application / API semantic version (mirrors memory-bank)
+    VERSION: str = Field(
+        "1.5.0-beta",
+        description="Current backend version tag.",
+    )
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

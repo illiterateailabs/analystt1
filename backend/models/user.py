@@ -103,6 +103,7 @@ class User(Base):
     def to_dict(self, include_conversations: bool = False) -> dict:
         """Convert the user to a dictionary representation."""
         user_dict = {
+            "role": self.role,  # expose computed role
             "id": self.id,
             "username": self.username,
             "email": self.email,
@@ -119,3 +120,16 @@ class User(Base):
             ]
         
         return user_dict
+
+    # ------------------------------------------------------------------ #
+    # Computed properties
+    # ------------------------------------------------------------------ #
+    @property
+    def role(self) -> str:
+        """
+        Return a simplified role string.
+
+        * ``"admin"``  – if the user is a superuser
+        * ``"user"``   – for all regular accounts
+        """
+        return "admin" if self.is_superuser else "user"

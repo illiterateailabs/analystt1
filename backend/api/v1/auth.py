@@ -14,7 +14,8 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from backend.auth.jwt_handler import create_access_token, decode_jwt, get_password_hash, verify_password
+# NOTE: do **not** import helper functions that do not exist or are unused
+# Only keep what this module actually utilises.
 from backend.auth.secure_cookies import (
     set_auth_cookies, 
     clear_auth_cookies, 

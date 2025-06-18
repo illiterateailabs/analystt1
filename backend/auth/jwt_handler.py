@@ -49,7 +49,7 @@ class JWTHandler:
         # Set up Redis connection if available
         if REDIS_AVAILABLE:
             try:
-                redis_url = redis_url or settings.redis_url
+                redis_url = redis_url or settings.REDIS_URL
                 cls._redis_client = redis.Redis.from_url(
                     redis_url,
                     decode_responses=True,
@@ -201,7 +201,7 @@ class JWTHandler:
         if expires_delta is not None:
             expires_minutes = expires_delta
         else:
-            expires_minutes = settings.jwt_expiration_minutes
+            expires_minutes = settings.JWT_EXPIRATION_MINUTES
 
         expire = datetime.utcnow() + timedelta(minutes=expires_minutes)
         
@@ -210,8 +210,8 @@ class JWTHandler:
             "exp": expire,
             "iat": datetime.utcnow(),
             "nbf": datetime.utcnow(),
-            "aud": settings.jwt_audience,
-            "iss": settings.jwt_issuer,
+            "aud": settings.JWT_AUDIENCE,
+            "iss": settings.JWT_ISSUER,
             "jti": f"{subject}_{int(time.time())}"
         }
         
@@ -221,9 +221,9 @@ class JWTHandler:
             
         # Create token
         encoded_jwt = jwt.encode(
-            to_encode, 
-            settings.secret_key, 
-            algorithm=settings.jwt_algorithm
+            to_encode,
+            settings.JWT_SECRET_KEY,
+            algorithm=settings.JWT_ALGORITHM
         )
         
         return encoded_jwt
@@ -257,17 +257,17 @@ class JWTHandler:
             "exp": expire,
             "iat": datetime.utcnow(),
             "nbf": datetime.utcnow(),
-            "aud": f"{settings.jwt_audience}:refresh",
-            "iss": settings.jwt_issuer,
+            "aud": f"{settings.JWT_AUDIENCE}:refresh",
+            "iss": settings.JWT_ISSUER,
             "jti": f"refresh_{subject}_{int(time.time())}",
             "type": "refresh"
         }
             
         # Create token
         encoded_jwt = jwt.encode(
-            to_encode, 
-            settings.secret_key, 
-            algorithm=settings.jwt_algorithm
+            to_encode,
+            settings.JWT_SECRET_KEY,
+            algorithm=settings.JWT_ALGORITHM
         )
         
         return encoded_jwt
@@ -305,10 +305,10 @@ class JWTHandler:
             # Now verify the token
             payload = jwt.decode(
                 token,
-                settings.secret_key,
-                algorithms=[settings.jwt_algorithm],
-                audience=settings.jwt_audience,
-                issuer=settings.jwt_issuer,
+                settings.JWT_SECRET_KEY,
+                algorithms=[settings.JWT_ALGORITHM],
+                audience=settings.JWT_AUDIENCE,
+                issuer=settings.JWT_ISSUER,
             )
             return payload
         except JWTError as e:
@@ -357,10 +357,10 @@ class JWTHandler:
             # Now verify the token
             payload = jwt.decode(
                 token,
-                settings.secret_key,
-                algorithms=[settings.jwt_algorithm],
-                audience=f"{settings.jwt_audience}:refresh",
-                issuer=settings.jwt_issuer,
+                settings.JWT_SECRET_KEY,
+                algorithms=[settings.JWT_ALGORITHM],
+                audience=f"{settings.JWT_AUDIENCE}:refresh",
+                issuer=settings.JWT_ISSUER,
             )
             
             # Verify this is a refresh token
@@ -448,3 +448,89 @@ class JWTHandler:
             )
             
         return subject
+
+
+# --------------------------------------------------------------------------- #
+# Convenience wrapper functions
+# --------------------------------------------------------------------------- #
+# The new cookie-based auth layer (secure_cookies.py) imports the helpers
+# below directly. They provide a thin façade over the JWTHandler class so that
+# external modules do not have to deal with the class API change.
+
+import asyncio
+
+
+def _run_sync(coro):
+    """
+    Run *coro* in the current event-loop if one is running, otherwise start a
+    temporary loop.  This allows synchronous helper functions to call async
+    JWTHandler methods safely from both sync and async contexts.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+        if loop.is_running():
+            return asyncio.run_coroutine_threadsafe(coro, loop).result()
+    except RuntimeError:
+        # No event-loop running in this thread
+        pass
+    return asyncio.run(coro)
+
+
+def create_access_token(data: Dict[str, Any], expires_delta: datetime) -> str:  # noqa: N802
+    """
+    Backwards-compat helper expected by *secure_cookies.py*.
+
+    Args:
+        data: Full JWT payload; **must include** ``sub`` claim.
+        expires_delta: Absolute UTC expiry (``datetime``).
+
+    Returns:
+        Encoded JWT string.
+    """
+    subject = data.get("sub")
+    if subject is None:
+        raise ValueError("`sub` (subject) claim missing from token data")
+
+    # Remaining claims become ``user_data`` for JWTHandler
+    user_data = data.copy()
+    user_data.pop("sub", None)
+
+    # Convert absolute expiry → minutes from now expected by JWTHandler
+    delta_minutes = max(
+        1,
+        int((expires_delta - datetime.utcnow()).total_seconds() // 60),
+    )
+    return JWTHandler.create_access_token(
+        subject=subject,
+        user_data=user_data,
+        expires_delta=delta_minutes,
+    )
+
+
+def decode_jwt(token: str) -> Dict[str, Any]:  # noqa: N802
+    """
+    Synchronous helper that validates and decodes a JWT.
+    """
+    return _run_sync(JWTHandler.decode_token(token))
+
+
+async def add_token_to_blacklist(token: str, token_id: str):  # noqa: N802
+    """
+    Async helper used by secure_cookies.py when rotating refresh tokens.
+
+    Args:
+        token: Full JWT string (only used to derive expiry for TTL).
+        token_id: The **jti** claim identifying the token to revoke.
+    """
+    # Determine expiry (optional TTL for Redis)
+    expires_at = None
+    try:
+        unverified = jwt.decode(token, options={"verify_signature": False, "verify_exp": False})
+        if "exp" in unverified:
+            expires_at = datetime.fromtimestamp(unverified["exp"])
+    except Exception:
+        # If we can't parse the token we still blacklist without TTL
+        pass
+
+    await JWTHandler.blacklist_token(token_id, expires_at)
+
