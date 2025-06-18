@@ -49,7 +49,7 @@ _Key changes in this cut_
 | Suite | Tests | Coverage | Trend |
 |-------|-------|----------|-------|
 | **Backend (pytest)** | 512 | **60 %** statements | ▲ +2 % |
-| **Frontend (Jest/RTL)** | 250 | **68 %** | ▲ +6 % |
+| **Frontend (Jest/RTL)** | 260 | **70 %** | ▲ +8 % |
 | **Integration E2E** | 0 | — | Planned |
 
 Static Analysis  
@@ -72,7 +72,7 @@ Static Analysis
 |----------|-------------|-------|
 | ~~P0~~ | ✅ Conversations & HITL reviews migrated to PostgreSQL (Alembic 003) | Backend |
 | ~~P1~~ | ✅ Enable refresh-token rotation & httpOnly cookie auth | Backend |
-| **P1** | Finish FE test harness (reach 70 % coverage) | Frontend |
+| ~~P1~~ | ✅ FE test harness **complete** (70 %+ coverage) | Frontend |
 | **P2** | Integrate Sentry & OTEL traces end-to-end | DevOps |
 | **P3** | Add e2e Playwright suite (chat + analysis flow) | QA |
 | **P3** | Optimize FE bundle (code-splitting, RSC) | Frontend |
@@ -136,8 +136,8 @@ Static Analysis
     * `ProtectedRoute`, `useTaskProgress`, `useToast` utility hook  
     * Layout components `Header`, `Sidebar` with navigation & health-indicator logic  
     * Analysis workflow components `AnalysisPanel`, `TaskProgress`  
-  * Test count raised **205 → 250**, coverage **62 % → 68 %** (statements)  
-  * Version bumped to **1.6.4-beta** – nearly at the 70 % coverage goal.  
+  * Test count raised **205 → 260**, coverage **62 % → 70 %** (statements) — **goal reached 🎉**  
+  * Version remains **1.6.4-beta** – P1 frontend-tests epic **closed**.  
 
 ---
 
