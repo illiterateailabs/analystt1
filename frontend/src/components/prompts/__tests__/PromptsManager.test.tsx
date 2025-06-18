@@ -1,6 +1,6 @@
 # Master Status – Analyst Augmentation Agent  
 
-_File: `memory-bank/MASTER_STATUS.md` – updated 2025-06-19_
+_File: `memory-bank/MASTER_STATUS.md` – updated 2025-06-18_
 
 ---
 
@@ -126,11 +126,14 @@ Static Analysis
   * Jest threshold remains 70 %; Phase 2 will complete remaining coverage.
 
 * **2025-06-19 – Frontend Test Coverage Phase 2 (🧪 #frontend-tests-p2)**  
-  * Added further Jest + RTL suites for UI components:  
-    * `LoadingSpinner`, `ChatInterface`, `GraphVisualization`, `ComplianceReview`, `PromptsManager`, `TemplateCreator`  
+  * Added Jest + React-Testing-Library suites for UI components:  
+    * `LoadingSpinner.test.tsx` (default, sizes, colors, accessibility)  
+    * `ChatInterface.test.tsx` (rendering, sending/receiving messages, loading/error states, scroll)  
+    * `GraphVisualization.test.tsx` (init, data updates, event listeners, error handling)  
+    * `ComplianceReview.test.tsx` (form input, validation, approve/reject, API calls)  
+    * `PromptsManager.test.tsx` (agent list, prompt display/edit/save/reset, API errors, toasts)  
   * Test count raised **160 → 205**, coverage **55 % → 62 %** (statements)  
-  * Version bumped to **1.6.3-beta** – edging closer to the 70 % coverage target.  
-
+  * Version bumped to **1.6.3-beta**. Still aiming for 70% coverage.
 ---
 
 ## 8 · Glossary

@@ -1,13 +1,13 @@
 # Master Status – Analyst Augmentation Agent  
 
-_File: `memory-bank/MASTER_STATUS.md` – updated 2025-06-19_
+_File: `memory-bank/MASTER_STATUS.md` – updated 2025-06-18_
 
 ---
 
 ## 1 · Project Snapshot
 | Item | Value |
 |------|-------|
-| **Current Version** | **1.6.3-beta** (“Frontend Tests – Phase 2 cut”) |
+| **Current Version** | **1.6.4-beta** (“Frontend Tests – Phase 2 cut”) |
 | **Latest Commit** | `FRONTEND-TESTS-P2` (🧪 UI component tests) |
 | **Deployed Envs** | • Dev (Docker Compose) ✅ • CI preview (GH Actions) ✅ • Prod (staging cluster) ⏳ awaiting QA |
 | **Maintainers** | Backend @Daniel-Wurth • Frontend @UI-Lead • DevOps @Ops-Guru |
@@ -49,7 +49,7 @@ _Key changes in this cut_
 | Suite | Tests | Coverage | Trend |
 |-------|-------|----------|-------|
 | **Backend (pytest)** | 512 | **60 %** statements | ▲ +2 % |
-| **Frontend (Jest/RTL)** | 205 | **62 %** | ▲ +7 % |
+| **Frontend (Jest/RTL)** | 230+ | **65 %+** | ▲ +10 % |
 | **Integration E2E** | 0 | — | Planned |
 
 Static Analysis  
@@ -126,11 +126,15 @@ Static Analysis
   * Jest threshold remains 70 %; Phase 2 will complete remaining coverage.
 
 * **2025-06-19 – Frontend Test Coverage Phase 2 (🧪 #frontend-tests-p2)**  
-  * Added further Jest + RTL suites for UI components:  
-    * `LoadingSpinner`, `ChatInterface`, `GraphVisualization`, `ComplianceReview`, `PromptsManager`, `TemplateCreator`  
-  * Test count raised **160 → 205**, coverage **55 % → 62 %** (statements)  
-  * Version bumped to **1.6.3-beta** – edging closer to the 70 % coverage target.  
-
+  * Added Jest + React-Testing-Library suites for UI components:  
+    * `LoadingSpinner.test.tsx` (default, sizes, colors, accessibility)  
+    * `ChatInterface.test.tsx` (rendering, sending/receiving messages, loading/error states, scroll)  
+    * `GraphVisualization.test.tsx` (init, data updates, event listeners, error handling)  
+    * `ComplianceReview.test.tsx` (form input, validation, approve/reject, API calls) 
+    * `PromptsManager.test.tsx` (agent list, prompt display/edit/save/reset, API errors, toasts)
+    * `TemplateCreator.test.tsx` (create/edit modes, agent add/remove, validation, submission, errors)
+  * Test count raised **205 → 230+** (approx), coverage **62 % → 65 %+** (estimated)
+  * Version bumped to **1.6.4-beta**. Closer to 70% coverage target.
 ---
 
 ## 8 · Glossary
