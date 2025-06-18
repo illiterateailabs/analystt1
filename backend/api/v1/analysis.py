@@ -10,6 +10,10 @@ from backend.integrations.neo4j_client import Neo4jClient
 from backend.integrations.e2b_client import E2BClient
 from backend.integrations.sim_client import SimClient, SimApiError
 from backend.auth.rbac import require_roles, Roles, RoleSets
+from backend.jobs.sim_graph_job import (
+    run_sim_graph_ingestion_job,
+    batch_sim_graph_ingestion_job,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -47,6 +51,49 @@ class CodeExecutionResponse(BaseModel):
     exit_code: int = Field(..., description="Exit code")
     execution_time: float = Field(..., description="Execution time in seconds")
     success: bool = Field(..., description="Execution success status")
+
+# --------------------------------------------------------------------------- #
+#                              Graph Ingestion IO                              #
+# --------------------------------------------------------------------------- #
+
+
+class GraphIngestRequest(BaseModel):
+    """Request model for single-wallet graph ingestion."""
+
+    wallet_address: str = Field(
+        ...,
+        description="Blockchain wallet address to ingest (EVM or Solana).",
+        examples=["0xd8da6bf26964af9d7eed9e03e53415d37aa96045"],
+    )
+    ingest_balances: bool = Field(True, description="Ingest token balances.")
+    ingest_activity: bool = Field(True, description="Ingest activity/transactions.")
+    limit_balances: int = Field(100, description="Max balances to fetch.")
+    limit_activity: int = Field(50, description="Max activity records.")
+    chain_ids: str = Field("all", description="Comma-separated chain IDs or 'all'.")
+    create_schema: bool = Field(
+        False,
+        description="Create Neo4j constraints/indexes if not present (first run only).",
+    )
+
+
+class BatchGraphIngestRequest(GraphIngestRequest):
+    """Request model for batch wallet ingestion."""
+
+    wallet_addresses: List[str] = Field(
+        ...,
+        description="List of wallet addresses to ingest.",
+        min_items=1,
+    )
+
+
+class IngestResponse(BaseModel):
+    """Generic response returned by ingestion jobs (single or batch)."""
+
+    status: str = Field(..., description="'completed', 'failed', or 'error'")
+    details: Dict[str, Any] = Field(
+        ...,
+        description="Detailed counts and/or error messages from the job.",
+    )
 
 
 # Dependency functions
@@ -145,6 +192,80 @@ async def get_sim_wallet_activity(
     except Exception as e:
         logger.exception("Unexpected error calling Sim activity")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+# --------------------------------------------------------------------------- #
+#                         Graph Ingestion Trigger APIs                        #
+# --------------------------------------------------------------------------- #
+
+
+@router.post("/graph/ingest-wallet", response_model=IngestResponse)
+@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
+async def ingest_single_wallet(
+    request: GraphIngestRequest,
+    neo4j: Neo4jClient = Depends(get_neo4j_client),
+    sim: SimClient = Depends(get_sim_client),
+):
+    """
+    Trigger a **single-wallet** graph-ingestion job.
+    Loads balances and/or activity for the supplied wallet address from Sim
+    and persists them as nodes / relationships in Neo4j.
+    """
+    logger.info(
+        "Graph ingestion (single) requested for wallet %s [balances=%s activity=%s]",
+        request.wallet_address,
+        request.ingest_balances,
+        request.ingest_activity,
+    )
+    try:
+        result = await run_sim_graph_ingestion_job(
+            wallet_address=request.wallet_address,
+            neo4j_client=neo4j,
+            sim_client=sim,
+            ingest_balances=request.ingest_balances,
+            ingest_activity=request.ingest_activity,
+            limit_balances=request.limit_balances,
+            limit_activity=request.limit_activity,
+            chain_ids=request.chain_ids,
+            create_schema=request.create_schema,
+        )
+        return IngestResponse(status="completed", details=result)
+    except Exception as e:
+        logger.exception("Graph ingestion (single) failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/graph/batch-ingest", response_model=IngestResponse)
+@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
+async def ingest_batch_wallets(
+    request: BatchGraphIngestRequest,
+    neo4j: Neo4jClient = Depends(get_neo4j_client),
+    sim: SimClient = Depends(get_sim_client),
+):
+    """
+    Trigger a **batch** graph-ingestion job for multiple wallet addresses.
+    Ideal for nightly syncs or bulk investigations.
+    """
+    logger.info(
+        "Graph ingestion (batch) requested for %d wallets", len(request.wallet_addresses)
+    )
+    try:
+        result = await batch_sim_graph_ingestion_job(
+            wallet_addresses=request.wallet_addresses,
+            neo4j_client=neo4j,
+            sim_client=sim,
+            ingest_balances=request.ingest_balances,
+            ingest_activity=request.ingest_activity,
+            limit_balances=request.limit_balances,
+            limit_activity=request.limit_activity,
+            chain_ids=request.chain_ids,
+            create_schema=request.create_schema,
+        )
+        return IngestResponse(status="completed", details=result)
+    except Exception as e:
+        logger.exception("Graph ingestion (batch) failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @router.post("/analyze", response_model=AnalysisResponse)
