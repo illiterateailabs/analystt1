@@ -7,8 +7,8 @@ _File: `memory-bank/MASTER_STATUS.md` – updated 2025-06-18_
 ## 1 · Project Snapshot
 | Item | Value |
 |------|-------|
-| **Current Version** | **1.2.0-beta** (“Sim-Data UI cut”) |
-| **Latest Commit** | `a10fcb0a` (🔗 Sim UI integration) |
+| **Current Version** | **1.3.0-beta** (“Graph Analytics cut”) |
+| **Latest Commit** | `a4244268` (📊 Graph ingestion) |
 | **Deployed Envs** | • Dev (Docker Compose) ✅ • CI preview (GH Actions) ✅ • Prod (staging cluster) ⏳ awaiting QA |
 | **Maintainers** | Backend @Daniel-Wurth • Frontend @UI-Lead • DevOps @Ops-Guru |
 
@@ -22,7 +22,7 @@ _File: `memory-bank/MASTER_STATUS.md` – updated 2025-06-18_
 | **Sim API Ingestion** | ✅ Backend & Frontend | Balances, Activity wired to UI; Graph events emit |
 | **Frontend UI** | ⚠️ | Next 14 App Router; KPI cards & activity feed live; tests scaffolded |
 | **CrewAI Workflow** | ✅ | Pause / Resume, HITL webhooks, task progress WS |
-| **Graph API** | ✅ | Cypher exec, NLQ → Cypher, schema introspection |
+| **Graph API** | ✅ | Cypher exec, NLQ → Cypher, schema introspection, **Sim on-chain data ingested** |
 | **Data Stores** | ✅ | PostgreSQL 15 (async SQLAlchemy), Neo4j 5 |
 | **Observability** | ⚠️ | Prometheus metrics exporting; Sentry wiring TODO |
 | **Frontend UI** | ⚠️ | Next 14 App Router; Sim data binding pending; tests scaffolded |
@@ -73,7 +73,6 @@ Static Analysis
 | Priority | Epic / Task | Owner |
 |----------|-------------|-------|
 | **P0** | Migrate conversations & HITL reviews to PostgreSQL (Alembic 003) | Backend |
-| **P1** | Graph enrichment job for Sim data (Neo4j loader) | Data Graph |
 | **P1** | Enable refresh-token rotation & httpOnly cookie auth | Backend |
 | **P2** | Finish FE test harness (reach 70 % coverage) | Frontend |
 | **P2** | Integrate Sentry & OTEL traces end-to-end | DevOps |
@@ -88,6 +87,11 @@ Static Analysis
   * Added `SimClient`, `sim_balances_tool.py`, `sim_activity_tool.py`  
   * Graph events + Pydantic schemas + retry / metrics  
   * Memory-bank `SIM_API_INTEGRATION_PLAN.md`  
+* **2025-06-18 – Graph Ingestion Pipeline (📊 #graph-ingest)**  
+  * Implemented `SimGraphIngestionTool` + Neo4j schema auto-setup  
+  * Background jobs `run_sim_graph_ingestion_job`, batch variant  
+  * API endpoints `/analysis/graph/ingest-wallet` & `/analysis/graph/batch-ingest`  
+  * Graph now populated with real blockchain entities & relationships  
 * **2025-06-17 – Critical-fixes PR #71 merged**  
   * Fixed Neo4j import & driver singleton, added `.env.example`, removed dup `config_jwt.py`, ESLint/Prettier/Jest scaffolding  
 * **2025-06-10 – GNN fraud-detection tools integrated (#68)**  
