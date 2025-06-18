@@ -246,6 +246,77 @@ export interface AnalysisResultsResponse { // For GET /analysis/{taskId}
   crew_result?: any;
 }
 
+// ------- Sim API Types (Balances & Activity) -------
+
+export interface SimTokenMetadata {
+  symbol: string;
+  name?: string;
+  decimals: number;
+  logo?: string;
+  url?: string;
+}
+
+export interface SimTokenBalance {
+  address: string;
+  amount: string;
+  chain: string;
+  chain_id: number;
+  decimals: number;
+  symbol: string;
+  price_usd?: number;
+  value_usd?: number;
+  token_metadata?: SimTokenMetadata;
+  low_liquidity?: boolean;
+  pool_size?: number;
+}
+
+export interface SimBalancesResponse {
+  wallet_address: string;
+  balances: SimTokenBalance[];
+  next_offset?: string;
+  request_time?: string;
+  response_time?: string;
+}
+
+export interface SimFunctionParameter {
+  name: string;
+  type: string;
+  value: any;
+}
+
+export interface SimFunctionInfo {
+  name: string;
+  signature?: string;
+  parameters?: SimFunctionParameter[];
+}
+
+export interface SimActivityItem {
+  id?: string;
+  type: 'send' | 'receive' | 'mint' | 'burn' | 'swap' | 'approve' | 'call';
+  chain: string;
+  chain_id: number;
+  block_number: number;
+  block_time: string;
+  transaction_hash: string;
+  from_address?: string;
+  to_address?: string;
+  asset_type?: string;
+  amount?: string;
+  value_usd?: number;
+  token_address?: string;
+  token_id?: string;
+  token_metadata?: SimTokenMetadata;
+  function?: SimFunctionInfo;
+}
+
+export interface SimActivityResponse {
+  wallet_address: string;
+  activity: SimActivityItem[];
+  next_offset?: string;
+  request_time?: string;
+  response_time?: string;
+}
+
 
 // Prompt Management Types
 export interface AgentListItem {
@@ -453,6 +524,37 @@ export const analysisAPI = {
     const response = await apiClient.get(`/analysis/${taskId}`);
     return response.data;
   }
+
+  // ---------- Sim API Integration ----------
+  ,
+  /**
+   * Fetch token balances for a wallet via Sim API proxy
+   */
+  getSimBalances: async (
+    wallet: string,
+    limit: number = 100,
+    chainIds: string = 'all',
+    metadata: string = 'url,logo'
+  ): Promise<SimBalancesResponse> => {
+    const response = await apiClient.get(`/analysis/sim/balances/${wallet}`, {
+      params: { limit, chain_ids: chainIds, metadata },
+    });
+    return response.data;
+  },
+
+  /**
+   * Fetch transaction activity for a wallet via Sim API proxy
+   */
+  getSimActivity: async (
+    wallet: string,
+    limit: number = 25,
+    offset?: string
+  ): Promise<SimActivityResponse> => {
+    const response = await apiClient.get(`/analysis/sim/activity/${wallet}`, {
+      params: { limit, offset },
+    });
+    return response.data;
+  }
 };
 
 // Prompt Management API
@@ -498,6 +600,8 @@ export const getAvailableCrews = crewAPI.listCrews;
 export const analyzeText = analysisAPI.analyzeText;
 export const analyzeImage = analysisAPI.analyzeImage;
 export const fetchAnalysisResults = analysisAPI.fetchAnalysisResults; // Added legacy export
+export const getSimBalances = analysisAPI.getSimBalances;
+export const getSimActivity = analysisAPI.getSimActivity;
 export const listAgents = promptsAPI.listAgents;
 export const getAgentPrompt = promptsAPI.getAgentPrompt;
 export const updateAgentPrompt = promptsAPI.updateAgentPrompt;

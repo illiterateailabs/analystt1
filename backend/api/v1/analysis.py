@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from backend.integrations.gemini_client import GeminiClient
 from backend.integrations.neo4j_client import Neo4jClient
 from backend.integrations.e2b_client import E2BClient
+from backend.integrations.sim_client import SimClient, SimApiError
 from backend.auth.rbac import require_roles, Roles, RoleSets
 
 
@@ -60,6 +61,10 @@ async def get_neo4j_client(request: Request) -> Neo4jClient:
 async def get_e2b_client(request: Request) -> E2BClient:
     return request.app.state.e2b
 
+# Added dependency for Sim API client
+async def get_sim_client(request: Request) -> SimClient:
+    return request.app.state.sim
+
 
 @router.post("/execute-code", response_model=CodeExecutionResponse)
 @require_roles(RoleSets.ANALYSTS_AND_ADMIN)
@@ -88,6 +93,58 @@ async def execute_code(
     except Exception as e:
         logger.error(f"Error executing code: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# --------------------------------------------------------------------------- #
+#                          Sim API Proxy Endpoints                            #
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/sim/balances/{wallet}")
+@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
+async def get_sim_wallet_balances(
+    wallet: str,
+    limit: int = 100,
+    chain_ids: str = "all",
+    metadata: str = "url,logo",
+    sim: SimClient = Depends(get_sim_client),
+):
+    """
+    Proxy endpoint that retrieves **token balances** for a wallet address
+    via Sim APIs. Returns the raw response from Sim unchanged so the frontend
+    maintains full flexibility.
+    """
+    logger.info(f"Sim balances request: wallet={wallet} limit={limit} chain_ids={chain_ids}")
+    try:
+        return sim.get_balances(wallet, limit=limit, chain_ids=chain_ids, metadata=metadata)
+    except SimApiError as e:
+        logger.error(f"Sim balances error ({e.status_code}): {e}")
+        raise HTTPException(status_code=e.status_code or 502, detail=str(e))
+    except Exception as e:
+        logger.exception("Unexpected error calling Sim balances")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/sim/activity/{wallet}")
+@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
+async def get_sim_wallet_activity(
+    wallet: str,
+    limit: int = 25,
+    offset: Optional[str] = None,
+    sim: SimClient = Depends(get_sim_client),
+):
+    """
+    Proxy endpoint that retrieves **chronological activity** for a wallet
+    address via Sim APIs.
+    """
+    logger.info(f"Sim activity request: wallet={wallet} limit={limit} offset={offset}")
+    try:
+        return sim.get_activity(wallet, limit=limit, offset=offset)
+    except SimApiError as e:
+        logger.error(f"Sim activity error ({e.status_code}): {e}")
+        raise HTTPException(status_code=e.status_code or 502, detail=str(e))
+    except Exception as e:
+        logger.exception("Unexpected error calling Sim activity")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/analyze", response_model=AnalysisResponse)
