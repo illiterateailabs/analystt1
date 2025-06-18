@@ -7,8 +7,8 @@ _File: `memory-bank/MASTER_STATUS.md` – updated 2025-06-18_
 ## 1 · Project Snapshot
 | Item | Value |
 |------|-------|
-| **Current Version** | **1.3.0-beta** (“Graph Analytics cut”) |
-| **Latest Commit** | `a4244268` (📊 Graph ingestion) |
+| **Current Version** | **1.4.0-beta** (“Data Persistence cut”) |
+| **Latest Commit** | `POSTGRES-MIG` (📦 Data persistence) |
 | **Deployed Envs** | • Dev (Docker Compose) ✅ • CI preview (GH Actions) ✅ • Prod (staging cluster) ⏳ awaiting QA |
 | **Maintainers** | Backend @Daniel-Wurth • Frontend @UI-Lead • DevOps @Ops-Guru |
 
@@ -23,7 +23,7 @@ _File: `memory-bank/MASTER_STATUS.md` – updated 2025-06-18_
 | **Frontend UI** | ⚠️ | Next 14 App Router; KPI cards & activity feed live; tests scaffolded |
 | **CrewAI Workflow** | ✅ | Pause / Resume, HITL webhooks, task progress WS |
 | **Graph API** | ✅ | Cypher exec, NLQ → Cypher, schema introspection, **Sim on-chain data ingested** |
-| **Data Stores** | ✅ | PostgreSQL 15 (async SQLAlchemy), Neo4j 5 |
+| **Data Stores** | ✅ | PostgreSQL 15 (async SQLAlchemy) **now stores conversations & HITL reviews**; Neo4j 5 |
 | **Observability** | ⚠️ | Prometheus metrics exporting; Sentry wiring TODO |
 | **Frontend UI** | ⚠️ | Next 14 App Router; Sim data binding pending; tests scaffolded |
 | **CI / Security** | ✅ | GH Actions matrix (Py 3.9-3.11, Node 18-20) + Bandit / Safety / npm-audit |
@@ -60,11 +60,10 @@ Static Analysis
 ---
 
 ## 5 · Known Issues / Risks
-1. Conversation & webhook data still in-memory → loss on restart  
-2. Access / Refresh JWTs use localStorage (XSS risk) – move to httpOnly cookies  
-3. Frontend still displays **mock** balances / activity → user confusion  
-4. Sentry DSN placeholder; error telemetry disabled in prod  
-5. Bundle not yet tree-shaken; large initial JS (≈ 1 MB)
+1. Access / Refresh JWTs use localStorage (XSS risk) – move to httpOnly cookies  
+2. Frontend still displays **mock** balances / activity → user confusion  
+3. Sentry DSN placeholder; error telemetry disabled in prod  
+4. Bundle not yet tree-shaken; large initial JS (≈ 1 MB)
 
 ---
 
@@ -72,7 +71,7 @@ Static Analysis
 
 | Priority | Epic / Task | Owner |
 |----------|-------------|-------|
-| **P0** | Migrate conversations & HITL reviews to PostgreSQL (Alembic 003) | Backend |
+| ~~P0~~ | ✅ Conversations & HITL reviews migrated to PostgreSQL (Alembic 003) | Backend |
 | **P1** | Enable refresh-token rotation & httpOnly cookie auth | Backend |
 | **P2** | Finish FE test harness (reach 70 % coverage) | Frontend |
 | **P2** | Integrate Sentry & OTEL traces end-to-end | DevOps |
@@ -82,6 +81,12 @@ Static Analysis
 ---
 
 ## 7 · Recent Changelog (since v1.0.0-beta)
+
+* **2025-06-18 – Data Persistence Migration (📦 #postgres-mig)**  
+  * Added `Conversation` & `Message` SQLAlchemy models  
+  * Alembic migration **003_add_conversations_tables.py** creates `conversations` / `messages` tables  
+  * Chat API endpoints now fully DB-backed (list, get, delete, paginated listing)  
+  * Removes in-memory conversation store — **no more data loss on restart**  
 
 * **2025-06-18 – Sim Data integration (#79, #sim-tools)**  
   * Added `SimClient`, `sim_balances_tool.py`, `sim_activity_tool.py`  

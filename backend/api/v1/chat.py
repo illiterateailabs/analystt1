@@ -9,10 +9,11 @@ import base64
 from backend.integrations.gemini_client import GeminiClient
 from backend.integrations.neo4j_client import Neo4jClient
 from backend.integrations.e2b_client import E2BClient
-from backend.database import get_db, AsyncSessionLocal  # DB session dependency
+from backend.database import get_db  # DB session dependency
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from backend.models.conversation import Conversation, Message
+from fastapi import Query
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -34,9 +35,6 @@ router = APIRouter()
 # --------------------------------------------------------------------------- #
 from datetime import datetime
 import uuid
-
-conversations: Dict[str, Dict[str, Any]] = {}
-
 
 # Request/Response Models
 class ChatMessage(BaseModel):
@@ -111,7 +109,7 @@ async def send_message(
     request: ChatRequest,
     gemini: GeminiClient = Depends(get_gemini_client),
     neo4j: Neo4jClient = Depends(get_neo4j_client),
-    e2b: E2BClient = Depends(get_e2b_client)
+    e2b: E2BClient = Depends(get_e2b_client),
     db: AsyncSession = Depends(get_db),
 ):
     """Process a chat message and return AI response."""
@@ -217,20 +215,6 @@ Graph Database Schema:
         logger.info("Chat message processed successfully")
 
         # ------------------------------------------------------------------ #
-        # Conversation persistence (in-memory)
-        # ------------------------------------------------------------------ #
-        # Ensure conversation record exists
-        if conversation_id not in conversations:
-            conversations[conversation_id] = {
-                "conversation_id": conversation_id,
-                "messages": [],
-                "created_at": datetime.utcnow().isoformat(),
-                "updated_at": datetime.utcnow().isoformat(),
-            }
-
-        conv = conversations[conversation_id]
-
-        # ------------------------------------------------------------------ #
         # Persist messages to DB
         # ------------------------------------------------------------------ #
         user_msg = Message(
@@ -257,6 +241,11 @@ Graph Database Schema:
         
     except Exception as e:
         logger.error(f"Error processing chat message: {e}")
+        # Rollback DB changes on error
+        try:
+            await db.rollback()
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -328,32 +317,102 @@ Focus on entities like people, organizations, locations, documents, transactions
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# --------------------------------------------------------------------------- #
+# Conversation management endpoints (DB-backed)
+# --------------------------------------------------------------------------- #
+
+async def _get_conversation_or_404(conversation_id: str, db: AsyncSession) -> Conversation:
+    stmt = select(Conversation).where(Conversation.id == conversation_id)
+    result = await db.execute(stmt)
+    conversation = result.scalar_one_or_none()
+    if conversation is None:
+        raise HTTPException(status_code=404, detail=f"Conversation {conversation_id} not found")
+    return conversation
+
+
 @router.get("/conversation/{conversation_id}")
-async def get_conversation(conversation_id: str):
-    """Retrieve a conversation from the in-memory store."""
-    convo = conversations.get(conversation_id)
-    if not convo:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Conversation {conversation_id} not found"
-        )
-    # FastAPI will serialise Pydantic objects automatically
-    return convo
+async def get_conversation(conversation_id: str, db: AsyncSession = Depends(get_db)):
+    """Retrieve a conversation from the database."""
+    conversation = await _get_conversation_or_404(conversation_id, db)
+    return conversation.to_dict()
 
 
 @router.delete("/conversation/{conversation_id}")
-async def delete_conversation(conversation_id: str):
-    """Delete a conversation from the in-memory store."""
-    if conversation_id not in conversations:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Conversation {conversation_id} not found"
-        )
-    conversations.pop(conversation_id)
+async def delete_conversation(conversation_id: str, db: AsyncSession = Depends(get_db)):
+    """Delete a conversation and its messages from the database."""
+    conversation = await _get_conversation_or_404(conversation_id, db)
+    try:
+        await db.delete(conversation)
+        await db.commit()
+        return {"success": True, "message": f"Conversation {conversation_id} deleted"}
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Error deleting conversation {conversation_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete conversation")
+
+
+# --------------------------------------------------------------------------- #
+# List conversations (paginated)
+# --------------------------------------------------------------------------- #
+
+
+def _conversation_meta(convo: Conversation) -> Dict[str, Any]:
+    """Return lightweight conversation metadata for listings."""
     return {
-        "success": True,
-        "message": f"Conversation {conversation_id} deleted"
+        "conversation_id": convo.id,
+        "title": convo.title,
+        "created_at": convo.created_at.isoformat(),
+        "updated_at": convo.updated_at.isoformat(),
+        "message_count": len(convo.messages),
+        "is_active": convo.is_active,
+        "user_id": convo.user_id,
     }
+
+
+@router.get("/conversations")
+async def list_conversations(
+    limit: int = Query(20, ge=1, le=100, description="Max items to return"),
+    offset: int = Query(0, ge=0, description="Items to skip"),
+    user_id: Optional[str] = Query(
+        None,
+        regex=r"^[0-9a-fA-F\-]{36}$",
+        description="Filter by owner user_id (UUID)",
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    List conversations with optional **pagination** and **user filtering**.
+
+    Results are ordered by `created_at` descending.
+    """
+    try:
+        base_stmt = select(Conversation)
+        if user_id:
+            base_stmt = base_stmt.where(Conversation.user_id == user_id)
+
+        # Get total count for pagination
+        total_stmt = base_stmt.with_only_columns(func.count()).order_by(None)
+        total_result = await db.execute(total_stmt)
+        total: int = total_result.scalar_one()
+
+        # Apply ordering, limit, offset
+        stmt = (
+            base_stmt.order_by(Conversation.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        result = await db.execute(stmt)
+        conversations = result.scalars().unique().all()
+
+        return {
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "conversations": [_conversation_meta(c) for c in conversations],
+        }
+    except Exception as e:
+        logger.error(f"Error listing conversations: {e}")
+        raise HTTPException(status_code=500, detail="Failed to list conversations")
 
 
 async def _store_entities_in_graph(entities: List[Dict[str, Any]], neo4j: Neo4jClient) -> Dict[str, Any]:
