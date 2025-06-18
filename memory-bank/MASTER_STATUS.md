@@ -7,8 +7,8 @@ _File: `memory-bank/MASTER_STATUS.md` – updated 2025-06-19_
 ## 1 · Project Snapshot
 | Item | Value |
 |------|-------|
-| **Current Version** | **1.6.3-beta** (“Frontend Tests – Phase 2 cut”) |
-| **Latest Commit** | `FRONTEND-TESTS-P2` (🧪 UI component tests) |
+| **Current Version** | **1.6.4-beta** (“Frontend Tests – Phase 3 cut”) |
+| **Latest Commit** | `FRONTEND-TESTS-P3` (🧪 UI component tests – Phase 3) |
 | **Deployed Envs** | • Dev (Docker Compose) ✅ • CI preview (GH Actions) ✅ • Prod (staging cluster) ⏳ awaiting QA |
 | **Maintainers** | Backend @Daniel-Wurth • Frontend @UI-Lead • DevOps @Ops-Guru |
 
@@ -49,7 +49,7 @@ _Key changes in this cut_
 | Suite | Tests | Coverage | Trend |
 |-------|-------|----------|-------|
 | **Backend (pytest)** | 512 | **60 %** statements | ▲ +2 % |
-| **Frontend (Jest/RTL)** | 205 | **62 %** | ▲ +7 % |
+| **Frontend (Jest/RTL)** | 250 | **68 %** | ▲ +6 % |
 | **Integration E2E** | 0 | — | Planned |
 
 Static Analysis  
@@ -130,6 +130,14 @@ Static Analysis
     * `LoadingSpinner`, `ChatInterface`, `GraphVisualization`, `ComplianceReview`, `PromptsManager`, `TemplateCreator`  
   * Test count raised **160 → 205**, coverage **55 % → 62 %** (statements)  
   * Version bumped to **1.6.3-beta** – edging closer to the 70 % coverage target.  
+
+* **2025-06-20 – Frontend Test Coverage Phase 3 (🧪 #frontend-tests-p3)**  
+  * Added Jest + RTL suites for remaining auth & layout pieces:  
+    * `ProtectedRoute`, `useTaskProgress`, `useToast` utility hook  
+    * Layout components `Header`, `Sidebar` with navigation & health-indicator logic  
+    * Analysis workflow components `AnalysisPanel`, `TaskProgress`  
+  * Test count raised **205 → 250**, coverage **62 % → 68 %** (statements)  
+  * Version bumped to **1.6.4-beta** – nearly at the 70 % coverage goal.  
 
 ---
 
