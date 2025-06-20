@@ -15,6 +15,22 @@ from backend.jobs.sim_graph_job import (
     batch_sim_graph_ingestion_job,
 )
 from backend.api.v1.whale_endpoints import router as whale_router
+from backend.agents.tools.transaction_flow_tool import (
+    TransactionFlowTool, 
+    TransactionFlowInput, 
+    TransactionFlowOutput, 
+    FlowPattern, 
+    FlowMetrics
+)
+from backend.agents.tools.cross_chain_identity_tool import (
+    CrossChainIdentityTool,
+    CrossChainIdentityInput,
+    CrossChainIdentityOutput,
+    CrossChainWallet,
+    CrossChainMovement,
+    IdentityCluster,
+    BridgeUsage,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -56,6 +72,60 @@ class CodeExecutionResponse(BaseModel):
     exit_code: int = Field(..., description="Exit code")
     execution_time: float = Field(..., description="Execution time in seconds")
     success: bool = Field(..., description="Execution success status")
+
+
+# Request/Response Models for Transaction Flow Analysis
+class TransactionFlowAnalyzeRequest(TransactionFlowInput):
+    """Request model for transaction flow analysis."""
+    pass
+
+
+class TransactionFlowAnalyzeResponse(TransactionFlowOutput):
+    """Response model for transaction flow analysis."""
+    pass
+
+
+class FlowPatternResponse(BaseModel):
+    """Response model for detected flow patterns."""
+    patterns: List[FlowPattern] = Field(..., description="List of detected flow patterns")
+    error: Optional[str] = Field(None, description="Error message if retrieval failed")
+
+
+class FlowMetricsResponse(BaseModel):
+    """Response model for flow metrics."""
+    metrics: FlowMetrics = Field(..., description="Calculated flow metrics")
+    error: Optional[str] = Field(None, description="Error message if retrieval failed")
+
+
+# Request/Response Models for Cross-Chain Identity Analysis
+class CrossChainAnalyzeRequest(CrossChainIdentityInput):
+    """Request model for cross-chain identity analysis."""
+    pass
+
+
+class CrossChainAnalyzeResponse(CrossChainIdentityOutput):
+    """Response model for cross-chain identity analysis."""
+    pass
+
+
+class IdentityClusterResponse(BaseModel):
+    """Response model for a single identity cluster."""
+    cluster: Optional[IdentityCluster] = Field(None, description="Detected identity cluster")
+    error: Optional[str] = Field(None, description="Error message if retrieval failed")
+
+
+class BridgeMovementsResponse(BaseModel):
+    """Response model for cross-chain movements via a specific bridge."""
+    movements: List[CrossChainMovement] = Field(..., description="List of cross-chain movements")
+    error: Optional[str] = Field(None, description="Error message if retrieval failed")
+
+
+class WalletChainsResponse(BaseModel):
+    """Response model for wallet chain presence."""
+    wallet: str = Field(..., description="Wallet address")
+    chains: List[str] = Field(..., description="List of chains where the wallet has presence")
+    error: Optional[str] = Field(None, description="Error message if retrieval failed")
+
 
 # --------------------------------------------------------------------------- #
 #                              Graph Ingestion IO                              #
@@ -118,6 +188,18 @@ async def get_sim_client(request: Request) -> SimClient:
     return request.app.state.sim
 
 
+async def get_transaction_flow_tool(request: Request) -> TransactionFlowTool:
+    """Dependency for getting the TransactionFlowTool instance."""
+    sim_client = request.app.state.sim
+    return TransactionFlowTool(sim_client=sim_client)
+
+
+async def get_cross_chain_identity_tool(request: Request) -> CrossChainIdentityTool:
+    """Dependency for getting the CrossChainIdentityTool instance."""
+    sim_client = request.app.state.sim
+    return CrossChainIdentityTool(sim_client=sim_client)
+
+
 @router.post("/execute-code", response_model=CodeExecutionResponse)
 @require_roles(RoleSets.ANALYSTS_AND_ADMIN)
 async def execute_code(
@@ -167,7 +249,7 @@ async def get_sim_wallet_balances(
     """
     logger.info(f"Sim balances request: wallet={wallet} limit={limit} chain_ids={chain_ids}")
     try:
-        return sim.get_balances(wallet, limit=limit, chain_ids=chain_ids, metadata=metadata)
+        return await sim.get_balances(wallet, limit=limit, chain_ids=chain_ids, metadata=metadata)
     except SimApiError as e:
         logger.error(f"Sim balances error ({e.status_code}): {e}")
         raise HTTPException(status_code=e.status_code or 502, detail=str(e))
@@ -190,7 +272,7 @@ async def get_sim_wallet_activity(
     """
     logger.info(f"Sim activity request: wallet={wallet} limit={limit} offset={offset}")
     try:
-        return sim.get_activity(wallet, limit=limit, offset=offset)
+        return await sim.get_activity(wallet, limit=limit, offset=offset)
     except SimApiError as e:
         logger.error(f"Sim activity error ({e.status_code}): {e}")
         raise HTTPException(status_code=e.status_code or 502, detail=str(e))
@@ -214,7 +296,7 @@ async def get_sim_wallet_collectibles(
     """
     logger.info(f"Sim collectibles request: wallet={wallet} limit={limit} offset={offset} chain_ids={chain_ids}")
     try:
-        return sim.get_collectibles(wallet, limit=limit, offset=offset, chain_ids=chain_ids)
+        return await sim.get_collectibles(wallet, limit=limit, offset=offset, chain_ids=chain_ids)
     except SimApiError as e:
         logger.error(f"Sim collectibles error ({e.status_code}): {e}")
         raise HTTPException(status_code=e.status_code or 502, detail=str(e))
@@ -236,7 +318,7 @@ async def get_sim_token_information(
     """
     logger.info(f"Sim token info request: token_address={token_address} chain_ids={chain_ids}")
     try:
-        return sim.get_token_info(token_address, chain_ids=chain_ids)
+        return await sim.get_token_info(token_address, chain_ids=chain_ids)
     except SimApiError as e:
         logger.error(f"Sim token info error ({e.status_code}): {e}")
         raise HTTPException(status_code=e.status_code or 502, detail=str(e))
@@ -260,7 +342,7 @@ async def get_sim_token_holders(
     """
     logger.info(f"Sim token holders request: chain_id={chain_id} token_address={token_address} limit={limit} offset={offset}")
     try:
-        return sim.get_token_holders(chain_id, token_address, limit=limit, offset=offset)
+        return await sim.get_token_holders(chain_id, token_address, limit=limit, offset=offset)
     except SimApiError as e:
         logger.error(f"Sim token holders error ({e.status_code}): {e}")
         raise HTTPException(status_code=e.status_code or 502, detail=str(e))
@@ -284,7 +366,7 @@ async def get_sim_svm_wallet_balances(
     """
     logger.info(f"Sim SVM balances request: wallet={wallet} limit={limit} offset={offset} chains={chains}")
     try:
-        return sim.get_svm_balances(wallet, limit=limit, offset=offset, chains=chains)
+        return await sim.get_svm_balances(wallet, limit=limit, offset=offset, chains=chains)
     except SimApiError as e:
         logger.error(f"Sim SVM balances error ({e.status_code}): {e}")
         raise HTTPException(status_code=e.status_code or 502, detail=str(e))
@@ -307,8 +389,8 @@ async def get_sim_wallet_risk_score(
     logger.info(f"Calculating risk score for wallet: {wallet}")
     try:
         # Step 1: Fetch balances and activity data
-        balances_data = sim.get_balances(wallet, limit=100, metadata="url,logo")
-        activity_data = sim.get_activity(wallet, limit=50)
+        balances_data = await sim.get_balances(wallet, limit=100, metadata="url,logo")
+        activity_data = await sim.get_activity(wallet, limit=50)
         
         balances = balances_data.get("balances", [])
         activities = activity_data.get("activity", [])
@@ -437,9 +519,206 @@ async def get_sim_wallet_risk_score(
 
 
 # --------------------------------------------------------------------------- #
-#                         Graph Ingestion Trigger APIs                        #
+#                       Transaction Flow Analysis Endpoints                   #
 # --------------------------------------------------------------------------- #
 
+@router.post("/transaction-flow/analyze", response_model=TransactionFlowAnalyzeResponse)
+@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
+async def analyze_transaction_flow(
+    request: TransactionFlowAnalyzeRequest,
+    flow_tool: TransactionFlowTool = Depends(get_transaction_flow_tool)
+):
+    """
+    Analyze transaction flows between wallets to detect patterns, visualize money movement,
+    and identify potentially suspicious activities.
+    
+    This endpoint builds a transaction flow graph, detects patterns like peel chains and
+    circular flows, and calculates flow metrics and risk scores.
+    """
+    logger.info(f"Transaction flow analysis requested for {len(request.wallet_addresses)} wallets")
+    try:
+        result = await flow_tool._execute(**request.dict())
+        return TransactionFlowAnalyzeResponse(**result)
+    except Exception as e:
+        logger.error(f"Error in transaction flow analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/transaction-flow/patterns/{pattern_type}", response_model=FlowPatternResponse)
+@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
+async def get_transaction_flow_patterns(
+    pattern_type: str,
+    wallet: Optional[str] = None,
+    flow_tool: TransactionFlowTool = Depends(get_transaction_flow_tool)
+):
+    """
+    Get detected transaction flow patterns by type.
+    
+    Pattern types include:
+    - PEEL_CHAIN: Sequential transfers with decreasing values
+    - CIRCULAR_FLOW: Funds that flow in a cycle back to the originator
+    - LAYERING: Multiple hops to obscure source/destination
+    """
+    logger.info(f"Retrieving transaction flow patterns of type: {pattern_type}")
+    try:
+        # If wallet is provided, analyze that wallet first
+        patterns = []
+        if wallet:
+            # Execute flow analysis for the wallet
+            result = await flow_tool._execute(
+                wallet_addresses=[wallet],
+                time_window_hours=24,
+                detect_patterns=True
+            )
+            # Filter patterns by type
+            patterns = [p for p in result.get("patterns", []) if p.get("pattern_type") == pattern_type.upper()]
+        else:
+            # For now, we'll return an empty list if no wallet is provided
+            # In a real implementation, this might query a database of previously detected patterns
+            pass
+            
+        return FlowPatternResponse(patterns=patterns)
+    except Exception as e:
+        logger.error(f"Error retrieving flow patterns: {e}")
+        return FlowPatternResponse(patterns=[], error=str(e))
+
+
+@router.get("/transaction-flow/metrics/{wallet}", response_model=FlowMetricsResponse)
+@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
+async def get_transaction_flow_metrics(
+    wallet: str,
+    time_window_hours: int = 24,
+    flow_tool: TransactionFlowTool = Depends(get_transaction_flow_tool)
+):
+    """
+    Get flow metrics for a specific wallet address.
+    
+    Returns metrics such as:
+    - Total transactions and value
+    - Unique addresses and chains
+    - Transaction density and value density
+    - Graph metrics (density, path length, etc.)
+    """
+    logger.info(f"Retrieving transaction flow metrics for wallet: {wallet}")
+    try:
+        # Execute flow analysis for the wallet
+        result = await flow_tool._execute(
+            wallet_addresses=[wallet],
+            time_window_hours=time_window_hours,
+            detect_patterns=False  # Skip pattern detection for faster response
+        )
+        
+        # Extract metrics from result
+        metrics = result.get("metrics", {})
+        return FlowMetricsResponse(metrics=metrics)
+    except Exception as e:
+        logger.error(f"Error retrieving flow metrics: {e}")
+        return FlowMetricsResponse(
+            metrics=FlowMetrics(
+                total_transactions=0,
+                total_value_usd=0,
+                unique_addresses=0,
+                unique_chains=0,
+                average_transaction_value_usd=0,
+                max_transaction_value_usd=0,
+                time_span_hours=0,
+                transaction_density=0,
+                value_density_usd=0,
+                graph_density=0
+            ),
+            error=str(e)
+        )
+
+
+# --------------------------------------------------------------------------- #
+#                     Cross-Chain Identity Analysis Endpoints                 #
+# --------------------------------------------------------------------------- #
+
+
+@router.post("/cross-chain/analyze", response_model=CrossChainAnalyzeResponse)
+@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
+async def analyze_cross_chain_identity(
+    request: CrossChainAnalyzeRequest,
+    cc_tool: CrossChainIdentityTool = Depends(get_cross_chain_identity_tool)
+):
+    """
+    Analyze wallet identities across multiple chains, detect bridge movements,
+    and produce risk scores / clusters.
+    """
+    logger.info(f"Cross-chain identity analysis requested for {len(request.wallet_addresses)} wallets")
+    try:
+        result = await cc_tool._execute(**request.dict())
+        return CrossChainAnalyzeResponse(**result)
+    except Exception as exc:
+        logger.error("Cross-chain identity analysis error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/cross-chain/clusters/{cluster_id}", response_model=IdentityClusterResponse)
+@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
+async def get_identity_cluster(
+    cluster_id: str,
+    wallet_addresses: List[str] = Query(..., description="Wallets to analyse for cluster context"),
+    cc_tool: CrossChainIdentityTool = Depends(get_cross_chain_identity_tool),
+):
+    """
+    Retrieve a specific identity cluster by id.
+    Note: runs analysis on provided wallets each call (stateless).
+    """
+    try:
+        result = await cc_tool._execute(wallet_addresses=wallet_addresses)
+        cluster = next((c for c in result["identity_clusters"] if c["cluster_id"] == cluster_id), None)
+        if not cluster:
+            return IdentityClusterResponse(error="Cluster not found")
+        return IdentityClusterResponse(cluster=cluster)
+    except Exception as exc:
+        logger.error("Get cluster error: %s", exc)
+        return IdentityClusterResponse(error=str(exc))
+
+
+@router.get("/cross-chain/movements/bridge/{bridge_address}", response_model=BridgeMovementsResponse)
+@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
+async def get_movements_for_bridge(
+    bridge_address: str,
+    wallet_addresses: List[str] = Query(..., description="Wallets to analyse for movements"),
+    cc_tool: CrossChainIdentityTool = Depends(get_cross_chain_identity_tool),
+):
+    """
+    Get cross-chain movements that utilised a specific bridge contract address.
+    """
+    try:
+        result = await cc_tool._execute(wallet_addresses=wallet_addresses)
+        movements = [
+            m for m in result["cross_chain_movements"]
+            if (m.get("bridge_address") or "").lower() == bridge_address.lower()
+        ]
+        return BridgeMovementsResponse(movements=movements)
+    except Exception as exc:
+        logger.error("Bridge movement retrieval error: %s", exc)
+        return BridgeMovementsResponse(error=str(exc))
+
+
+@router.get("/cross-chain/wallets/{wallet}/chains", response_model=WalletChainsResponse)
+@require_roles(RoleSets.ANALYSTS_AND_ADMIN)
+async def get_wallet_chain_presence(
+    wallet: str,
+    cc_tool: CrossChainIdentityTool = Depends(get_cross_chain_identity_tool),
+):
+    """
+    Return the list of chains where the wallet has activity / balances.
+    """
+    try:
+        result = await cc_tool._execute(wallet_addresses=[wallet], detect_clusters=False, detect_cross_chain_movements=False)
+        chains = list({w["chain_name"] for w in result["wallets"]})
+        return WalletChainsResponse(wallet=wallet, chains=chains)
+    except Exception as exc:
+        logger.error("Wallet chains retrieval error: %s", exc)
+        return WalletChainsResponse(wallet=wallet, chains=[], error=str(exc))
+
+
+# --------------------------------------------------------------------------- #
+#                         Graph Ingestion Trigger APIs                        #
+# --------------------------------------------------------------------------- #
 
 @router.post("/graph/ingest-wallet", response_model=IngestResponse)
 @require_roles(RoleSets.ANALYSTS_AND_ADMIN)
