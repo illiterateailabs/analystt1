@@ -15,7 +15,7 @@ Idea | 💡 Brainstormed concept
 ---
 
 ## 1. Transaction Flow Networks 💸  
-**Status:** 🔧 Planned (next)  
+**Status:** ✅ Implemented *(v1.8.0)*  
 
 | Aspect | Details |
 |--------|---------|
@@ -42,7 +42,7 @@ Idea | 💡 Brainstormed concept
 ---
 
 ## 3. Cross-Chain Identity & Bridge Analysis 🌉  
-**Status:** 🔧 Planned  
+**Status:** ✅ Implemented *(v1.8.0)*  
 
 | Aspect | Details |
 |--------|---------|
@@ -152,8 +152,8 @@ Combine on-chain wallet graph with off-chain social signals (ENS, Twitter handle
 
 | Idea # | Feature | Status | Priority | Target Version |
 |-------:|---------|--------|----------|----------------|
-| 1 | Transaction Flow Networks | 🔧 Planned | **P0** | 1.8.0 |
-| 3 | Cross-Chain Identity Graph | 🔧 Planned | **P1** | 1.8.x |
+| 1 | Transaction Flow Networks | ✅ Implemented | **P0** | 1.8.0 |
+| 3 | Cross-Chain Identity Graph | ✅ Implemented | **P1** | 1.8.x |
 | 2 | DeFi Protocol Map | 💡 Idea | P2 | 1.9.x |
 | 4 | Token Ecosystem Network | 💡 Idea | P2 | 1.9.x |
 | 5 | NFT Provenance Graphs | 💡 Idea | P3 | 2.0 |
