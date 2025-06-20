@@ -24,6 +24,7 @@ from backend.core.metrics import setup_metrics
 from backend.core.events import initialize_events, shutdown_events
 from backend.api.v1 import auth, chat, analysis, graph, crew, prompts, webhooks, ws_progress
 from backend.integrations.neo4j_client import Neo4jClient
+from backend.integrations.sim_client import SimClient  # ← Sim API client
 from backend.auth.secure_cookies import SecurityHeadersMiddleware  # ← security headers
 
 # Configure logging
@@ -205,6 +206,17 @@ async def startup_event() -> None:
             logger.error(f"Failed to initialise Neo4j client: {e}")
             if settings.ENVIRONMENT == "production":
                 raise  # Hard-fail in prod so misconfiguration is obvious
+
+    # ------------------------------------------------------------------- #
+    # Initialise and share Sim API client (multichain data provider)
+    # ------------------------------------------------------------------- #
+    try:
+        sim_client = SimClient()
+        app.state.sim = sim_client  # for dependency injection in routers
+        logger.info("SimClient initialised and stored in app state")
+    except Exception as e:
+        logger.error(f"Failed to initialise SimClient: {e}")
+        # Do not hard-fail; most endpoints work without Sim but will raise 5xx on use
 
 
 @app.on_event("shutdown")

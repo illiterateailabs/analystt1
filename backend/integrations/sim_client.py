@@ -1,535 +1,659 @@
 """
 Sim API Client
 
-A centralized client for interacting with Sim APIs, providing access to blockchain data
-across 60+ EVM chains and Solana. This client handles authentication, rate limiting,
-error handling, and provides methods for all Sim API endpoints.
+This module provides a client for interacting with Sim APIs, which offer
+real-time blockchain data across 60+ EVM chains and Solana. The client
+handles authentication, request construction, error handling, and pagination.
 
-API Reference: https://docs.sim.dune.com/
+Usage:
+    sim_client = SimClient()
+    balances = await sim_client.get_balances("0xd8da6bf26964af9d7eed9e03e53415d37aa96045")
 """
 
 import logging
 import time
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, TypeVar, Generic, cast
+import asyncio
 from urllib.parse import urljoin
 
-import asyncio
 import httpx
-import requests
-from pydantic import BaseModel
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_exponential,
-    retry_if_exception_type,
-    RetryError
-)
+from pydantic import BaseModel, Field, validator
 
 from backend.config import settings
-from backend.core.metrics import record_api_latency
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
+# Type variable for generic pagination
+T = TypeVar('T')
+
+# Constants
+DEFAULT_TIMEOUT = 30.0  # seconds
+DEFAULT_RETRIES = 3
+DEFAULT_BACKOFF_FACTOR = 1.5
+DEFAULT_BACKOFF_MAX = 60  # seconds
+
+
 class SimApiError(Exception):
-    """Custom exception for Sim API errors with additional context."""
+    """Base exception for Sim API errors."""
     
-    def __init__(self, message: str, status_code: Optional[int] = None, 
-                 error_code: Optional[str] = None, response: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, status_code: Optional[int] = None, response_body: Optional[str] = None):
+        self.message = message
         self.status_code = status_code
-        self.error_code = error_code
-        self.response = response
+        self.response_body = response_body
         super().__init__(message)
+    
+    def __str__(self) -> str:
+        if self.status_code:
+            return f"SimApiError ({self.status_code}): {self.message}"
+        return f"SimApiError: {self.message}"
+
+
+class SimRateLimitError(SimApiError):
+    """Exception raised when rate limits are exceeded."""
+    pass
+
+
+class SimAuthError(SimApiError):
+    """Exception raised for authentication errors."""
+    pass
+
+
+class SimNotFoundError(SimApiError):
+    """Exception raised when a resource is not found."""
+    pass
+
+
+class SimValidationError(SimApiError):
+    """Exception raised for validation errors."""
+    pass
+
+
+class SimServerError(SimApiError):
+    """Exception raised for server-side errors."""
+    pass
+
+
+class PaginatedResponse(Generic[T], BaseModel):
+    """Generic model for paginated responses."""
+    
+    items: List[T]
+    next_offset: Optional[str] = None
+    total_count: Optional[int] = None
+    request_time: Optional[str] = None
+    response_time: Optional[str] = None
 
 
 class SimClient:
     """
     Client for interacting with Sim APIs.
     
-    This client provides methods for all Sim API endpoints, handling authentication,
-    rate limiting, and error handling. It uses exponential backoff for retries and
-    records metrics for API latency.
+    This client provides methods for accessing real-time blockchain data
+    across multiple EVM chains and Solana. It handles authentication,
+    request construction, error handling, and pagination.
     """
     
-    def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        api_url: Optional[str] = None,
+        timeout: float = DEFAULT_TIMEOUT,
+        max_retries: int = DEFAULT_RETRIES,
+        backoff_factor: float = DEFAULT_BACKOFF_FACTOR
+    ):
         """
         Initialize the Sim API client.
         
         Args:
-            api_key: The Sim API key (defaults to settings.SIM_API_KEY)
-            base_url: The base URL for Sim APIs (defaults to settings.SIM_API_URL)
+            api_key: Sim API key (defaults to settings.SIM_API_KEY)
+            api_url: Sim API base URL (defaults to settings.SIM_API_URL)
+            timeout: Request timeout in seconds
+            max_retries: Maximum number of retry attempts
+            backoff_factor: Exponential backoff factor for retries
         """
         self.api_key = api_key or settings.SIM_API_KEY
-        self.base_url = base_url or settings.SIM_API_URL
+        self.api_url = api_url or settings.SIM_API_URL
+        self.timeout = timeout
+        self.max_retries = max_retries
+        self.backoff_factor = backoff_factor
         
+        # Validate API key
         if not self.api_key:
-            logger.error("Sim API key not provided. Set SIM_API_KEY in environment or pass to constructor.")
-            raise ValueError("Sim API key is required")
+            logger.warning("No Sim API key provided. API requests will fail.")
         
-        self.headers = {
-            "X-Sim-Api-Key": self.api_key,
-            "Content-Type": "application/json"
-        }
+        # Initialize HTTP client
+        self.client = httpx.AsyncClient(
+            timeout=timeout,
+            headers={
+                "X-Sim-Api-Key": self.api_key,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": f"AnalystAgent/{settings.VERSION}"
+            }
+        )
         
-        # Track rate limits
-        self.rate_limit_remaining = None
-        self.rate_limit_reset = None
-        
-        logger.info(f"SimClient initialized with base URL: {self.base_url}")
+        logger.info(f"SimClient initialized with API URL: {self.api_url}")
     
-        # Async httpx client (lazy)
-        self._async_client: Optional[httpx.AsyncClient] = None
-
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((
-            requests.exceptions.RequestException,
-            requests.exceptions.HTTPError,
-            requests.exceptions.ConnectionError,
-            requests.exceptions.Timeout
-        )),
-        reraise=True
-    )
-    def _request(self, method: str, endpoint: str, params: Optional[Dict[str, Any]] = None, 
-                data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def close(self) -> None:
+        """Close the HTTP client session."""
+        await self.client.aclose()
+    
+    async def _request(
+        self,
+        method: str,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        json_data: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
         """
-        Make a request to the Sim API with retry logic and metrics recording.
+        Send a request to the Sim API with retry logic.
         
         Args:
             method: HTTP method (GET, POST, etc.)
             endpoint: API endpoint path
             params: Query parameters
-            data: Request body data for POST requests
+            json_data: JSON request body
+            **kwargs: Additional parameters to pass to the request
             
         Returns:
-            The JSON response as a dictionary
+            API response as a dictionary
             
         Raises:
             SimApiError: If the request fails after retries
         """
-        url = urljoin(self.base_url, endpoint)
+        url = urljoin(self.api_url, endpoint)
+        retries = 0
+        last_error = None
         
-        # Check if we need to wait for rate limit reset
-        if self.rate_limit_remaining is not None and self.rate_limit_remaining <= 1:
-            if self.rate_limit_reset is not None:
-                wait_time = max(0, self.rate_limit_reset - time.time())
-                if wait_time > 0:
-                    logger.warning(f"Rate limit almost exceeded. Waiting {wait_time:.2f}s before next request.")
-                    time.sleep(wait_time)
-        
-        start_time = time.time()
-        endpoint_name = endpoint.split('/')[2] if len(endpoint.split('/')) > 2 else endpoint
-        
-        try:
-            response = requests.request(
-                method=method,
-                url=url,
-                headers=self.headers,
-                params=params,
-                json=data,
-                timeout=30  # 30 second timeout
-            )
-            
-            # Update rate limit tracking if headers are present
-            if 'X-Rate-Limit-Remaining' in response.headers:
-                self.rate_limit_remaining = int(response.headers['X-Rate-Limit-Remaining'])
-            if 'X-Rate-Limit-Reset' in response.headers:
-                self.rate_limit_reset = int(response.headers['X-Rate-Limit-Reset'])
-            
-            # Record API latency metric
-            duration = time.time() - start_time
-            record_api_latency('sim', endpoint_name, duration, response.status_code)
-            
-            # Handle HTTP errors
-            if response.status_code >= 400:
-                error_data = {}
+        while retries <= self.max_retries:
+            try:
+                logger.debug(f"Sending {method} request to {url}")
+                response = await self.client.request(
+                    method=method,
+                    url=url,
+                    params=params,
+                    json=json_data,
+                    **kwargs
+                )
+                
+                # Log request metrics
+                logger.debug(f"Sim API request: {method} {url} - Status: {response.status_code}")
+                
+                # Handle successful response
+                if response.status_code == 200:
+                    return response.json()
+                
+                # Handle error responses
+                error_body = response.text
                 try:
-                    error_data = response.json()
+                    error_json = response.json()
+                    error_message = error_json.get("error", {}).get("message", "Unknown error")
                 except:
-                    error_data = {"text": response.text}
+                    error_message = error_body[:100] + "..." if len(error_body) > 100 else error_body
                 
-                error_code = error_data.get('error', {}).get('code') if isinstance(error_data.get('error'), dict) else None
-                error_message = error_data.get('error', {}).get('message') if isinstance(error_data.get('error'), dict) else str(error_data)
-                
-                message = f"Sim API error: {response.status_code} - {error_message}"
-                
-                # Log different levels based on status code
-                if response.status_code == 429:
-                    logger.warning(f"{message} (Rate limit exceeded)")
-                elif response.status_code >= 500:
-                    logger.error(f"{message} (Server error)")
-                else:
-                    logger.error(f"{message} (Client error)")
-                
-                raise SimApiError(
-                    message=message,
-                    status_code=response.status_code,
-                    error_code=error_code,
-                    response=error_data
-                )
-            
-            # Parse and return JSON response
-            return response.json()
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Request exception when calling Sim API: {str(e)}")
-            # Record failure metric
-            duration = time.time() - start_time
-            record_api_latency('sim', endpoint_name, duration, 0)  # 0 indicates failure
-            raise SimApiError(f"Request failed: {str(e)}")
-    
-    # --------------------------------------------------------------------- #
-    #                              ASYNC SUPPORT                             #
-    # --------------------------------------------------------------------- #
-
-    async def __aenter__(self):
-        """Support “async with SimClient() as cli:” usage."""
-        if self._async_client is None:
-            self._async_client = httpx.AsyncClient(base_url=self.base_url, headers=self.headers, timeout=30)
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        if self._async_client:
-            await self._async_client.aclose()
-            self._async_client = None
-
-    async def _async_request(
-        self,
-        method: str,
-        endpoint: str,
-        params: Optional[Dict[str, Any]] = None,
-        data: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        """
-        Async version of _request using httpx.AsyncClient.
-        Keeps identical semantics/metrics.
-        """
-        if self._async_client is None:
-            # Fallback – create a transient client
-            async with httpx.AsyncClient(base_url=self.base_url, headers=self.headers, timeout=30) as client:
-                return await self._async_request_inner(client, method, endpoint, params, data)
-        return await self._async_request_inner(self._async_client, method, endpoint, params, data)
-
-    async def _async_request_inner(
-        self,
-        client: httpx.AsyncClient,
-        method: str,
-        endpoint: str,
-        params: Optional[Dict[str, Any]],
-        data: Optional[Dict[str, Any]],
-    ) -> Dict[str, Any]:
-        url = endpoint  # base_url already set on client if persistent
-
-        # simple rate-limit wait (shares state with sync path)
-        if self.rate_limit_remaining is not None and self.rate_limit_remaining <= 1:
-            if self.rate_limit_reset is not None:
-                wait_time = max(0, self.rate_limit_reset - time.time())
-                if wait_time > 0:
+                # Handle specific error codes
+                if response.status_code == 401:
+                    raise SimAuthError("Authentication failed. Check your API key.", response.status_code, error_body)
+                elif response.status_code == 404:
+                    raise SimNotFoundError(f"Resource not found: {endpoint}", response.status_code, error_body)
+                elif response.status_code == 422:
+                    raise SimValidationError(f"Validation error: {error_message}", response.status_code, error_body)
+                elif response.status_code == 429:
+                    # Rate limit exceeded, apply backoff
+                    retry_after = int(response.headers.get("Retry-After", "1"))
+                    wait_time = min(retry_after, self.backoff_factor * (2 ** retries))
+                    logger.warning(f"Rate limit exceeded. Retrying after {wait_time} seconds.")
                     await asyncio.sleep(wait_time)
-
-        start = time.time()
-        endpoint_name = endpoint.split("/")[2] if len(endpoint.split("/")) > 2 else endpoint
-
-        try:
-            resp: httpx.Response = await client.request(method, url, params=params, json=data)
-
-            # update RL headers
-            if "X-Rate-Limit-Remaining" in resp.headers:
-                self.rate_limit_remaining = int(resp.headers["X-Rate-Limit-Remaining"])
-            if "X-Rate-Limit-Reset" in resp.headers:
-                self.rate_limit_reset = int(resp.headers["X-Rate-Limit-Reset"])
-
-            duration = time.time() - start
-            record_api_latency("sim", endpoint_name, duration, resp.status_code)
-
-            if resp.status_code >= 400:
-                try:
-                    err_json = resp.json()
-                except Exception:
-                    err_json = {"text": resp.text}
-                error_code = err_json.get("error", {}).get("code") if isinstance(err_json.get("error"), dict) else None
-                message = err_json.get("error", {}).get("message") if isinstance(err_json.get("error"), dict) else str(
-                    err_json
-                )
-                raise SimApiError(
-                    f"Sim API error: {resp.status_code} - {message}",
-                    status_code=resp.status_code,
-                    error_code=error_code,
-                    response=err_json,
-                )
-            return resp.json()
-        except (httpx.HTTPError, httpx.TimeoutException) as e:
-            duration = time.time() - start
-            record_api_latency("sim", endpoint_name, duration, 0)
-            raise SimApiError(f"Async request failed: {e}")
-
-    # -------- Generic async helpers -------- #
-    async def aget(self, endpoint: str, **params) -> Dict[str, Any]:
-        """Generic async GET helper (defaults to GET)."""
-        return await self._async_request("GET", endpoint, params=params)
-
-    async def apaged_get(self, endpoint: str, page_key: str = "next_offset", **params):
+                    retries += 1
+                    last_error = SimRateLimitError(
+                        f"Rate limit exceeded: {error_message}", 
+                        response.status_code, 
+                        error_body
+                    )
+                    continue
+                elif 500 <= response.status_code < 600:
+                    # Server error, apply backoff and retry
+                    wait_time = self.backoff_factor * (2 ** retries)
+                    logger.warning(f"Server error ({response.status_code}). Retrying after {wait_time} seconds.")
+                    await asyncio.sleep(wait_time)
+                    retries += 1
+                    last_error = SimServerError(
+                        f"Server error: {error_message}", 
+                        response.status_code, 
+                        error_body
+                    )
+                    continue
+                else:
+                    # Other errors
+                    raise SimApiError(f"API error: {error_message}", response.status_code, error_body)
+                    
+            except (httpx.RequestError, httpx.TimeoutException) as e:
+                # Network or timeout error, apply backoff and retry
+                wait_time = self.backoff_factor * (2 ** retries)
+                logger.warning(f"Request error: {str(e)}. Retrying after {wait_time} seconds.")
+                await asyncio.sleep(wait_time)
+                retries += 1
+                last_error = SimApiError(f"Request failed: {str(e)}")
+                continue
+                
+            except (SimAuthError, SimNotFoundError, SimValidationError, SimApiError) as e:
+                # Don't retry these errors
+                raise
+        
+        # If we've exhausted retries, raise the last error
+        if last_error:
+            raise last_error
+        else:
+            raise SimApiError("Maximum retries exceeded with no specific error")
+    
+    async def paged_get(
+        self,
+        endpoint: str,
+        items_key: str,
+        limit: int = 100,
+        max_items: Optional[int] = None,
+        **params
+    ) -> List[Dict[str, Any]]:
         """
-        Async generator yielding successive pages until no cursor is returned.
-        Example:
-            async for page in sim_client.apaged_get('/v1/evm/activity/0x..', limit=100):
-                ...
-        """
-        next_cursor: Optional[str] = None
-        while True:
-            query = dict(params)  # shallow copy
-            if next_cursor:
-                query["offset"] = next_cursor
-            data = await self._async_request("GET", endpoint, params=query)
-            yield data
-            next_cursor = data.get(page_key)
-            if not next_cursor:
-                break
-
-    # Sample async wrappers (others can use aget or tools can call directly)
-    async def get_balances_async(self, wallet: str, **params):
-        return await self.aget(f"/v1/evm/balances/{wallet}", **params)
-
-    async def get_activity_async(self, wallet: str, **params):
-        return await self.aget(f"/v1/evm/activity/{wallet}", **params)
-
-    def get_balances(self, wallet: str, limit: int = 100, offset: Optional[str] = None,
-                   chain_ids: str = "all", metadata: str = "url,logo") -> Dict[str, Any]:
-        """
-        Fetch token balances for a wallet address.
+        Handle paginated GET requests with cursor-based pagination.
         
         Args:
-            wallet: The wallet address to query
-            limit: Maximum number of balances to return (default: 100)
-            offset: Pagination offset token from previous response
-            chain_ids: Comma-separated list of chain IDs or "all" for all chains
-            metadata: Comma-separated list of metadata to include (url, logo)
+            endpoint: API endpoint path
+            items_key: Key in the response that contains the items list
+            limit: Number of items per page
+            max_items: Maximum total items to retrieve (None for all)
+            **params: Additional query parameters
+            
+        Returns:
+            Combined list of items from all pages
+        """
+        all_items = []
+        params = {**params, "limit": min(limit, 100)}  # Ensure limit is reasonable
+        offset = None
+        
+        while True:
+            # Add offset parameter if we have one
+            if offset:
+                params["offset"] = offset
+            
+            # Make the request
+            response = await self._request("GET", endpoint, params=params)
+            
+            # Extract items
+            items = response.get(items_key, [])
+            if not items:
+                break
+                
+            all_items.extend(items)
+            
+            # Check if we've reached the maximum items
+            if max_items and len(all_items) >= max_items:
+                all_items = all_items[:max_items]
+                break
+                
+            # Get next offset for pagination
+            offset = response.get("next_offset")
+            if not offset:
+                break
+                
+            # Log progress
+            logger.debug(f"Retrieved {len(items)} items, total: {len(all_items)}, fetching next page...")
+        
+        return all_items
+    
+    async def get_balances(
+        self,
+        wallet: str,
+        limit: int = 100,
+        offset: Optional[str] = None,
+        chain_ids: str = "all",
+        metadata: str = "url,logo"
+    ) -> Dict[str, Any]:
+        """
+        Get token balances for a wallet address.
+        
+        Args:
+            wallet: Wallet address
+            limit: Maximum number of balances to return
+            offset: Pagination offset token
+            chain_ids: Comma-separated list of chain IDs or "all"
+            metadata: Comma-separated list of metadata to include
             
         Returns:
             Dictionary containing token balances and pagination info
-            
-        Raises:
-            SimApiError: If the request fails
         """
-        endpoint = f"/v1/evm/balances/{wallet}"
-        params = {}
+        params = {
+            "limit": limit,
+            "chain_ids": chain_ids,
+            "metadata": metadata
+        }
         
-        if limit:
-            params["limit"] = limit
         if offset:
             params["offset"] = offset
+        
+        endpoint = f"/v1/evm/balances/{wallet}"
+        return await self._request("GET", endpoint, params=params)
+    
+    async def get_activity(
+        self,
+        wallet: str,
+        limit: int = 25,
+        offset: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get chronological activity for a wallet address.
+        
+        Args:
+            wallet: Wallet address
+            limit: Maximum number of activities to return
+            offset: Pagination offset token
+            
+        Returns:
+            Dictionary containing activity data and pagination info
+        """
+        params = {"limit": limit}
+        
+        if offset:
+            params["offset"] = offset
+        
+        endpoint = f"/v1/evm/activity/{wallet}"
+        return await self._request("GET", endpoint, params=params)
+    
+    async def get_collectibles(
+        self,
+        wallet: str,
+        limit: int = 50,
+        offset: Optional[str] = None,
+        chain_ids: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get NFT collectibles for a wallet address.
+        
+        Args:
+            wallet: Wallet address
+            limit: Maximum number of collectibles to return
+            offset: Pagination offset token
+            chain_ids: Comma-separated list of chain IDs or "all"
+            
+        Returns:
+            Dictionary containing collectibles data and pagination info
+        """
+        params = {"limit": limit}
+        
+        if offset:
+            params["offset"] = offset
+        
         if chain_ids:
             params["chain_ids"] = chain_ids
-        if metadata:
-            params["metadata"] = metadata
         
-        return self._request("GET", endpoint, params=params)
-    
-    def get_activity(self, wallet: str, limit: int = 25, offset: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Fetch transaction activity for a wallet address.
-        
-        Args:
-            wallet: The wallet address to query
-            limit: Maximum number of activities to return (default: 25)
-            offset: Pagination offset token from previous response
-            
-        Returns:
-            Dictionary containing transaction activities and pagination info
-            
-        Raises:
-            SimApiError: If the request fails
-        """
-        endpoint = f"/v1/evm/activity/{wallet}"
-        params = {}
-        
-        if limit:
-            params["limit"] = limit
-        if offset:
-            params["offset"] = offset
-        
-        return self._request("GET", endpoint, params=params)
-    
-    def get_collectibles(self, wallet: str, limit: int = 50, offset: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Fetch NFT collectibles for a wallet address.
-        
-        Args:
-            wallet: The wallet address to query
-            limit: Maximum number of collectibles to return (default: 50)
-            offset: Pagination offset token from previous response
-            
-        Returns:
-            Dictionary containing NFT collectibles and pagination info
-            
-        Raises:
-            SimApiError: If the request fails
-        """
         endpoint = f"/v1/evm/collectibles/{wallet}"
-        params = {}
-        
-        if limit:
-            params["limit"] = limit
-        if offset:
-            params["offset"] = offset
-        
-        return self._request("GET", endpoint, params=params)
+        return await self._request("GET", endpoint, params=params)
     
-    def get_transactions(self, wallet: str, limit: int = 25, offset: Optional[str] = None) -> Dict[str, Any]:
+    async def get_token_info(
+        self,
+        token_address: str,
+        chain_ids: str
+    ) -> Dict[str, Any]:
         """
-        Fetch detailed transaction information for a wallet address.
+        Get detailed token metadata and pricing.
         
         Args:
-            wallet: The wallet address to query
-            limit: Maximum number of transactions to return (default: 25)
-            offset: Pagination offset token from previous response
+            token_address: Token contract address or "native"
+            chain_ids: Comma-separated list of chain IDs (required)
             
         Returns:
-            Dictionary containing transaction details and pagination info
-            
-        Raises:
-            SimApiError: If the request fails
+            Dictionary containing token information
         """
-        endpoint = f"/v1/evm/transactions/{wallet}"
-        params = {}
-        
-        if limit:
-            params["limit"] = limit
-        if offset:
-            params["offset"] = offset
-        
-        return self._request("GET", endpoint, params=params)
-    
-    def get_token_info(self, token_address: str, chain_ids: str = "all") -> Dict[str, Any]:
-        """
-        Fetch detailed metadata and pricing information for a token.
-        
-        Args:
-            token_address: The token contract address or "native" for native tokens
-            chain_ids: Comma-separated list of chain IDs or "all" for all chains
-            
-        Returns:
-            Dictionary containing token metadata and pricing info
-            
-        Raises:
-            SimApiError: If the request fails
-        """
-        endpoint = f"/v1/evm/token-info/{token_address}"
         params = {"chain_ids": chain_ids}
-        
-        return self._request("GET", endpoint, params=params)
+        endpoint = f"/v1/evm/token-info/{token_address}"
+        return await self._request("GET", endpoint, params=params)
     
-    def get_token_holders(self, chain_id: int, token_address: str, limit: int = 100, 
-                         offset: Optional[str] = None) -> Dict[str, Any]:
+    async def get_token_holders(
+        self,
+        chain_id: str,
+        token_address: str,
+        limit: int = 100,
+        offset: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
-        Fetch token holders for a specific token, ranked by wallet value.
+        Get token holder distribution.
         
         Args:
-            chain_id: The chain ID where the token exists
-            token_address: The token contract address
-            limit: Maximum number of holders to return (default: 100)
-            offset: Pagination offset token from previous response
+            chain_id: Chain ID
+            token_address: Token contract address
+            limit: Maximum number of holders to return
+            offset: Pagination offset token
             
         Returns:
-            Dictionary containing token holders and pagination info
-            
-        Raises:
-            SimApiError: If the request fails
+            Dictionary containing token holder data
         """
-        endpoint = f"/v1/evm/token-holders/{chain_id}/{token_address}"
-        params = {}
+        params = {"limit": limit}
         
-        if limit:
-            params["limit"] = limit
         if offset:
             params["offset"] = offset
         
-        return self._request("GET", endpoint, params=params)
+        endpoint = f"/v1/evm/token-holders/{chain_id}/{token_address}"
+        return await self._request("GET", endpoint, params=params)
     
-    def get_supported_chains(self) -> Dict[str, Any]:
+    async def get_transactions(
+        self,
+        wallet: str,
+        limit: int = 25,
+        offset: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
-        Fetch list of all supported EVM chains and their capabilities.
+        Get detailed transaction information for a wallet.
+        
+        Args:
+            wallet: Wallet address
+            limit: Maximum number of transactions to return
+            offset: Pagination offset token
+            
+        Returns:
+            Dictionary containing transaction data
+        """
+        params = {"limit": limit}
+        
+        if offset:
+            params["offset"] = offset
+        
+        endpoint = f"/v1/evm/transactions/{wallet}"
+        return await self._request("GET", endpoint, params=params)
+    
+    async def get_supported_chains(self) -> Dict[str, Any]:
+        """
+        Get list of all supported EVM chains and their capabilities.
         
         Returns:
             Dictionary containing supported chains information
-            
-        Raises:
-            SimApiError: If the request fails
         """
         endpoint = "/v1/evm/supported-chains"
-        return self._request("GET", endpoint)
+        return await self._request("GET", endpoint)
     
-    def get_svm_balances(self, wallet: str, limit: int = 100, offset: Optional[str] = None,
-                        chains: str = "all") -> Dict[str, Any]:
+    async def get_svm_balances(
+        self,
+        wallet: str,
+        limit: int = 100,
+        offset: Optional[str] = None,
+        chains: str = "all"
+    ) -> Dict[str, Any]:
         """
-        Fetch token balances for a Solana (SVM) address.
+        Get Solana (SVM) token balances for a wallet address.
         
         Args:
-            wallet: The Solana wallet address to query
-            limit: Maximum number of balances to return (default: 100)
-            offset: Pagination offset token from previous response
-            chains: Comma-separated list of chains or "all" for all supported chains
+            wallet: Solana wallet address
+            limit: Maximum number of balances to return
+            offset: Pagination offset token
+            chains: Comma-separated list of chains or "all"
             
         Returns:
-            Dictionary containing token balances and pagination info
-            
-        Raises:
-            SimApiError: If the request fails
+            Dictionary containing SVM token balances
         """
+        params = {
+            "limit": limit,
+            "chains": chains
+        }
+        
+        if offset:
+            params["offset"] = offset
+        
         endpoint = f"/beta/svm/balances/{wallet}"
-        params = {}
-        
-        if limit:
-            params["limit"] = limit
-        if offset:
-            params["offset"] = offset
-        if chains:
-            params["chains"] = chains
-        
-        return self._request("GET", endpoint, params=params)
+        return await self._request("GET", endpoint, params=params)
     
-    def get_svm_transactions(self, wallet: str, limit: int = 25, offset: Optional[str] = None) -> Dict[str, Any]:
+    async def get_svm_token_metadata(self, mint: str) -> Dict[str, Any]:
         """
-        Fetch transactions for a Solana (SVM) address.
+        Get metadata for a Solana token mint address.
         
         Args:
-            wallet: The Solana wallet address to query
-            limit: Maximum number of transactions to return (default: 25)
-            offset: Pagination offset token from previous response
-            
-        Returns:
-            Dictionary containing transaction details and pagination info
-            
-        Raises:
-            SimApiError: If the request fails
-        """
-        endpoint = f"/beta/svm/transactions/{wallet}"
-        params = {}
-        
-        if limit:
-            params["limit"] = limit
-        if offset:
-            params["offset"] = offset
-        
-        return self._request("GET", endpoint, params=params)
-    
-    def get_svm_token_metadata(self, mint: str) -> Dict[str, Any]:
-        """
-        Fetch metadata for a Solana token mint address.
-        
-        Args:
-            mint: The Solana token mint address
+            mint: Solana token mint address
             
         Returns:
             Dictionary containing token metadata
-            
-        Raises:
-            SimApiError: If the request fails
         """
         endpoint = f"/beta/svm/token-metadata/{mint}"
-        return self._request("GET", endpoint)
-
-
-# Create a singleton instance for app-wide use
-sim_client = SimClient()
+        return await self._request("GET", endpoint)
+    
+    async def get_all_balances(
+        self,
+        wallet: str,
+        max_items: Optional[int] = None,
+        chain_ids: str = "all",
+        metadata: str = "url,logo"
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all token balances for a wallet with automatic pagination.
+        
+        Args:
+            wallet: Wallet address
+            max_items: Maximum number of balances to retrieve (None for all)
+            chain_ids: Comma-separated list of chain IDs or "all"
+            metadata: Comma-separated list of metadata to include
+            
+        Returns:
+            List of token balances
+        """
+        return await self.paged_get(
+            f"/v1/evm/balances/{wallet}",
+            "balances",
+            max_items=max_items,
+            chain_ids=chain_ids,
+            metadata=metadata
+        )
+    
+    async def get_all_activity(
+        self,
+        wallet: str,
+        max_items: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all activity for a wallet with automatic pagination.
+        
+        Args:
+            wallet: Wallet address
+            max_items: Maximum number of activities to retrieve (None for all)
+            
+        Returns:
+            List of activity items
+        """
+        return await self.paged_get(
+            f"/v1/evm/activity/{wallet}",
+            "activity",
+            max_items=max_items
+        )
+    
+    async def get_all_collectibles(
+        self,
+        wallet: str,
+        max_items: Optional[int] = None,
+        chain_ids: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all NFT collectibles for a wallet with automatic pagination.
+        
+        Args:
+            wallet: Wallet address
+            max_items: Maximum number of collectibles to retrieve (None for all)
+            chain_ids: Comma-separated list of chain IDs or "all"
+            
+        Returns:
+            List of collectibles
+        """
+        params = {}
+        if chain_ids:
+            params["chain_ids"] = chain_ids
+            
+        return await self.paged_get(
+            f"/v1/evm/collectibles/{wallet}",
+            "entries",
+            max_items=max_items,
+            **params
+        )
+    
+    async def get_all_token_holders(
+        self,
+        chain_id: str,
+        token_address: str,
+        max_items: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all token holders with automatic pagination.
+        
+        Args:
+            chain_id: Chain ID
+            token_address: Token contract address
+            max_items: Maximum number of holders to retrieve (None for all)
+            
+        Returns:
+            List of token holders
+        """
+        return await self.paged_get(
+            f"/v1/evm/token-holders/{chain_id}/{token_address}",
+            "holders",
+            max_items=max_items
+        )
+    
+    async def get_all_transactions(
+        self,
+        wallet: str,
+        max_items: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all transactions for a wallet with automatic pagination.
+        
+        Args:
+            wallet: Wallet address
+            max_items: Maximum number of transactions to retrieve (None for all)
+            
+        Returns:
+            List of transactions
+        """
+        return await self.paged_get(
+            f"/v1/evm/transactions/{wallet}",
+            "transactions",
+            max_items=max_items
+        )
+    
+    async def get_all_svm_balances(
+        self,
+        wallet: str,
+        max_items: Optional[int] = None,
+        chains: str = "all"
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all Solana token balances with automatic pagination.
+        
+        Args:
+            wallet: Solana wallet address
+            max_items: Maximum number of balances to retrieve (None for all)
+            chains: Comma-separated list of chains or "all"
+            
+        Returns:
+            List of SVM token balances
+        """
+        return await self.paged_get(
+            f"/beta/svm/balances/{wallet}",
+            "balances",
+            max_items=max_items,
+            chains=chains
+        )

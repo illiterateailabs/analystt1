@@ -2,11 +2,29 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
-import { PlusCircle, Search, ListFilter, RefreshCw, AlertTriangle, CheckCircle, Loader2, ExternalLink } from 'lucide-react';
+import {
+  PlusCircle,
+  Search,
+  ListFilter,
+  RefreshCw,
+  AlertTriangle,
+  CheckCircle,
+  Loader2,
+  ExternalLink,
+  Info,
+} from 'lucide-react';
 import { useRouter } from 'next/navigation'; // For navigation after creating a task
 // Assuming an API function to run a crew and list tasks will exist
 // For now, we'll use mock data and a placeholder for runCrew
 import { runCrew, /* listAnalysisTasks */ } from '../../lib/api'; 
+// New UI & feature imports
+import WhaleDashboard from '@/components/analysis/WhaleDashboard';
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from '@/components/ui/tabs';
 
 type AnalysisStatus = 'running' | 'completed' | 'failed' | 'pending';
 
@@ -43,6 +61,8 @@ const AnalysisOverviewPage = () => {
   const [selectedCrew, setSelectedCrew] = useState<string>('fraud_investigation'); // Default crew
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // Active tab state: 'analysis' | 'whales'
+  const [activeTab, setActiveTab] = useState<'analysis' | 'whales'>('analysis');
 
   // Placeholder for available crews - would come from API
   const availableCrews = [
@@ -173,8 +193,17 @@ const AnalysisOverviewPage = () => {
         <p className="text-gray-400 mt-1">Manage and initiate your data analysis tasks.</p>
       </header>
 
-      {/* Section to Run New Analysis */}
-      <section className="mb-10 bg-gray-800 p-6 rounded-lg shadow-lg">
+      {/* Top-level Tabs */}
+      <Tabs value={activeTab} onValueChange={(val) => setActiveTab(val as 'analysis' | 'whales')}>
+        <TabsList className="mb-6">
+          <TabsTrigger value="analysis">Analysis Tasks</TabsTrigger>
+          <TabsTrigger value="whales">Whale Tracker</TabsTrigger>
+        </TabsList>
+
+        {/* -------------------- ANALYSIS TASKS TAB -------------------- */}
+        <TabsContent value="analysis" className="space-y-10">
+          {/* Section to Run New Analysis */}
+          <section className="bg-gray-800 p-6 rounded-lg shadow-lg">
         <h2 className="text-2xl font-semibold mb-4 text-blue-300 border-b border-gray-700 pb-2">
           <PlusCircle className="inline-block h-6 w-6 mr-2 align-text-bottom" />
           Run New Analysis
@@ -226,8 +255,8 @@ const AnalysisOverviewPage = () => {
         </form>
       </section>
 
-      {/* Section for Analysis Tasks List */}
-      <section className="bg-gray-800 p-6 rounded-lg shadow-lg">
+          {/* Section for Analysis Tasks List */}
+          <section className="bg-gray-800 p-6 rounded-lg shadow-lg">
         <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
           <h2 className="text-2xl font-semibold text-blue-300">
             <ListFilter className="inline-block h-6 w-6 mr-2 align-text-bottom" />
@@ -330,7 +359,14 @@ const AnalysisOverviewPage = () => {
             ))}
           </div>
         )}
-      </section>
+          </section>
+        </TabsContent>
+
+        {/* -------------------- WHALE TRACKER TAB -------------------- */}
+        <TabsContent value="whales">
+          <WhaleDashboard />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 };

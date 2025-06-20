@@ -14,10 +14,15 @@ from backend.jobs.sim_graph_job import (
     run_sim_graph_ingestion_job,
     batch_sim_graph_ingestion_job,
 )
+from backend.api.v1.whale_endpoints import router as whale_router
 
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+# --------------------------------------------------------------------------- #
+#                   Include Whale Movement Tracker Endpoints                  #
+# --------------------------------------------------------------------------- #
+router.include_router(whale_router)
 
 
 # Request/Response Models
