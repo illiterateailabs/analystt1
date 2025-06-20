@@ -84,6 +84,8 @@ Legend | Meaning
 | WalletAnalysisPanel | `WalletAnalysisPanel.tsx` | ✓ | Tokens / Activity / NFTs / Risk |
 | WhaleDashboard | `WhaleDashboard.tsx` | ✓ | Overview, Whales, Movements, Coordination |
 | Progress Visualization | `TaskProgress.tsx` | ✓ | Real-time WebSocket updates |
+| TransactionFlowPanel | `TransactionFlowPanel.tsx` | ✓ | Interactive money-flow network & metrics |
+| CrossChainIdentityPanel | `CrossChainIdentityPanel.tsx` | ✓ | Multi-chain identity clusters & bridge analysis |
 | Graph Explorer (future) | planned d3 / cytoscape view | 🔧 | Q3 roadmap |
 
 ---
@@ -97,6 +99,7 @@ Legend | Meaning
 | Dashboard & Analysis | `/dashboard`, `/analysis` | ✓ | Core workflows |
 | Prompt Manager | `/prompts` | ✓ | CrewAI prompt CRUD |
 | Whale Tracker Tab | `/analysis` top-level Tabs | ✓ | Real-time tracking |
+| Integrated Analysis Dashboard | `AnalysisPanel.tsx` | ✓ | Vertical-tab UI (Wallet • Flow • Cross-Chain) |
 | Responsive Design | TailwindCSS | ✓ | Mobile-ready |
 | Unit Tests (RTL) | `frontend/**/__tests__` | ✓ 70 % coverage |
 
@@ -113,6 +116,8 @@ Legend | Meaning
 | Graph Ops | Graph | ✓ |
 | Crew Management | Crew | ✓ |
 | Prompts & Templates | Prompts | ✓ |
+| Transaction Flow | Flow | ✓ |
+| Cross-Chain Identity | CrossChain | ✓ |
 | Webhooks | Webhooks | ✓ |
 | WebSockets (task progress) | WS | ✓ |
 

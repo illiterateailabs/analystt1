@@ -1,14 +1,14 @@
 # Analystt1 · MASTER_STATUS.md  
-*Last updated: 2025-06-20*
+*Last updated: 2025-06-21*
 
 ---
 
 ## 1. Current Version & Release Status  
 | Branch | Version | Codename | Release State | Tag |
 |--------|---------|----------|---------------|-----|
-| `mina` | **1.7.0-beta** | *“Whale Watch”* | **BETA / Feature-Freeze** | n/a |
-| `main` | 1.6.4-beta | *“Frontend 70 %”* | Stable | `v1.6.4-beta` |
-| Feature | `droid/whale-movement-tracker` | – | merged → `mina` | – |
+| `mina` | **1.8.0-beta** | *“Graph Analytics&nbsp;UI”* | **BETA / Feature-Freeze** | n/a |
+| `main` | 1.7.0-beta | *“Whale Watch”* | Stable | `v1.7.0-beta` |
+| Feature | `droid/frontend-integration-complete` | – | merged → `mina` | – |
 
 `1.7.0-beta` introduces full **Whale Movement Tracker** capabilities and finalises multichain Sim API ingestion across backend, graph and UI.
 
@@ -18,6 +18,8 @@
 - **Full Sim API Suite** – Balances, Activity, Collectibles, Token-Info, Token-Holders, SVM Balances/Tx  
 - **Wallet Analysis Panel** – Tokens, Activity, NFTs, Risk Score, Infinite Scroll  
 - **Whale Movement Tracker (NEW)** – Real-time whale detection, large movement feed, coordination-pattern analytics  
+- **Transaction Flow Networks (NEW)** – Interactive money-flow graphs with peel-chain / circular detection  
+- **Cross-Chain Identity Analysis (NEW)** – Multi-chain wallet clustering, bridge tracking & risk scoring  
 - **Risk Scoring Engine** – Heuristic score (0-100) with liquidity and behavioural factors  
 - **Graph Enrichment Pipeline** – Neo4j schema + async ingestion jobs  
 - **CrewAI Multi-Agent Framework** – Config-driven crews & tools, Gemini LLM integration  
@@ -59,6 +61,7 @@
 | 2025-06-12 | **Full Sim API Integration** | 1.6.0-beta | ✅ |
 | 2025-06-17 | Frontend Test Coverage ≥ 70 % | 1.6.4-beta | ✅ |
 | 2025-06-20 | **Whale Movement Tracker** | 1.7.0-beta | ✅ |
+| 2025-06-21 | **Graph Analytics UI Completion** | 1.8.0-beta | ✅ |
 
 ---
 
@@ -67,6 +70,7 @@
 - Real-time activity feed (send/receive/swap/approve/call)
 - NFT gallery with OpenSea enrichment
 - Token metadata & on-chain liquidity metrics
+- Interactive **Transaction Flow** and **Cross-Chain Identity** visualizations
 - Fraud pattern library & graph-based investigations
 - Human-in-the-loop review workflow (pause / resume)
 - Secure code-exec sandbox (e2b) for AI-generated analytics
@@ -82,6 +86,17 @@
 | **Dashboard UI** | `frontend/src/components/analysis/WhaleDashboard.tsx` | 4-tab interface (Overview, Whales, Movements, Coordination) with alerts & charts |
 | **SimClient** | `backend/integrations/sim_client.py` | Async client, retry & pagination for all Sim routes |
 | **Analysis Page Integration** | `frontend/src/app/analysis/page.tsx` | Added top-level “Whale Tracker” tab |
+
+---
+
+## 7. Recent Additions · *Graph Analytics UI* (v1.8.0)  
+| Component | Path | Description |
+|-----------|------|-------------|
+| **TransactionFlowPanel** | `frontend/src/components/analysis/TransactionFlowPanel.tsx` | vis-network graph, metrics, pattern highlighting, export controls |
+| **CrossChainIdentityPanel** | `frontend/src/components/analysis/CrossChainIdentityPanel.tsx` | Identity clusters, bridge usage, multi-chain presence UI |
+| **AnalysisPanel** | `frontend/src/components/analysis/AnalysisPanel.tsx` | Vertical-tabs dashboard integrating Wallet, Flow, Cross-Chain views |
+| **API Client Enhancements** | `frontend/src/lib/api.ts` | Added Sim endpoints + analysis routes for flow & identity |
+| **Backend Endpoints** | `backend/api/v1/analysis.py` | `/transaction-flow/*`, `/cross-chain/*` fully documented |
 
 ---
 
