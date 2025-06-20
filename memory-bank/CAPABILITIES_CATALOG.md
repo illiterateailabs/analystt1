@@ -1,130 +1,151 @@
 # Capabilities Catalog  
-*File `memory-bank/CAPABILITIES_CATALOG.md` · last updated 2025-06-17*
+*File: `memory-bank/CAPABILITIES_CATALOG.md` · last updated 2025-06-20*
 
-A consolidated index of **features, tools and integrations** that power the Analyst Augmentation Agent.  
-Use this catalog to quickly assess what is already live, what is under active development, and what is on the roadmap.
+A structured reference of **all functional capabilities** in the Analystt1 platform.  
+Use this catalog to discover existing features, understand integration points, and track roadmap status.
 
 Legend | Meaning  
 -------|---------  
-✓ Implemented | Feature is live in `main`  
-🚧 In-progress | Work started (open PR / flagged in backlog)  
-🛠 Planned | Approved roadmap item, no code yet  
-❌ Deprecated | Superseded / removed
+✓ Implemented | Feature is live in `main` / `mina`  
+🚧 In-progress | Work started (open PR / flagged)  
+🔧 Planned | Approved roadmap item, no code yet  
+✗ Deprecated | Superseded / removed  
 
 ---
 
-## 1 · Core Platform
+## 1 · Blockchain Data Analysis  
 
 | Capability | Module / Path | Status | Notes |
 |------------|---------------|--------|-------|
-| FastAPI REST API | `backend/main.py` + `backend/api/v1/*` | ✓ | Versioned under `/api/v1` |
-| Async Postgres ORM | `backend/database.py` (SQLAlchemy 2 async) | ✓ | StaticPool (dev) / QueuePool (prod) |
-| Auth & RBAC (JWT) | `backend/auth/*` | ✓ | HS256; cookie rotation 🛠 |
-| CrewAI Orchestration | `backend/agents/*` | ✓ | Multi-agent workflows |
-| Task Progress WebSockets | `backend/api/v1/ws_progress.py` | ✓ | Real-time task updates |
+| Multi-chain Balances | `sim_balances_tool.py` | ✓ | 60 + EVM chains |
+| Chronological Activity | `sim_activity_tool.py` | ✓ | Transfers, swaps, approvals, calls |
+| NFT Collectibles | `sim_collectibles_tool.py` | ✓ | ERC721 / 1155, OpenSea enrichment |
+| Transaction Details | `sim_graph_ingestion_tool.py` + Sim `/transactions` proxied | ✓ | Raw tx for forensic drill-down |
+| Token Metadata & Liquidity | `sim_token_info_tool.py` | ✓ | Price, decimals, pool_size |
+| Token Holder Distribution | `sim_token_holders_tool.py` | ✓ | Whale concentration analysis |
+| Solana Balances / Tx | `sim_svm_balances_tool.py` | ✓ | SVM beta routes |
 
 ---
 
-## 2 · AI & Analysis
+## 2 · 🐋 Whale Movement Tracking (**NEW MAJOR FEATURE**)  
 
-| Capability | Module / Tool | Status | Notes |
-|------------|---------------|--------|-------|
-| Gemini Text Generation | `GeminiClient` (`backend/integrations/gemini_client.py`) | ✓ | 1.5-pro preview |
-| Gemini Vision (Image) | same as above | ✓ | `/chat/analyze-image` endpoint |
-| Cypher Generation (NLQ) | `GeminiClient.generate_cypher_query` | ✓ | Converts natural language → Cypher |
-| Fraud ML Toolkit (XGBoost removed) | `backend/agents/tools/fraud_ml_tool.py` | ✓ | Traditional classifiers |
-| GNN Fraud Detection | `backend/agents/tools/gnn_*` | 🚧 | Models training pipeline exists; serving API pending |
-| Time-series Anomaly Detection | `backend/agents/tools/crypto_anomaly_tool.py` (ADTK) | ✓ | Crypto market patterns |
-| Code-Execution Sandbox | `e2b.dev` via `e2b_client.py` | ✓ | Runs python notebooks safely |
-
----
-
-## 3 · Graph & Data Storage
-
-| Capability | Module / Path | Status | Notes |
-|------------|---------------|--------|-------|
-| Neo4j 5 Driver (Bolt) | `backend/integrations/neo4j_client.py` | ✓ | Singleton pool; schema auto-init |
-| Graph Schema Introspection API | `GET /graph/schema` | ✓ | Exposes labels, rel types, indexes |
-| Cypher Query API | `POST /graph/query` | ✓ | Raw Cypher exec |
-| Natural-Language Graph Query | `POST /graph/nlq` | ✓ | NLQ → Cypher |
-| Graph Centrality Metrics | `POST /graph/centrality` | 🛠 | Planned GDS algorithms endpoint |
-| Graph-based Entity Storage | `_store_entities_in_graph` helper | 🚧 | Basic node insert; rel logic TODO |
+| Sub-Capability | Module / Path | Status | Notes |
+|----------------|---------------|--------|-------|
+| WhaleDetectionTool | `backend/agents/tools/whale_detection_tool.py` | ✓ | Tier1 / Tier2 / Active classification |
+| Large Movement Feed | `WhaleDashboard.tsx` | ✓ | ≥ $100 k tx feed (configurable) |
+| Coordination Pattern Detection | same tool | ✓ | DISTRIBUTION / ACCUMULATION / CIRCULAR |
+| Real-time Monitoring API | `backend/api/v1/whale_endpoints.py` `/monitor` | ✓ | Alerts with confidence scores |
+| Whale Statistics | `/whale/stats` | ✓ | Tier counts, total value, chain split |
+| Graph Integration | event `GraphAddEvent(type='whale_detection')` | ✓ | Nodes & edges for whale analytics |
 
 ---
 
-## 4 · Workflow & HITL
-
-| Capability | Module / Path | Status | Notes |
-|------------|---------------|--------|-------|
-| Crew Pause / Resume | `backend/api/v1/crew.py` | ✓ | Awaiting human review |
-| Compliance Review Webhooks | `backend/api/v1/webhooks.py` | ✓ | Slack/Email/Teams + custom URL |
-| Review Callback Handling | same file | ✓ | Updates task status |
-| Persistent Review Storage | — | 🛠 | Planned Postgres schema `hitl_reviews` |
-| Conversation Persistence | `backend/api/v1/chat.py` | 🚧 | In-memory → Postgres migration 🛠 |
-
----
-
-## 5 · Security & Compliance
+## 3 · Risk Assessment Tools  
 
 | Capability | Module | Status | Notes |
 |------------|--------|--------|-------|
-| JWT Access & Refresh | `auth/jwt_handler.py` | ✓ | Refresh rotation roadmap 🛠 |
-| Role-based Access Control | `auth/rbac.py` | ✓ | Fine-grained scopes |
-| Rate Limiting | SlowAPI (config pending) | 🛠 | Not yet enabled |
-| Secrets via `.env` | `.env.example` | ✓ | Docker secrets integration roadmap 🛠 |
-| Security Scanning CI | Bandit, Safety, npm-audit | ✓ | GH Actions job `security-scan` |
+| Wallet Risk Score | `/sim/risk-score/{wallet}` | ✓ | Liquidity, velocity, approvals |
+| Token Liquidity Flagging | part of Balances API | ✓ | `low_liquidity` boolean + pool_size |
+| Whale Risk Level | Whale detection stats | ✓ | Tier-based & behaviour risk |
 
 ---
 
-## 6 · Observability & DevOps
+## 4 · Fraud Detection Patterns  
 
-| Capability | Module / Tool | Status | Notes |
-|------------|---------------|--------|-------|
-| Structured JSON Logging | `backend/core/logging.py` (structlog) | ✓ | Console + file |
-| Prometheus Metrics | `backend/core/metrics.py` | ✓ | `/metrics` endpoint |
-| Sentry Error Reporting | Integration scaffold | 🚧 | DSN placeholder |
-| GitHub Actions CI Matrix | `.github/workflows/ci.yml` | ✓ | Python & Node versions |
-| Code Coverage Upload | Codecov | ✓ | Separate flags: backend / frontend |
-| CodeQL Static Analysis | GH `codeql-analysis` job | ✓ | Python + JS |
-
----
-
-## 7 · Front-end UI
-
-| Capability | Path | Status | Notes |
-|------------|------|--------|-------|
-| Next.js 14 App Router | `frontend/src/app` | ✓ | TS, Tailwind |
-| Auth Pages (Login/Register) | `frontend/src/app/login`, `/register` | ✓ | Hooks to JWT API |
-| Analysis Dashboard | `/analysis`, `/dashboard` | ✓ | Graph vis + risk scoring |
-| Prompt Management UI | `/prompts` | ✓ | Agent prompt CRUD |
-| React Query v5 Integration | global provider | ✓ | Server-state cache |
-| ESLint + Prettier | config files | ✓ | CI gate |
-| Unit / Component Tests | Jest + RTL | 🚧 | Scaffold ready (coverage goal 70 %) |
-| E2E Tests (Playwright) | — | 🛠 | Roadmap Q2 |
+| Pattern | Detection Logic | Module / Tool | Status |
+|---------|-----------------|---------------|--------|
+| Low-liquidity Dump | Low pool_size + large sell | Risk Score + Activity | ✓ |
+| Peel-Chain Structuring | Deep send chains | Pattern library YAML + graph query | ✓ |
+| NFT Wash Trading | Same NFT round-trips | Collectibles + Activity | ✓ |
+| Whale Concentration | Top-10 holders > 90 % | Token-Holders tool | ✓ |
+| Circular Tx | A→B→C→A cycles (≥3) | WhaleDetectionTool | ✓ |
+| Bridge Abuse | Outflow chain A → inflow chain B < 5 min | Multi-chain Balances + Activity | 🔧 |
 
 ---
 
-## 8 · Testing & Quality Gates
+## 5 · Data Sources & Integrations  
 
-| Capability | Tool | Status | Notes |
-|------------|------|--------|-------|
-| Backend Unit & Integration Tests | Pytest (+asyncio, cov) | ✓ | ~58 % coverage |
-| Frontend Unit Tests | Jest + RTL | 🚧 | Seed tests committed |
-| API Contract Tests | Pytest ‑ `test_api_*` | ✓ | FastAPI testclient |
-| Lint / Type-check Gates | Ruff, Mypy, ESLint, tsc | ✓ | Fail build on error |
-| CI Security Gates | Bandit, Safety, npm-audit | ✓ | High severity blocking |
-
----
-
-## 9 · Deprecated / Removed
-
-| Item | Reason | Replacement |
-|------|--------|-------------|
-| `xgboost` dep | Large wheels, CI timeouts | Standard scikit-learn models |
-| `spacy`, `transformers` | Gemini handles NLP | — |
-| `web3`, `eth-account` | No on-chain tx signing required | — |
+| Source / Service | Purpose | Status |
+|------------------|---------|--------|
+| **Sim APIs** | Real-time on-chain data (EVM + SVM) | ✓ |
+| OpenSea API | NFT image / metadata enrichment | ✓ |
+| Gemini LLM | Code & query generation, explanations | ✓ |
+| Neo4j 5 | Graph persistence & analytics | ✓ |
+| PostgreSQL | Auth, conversations, HITL reviews | ✓ |
+| Prometheus | Metrics collection | ✓ |
+| Sentry | Error telemetry | 🚧 scaffold |
 
 ---
 
-*Maintain this catalog with every significant feature merge.  
-Add new rows, adjust status, and remove deprecated items to keep the team aligned.*  
+## 6 · Analytics & Visualization  
+
+| Capability | Path / Component | Status | Notes |
+|------------|-----------------|--------|-------|
+| WalletAnalysisPanel | `WalletAnalysisPanel.tsx` | ✓ | Tokens / Activity / NFTs / Risk |
+| WhaleDashboard | `WhaleDashboard.tsx` | ✓ | Overview, Whales, Movements, Coordination |
+| Progress Visualization | `TaskProgress.tsx` | ✓ | Real-time WebSocket updates |
+| Graph Explorer (future) | planned d3 / cytoscape view | 🔧 | Q3 roadmap |
+
+---
+
+## 7 · User Interface Capabilities  
+
+| Feature | Path | Status | Notes |
+|---------|------|--------|-------|
+| Next.js 14 App Router | `frontend/src/app` | ✓ | SSR + static export |
+| Auth Pages | `/login`, `/register` | ✓ | JWT flow |
+| Dashboard & Analysis | `/dashboard`, `/analysis` | ✓ | Core workflows |
+| Prompt Manager | `/prompts` | ✓ | CrewAI prompt CRUD |
+| Whale Tracker Tab | `/analysis` top-level Tabs | ✓ | Real-time tracking |
+| Responsive Design | TailwindCSS | ✓ | Mobile-ready |
+| Unit Tests (RTL) | `frontend/**/__tests__` | ✓ 70 % coverage |
+
+---
+
+## 8 · API Capabilities  
+
+| Endpoint Group | Swagger Tag | Status |
+|----------------|-------------|--------|
+| Auth & JWT | Authentication | ✓ |
+| Chat & LLM | Chat | ✓ |
+| Analysis & Code | Analysis | ✓ |
+| Whale Tracking | Whale | ✓ |
+| Graph Ops | Graph | ✓ |
+| Crew Management | Crew | ✓ |
+| Prompts & Templates | Prompts | ✓ |
+| Webhooks | Webhooks | ✓ |
+| WebSockets (task progress) | WS | ✓ |
+
+---
+
+## 9 · Security & Compliance  
+
+| Feature | Implementation | Status |
+|---------|----------------|--------|
+| JWT Access & Refresh | `auth/jwt_handler.py` | ✓ |
+| RBAC Decorators | `auth/rbac.py` | ✓ |
+| CSRF-safe Cookies | `auth/secure_cookies.py` | ✓ |
+| Rate Limiting | SlowAPI middleware | ✓ default 100/min |
+| Secrets Management | `.env` + Docker secrets roadmap | ✓ / 🔧 |
+| Dependency Scanning | Bandit, Safety, npm-audit | ✓ |
+| Static Analysis | Ruff, Mypy, ESLint, TS | ✓ |
+| Error Monitoring | Sentry SDK (backend) | 🚧 |
+
+---
+
+## 10 · Performance & Scalability  
+
+| Aspect | Mechanism | Status | Notes |
+|--------|-----------|--------|-------|
+| Async I/O | FastAPI + httpx + async SQLAlchemy | ✓ |
+| Background Jobs | `sim_graph_job.py` (async) | ✓ |
+| Pagination | Cursor-based across Sim APIs | ✓ |
+| Retry / Backoff | Tenacity + custom logic | ✓ |
+| WebSockets | Real-time progress & alerts | ✓ |
+| CI Matrix | Py 3.10/3.11 & Node 18/20 | ✓ |
+| Dockerised Services | `docker-compose.yml` | ✓ |
+| Horizontal Scaling | Containers + Neo4j cluster-ready | 🔧 roadmap |
+
+---
+
+*Maintain this catalog on every significant merge to keep the entire team aligned on **what the platform can do** and **where it is headed**.*  
