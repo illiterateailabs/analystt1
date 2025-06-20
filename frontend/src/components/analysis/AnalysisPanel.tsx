@@ -1,48 +1,107 @@
 'use client'
 
 import { useState } from 'react'
-import { useQuery, useMutation } from 'react-query'
+import { useQuery, useMutation } from '@tanstack/react-query' // Changed from 'react-query' to '@tanstack/react-query'
 import { analysisAPI, handleAPIError } from '@/lib/api'
 import toast from 'react-hot-toast'
-import { 
-  ChartBarIcon, 
-  ExclamationTriangleIcon,
-  PlayIcon,
-  DocumentTextIcon 
-} from '@heroicons/react/24/outline'
+import {
+  Box,
+  Tabs,
+  Tab,
+  Typography,
+  TextField,
+  Button,
+  CircularProgress,
+  Alert,
+  AlertTitle,
+  Paper,
+  Divider,
+} from '@mui/material'; // Material-UI imports
+import { styled } from '@mui/material/styles'; // For styled components
+
+// Material-UI Icons
+import {
+  Wallet as WalletIcon,
+  SwapHoriz as SwapHorizIcon,
+  Public as PublicIcon,
+  ChartBar as ChartBarIcon,
+  BugReport as BugReportIcon, // Using BugReport for Fraud Detection
+  Code as CodeIcon,
+  Info as InfoIcon,
+} from '@mui/icons-material';
+
+// Import new analysis components
+import WalletAnalysisPanel from './WalletAnalysisPanel';
+import TransactionFlowPanel from './TransactionFlowPanel';
+import CrossChainIdentityPanel from './CrossChainIdentityPanel';
+
+// Styled components for consistency
+const StyledPanel = styled(Box)(({ theme }) => ({
+  display: 'flex',
+  height: '100%',
+  backgroundColor: theme.palette.background.paper,
+}));
+
+const LeftPanel = styled(Box)(({ theme }) => ({
+  width: '350px', // Fixed width for the left panel
+  borderRight: `1px solid ${theme.palette.divider}`,
+  display: 'flex',
+  flexDirection: 'column',
+  [theme.breakpoints.down('md')]: {
+    width: '100%', // Full width on smaller screens
+    borderRight: 'none',
+    borderBottom: `1px solid ${theme.palette.divider}`,
+  },
+}));
+
+const RightPanel = styled(Box)(({ theme }) => ({
+  flexGrow: 1,
+  display: 'flex',
+  flexDirection: 'column',
+  overflow: 'hidden', // Ensure content within is scrollable if needed
+}));
+
+const TabContent = styled(Box)(({ theme }) => ({
+  flexGrow: 1,
+  overflowY: 'auto', // Enable scrolling for tab content
+  padding: theme.spacing(3),
+}));
+
+type ActiveTab = 'wallet' | 'transaction-flow' | 'cross-chain' | 'analysis' | 'fraud' | 'code';
 
 export function AnalysisPanel() {
-  const [analysisTask, setAnalysisTask] = useState('')
-  const [codeToExecute, setCodeToExecute] = useState('')
-  const [activeTab, setActiveTab] = useState<'analysis' | 'fraud' | 'code'>('analysis')
+  const [analysisTask, setAnalysisTask] = useState('');
+  const [codeToExecute, setCodeToExecute] = useState('');
+  const [activeTab, setActiveTab] = useState<ActiveTab>('wallet'); // Default to Wallet Analysis
+  const [walletAddressInput, setWalletAddressInput] = useState(''); // State for wallet address input
 
   // Fraud detection query
   const { data: fraudData, isLoading: fraudLoading, refetch: refetchFraud } = useQuery(
-    'fraud-patterns',
+    ['fraud-patterns'],
     () => analysisAPI.detectFraudPatterns('money_laundering', 50),
     {
       enabled: false, // Don't auto-fetch
       onError: (error) => {
-        const errorInfo = handleAPIError(error)
-        toast.error(errorInfo.message)
+        const errorInfo = handleAPIError(error);
+        toast.error(errorInfo.message);
       },
     }
-  )
+  );
 
   // Analysis mutation
   const analysisMutation = useMutation(
     (task: string) => analysisAPI.performAnalysis(task, 'graph'),
     {
       onSuccess: (response) => {
-        toast.success('Analysis completed successfully')
-        console.log('Analysis results:', response.data)
+        toast.success('Analysis completed successfully');
+        console.log('Analysis results:', response.data);
       },
       onError: (error) => {
-        const errorInfo = handleAPIError(error)
-        toast.error(errorInfo.message)
+        const errorInfo = handleAPIError(error);
+        toast.error(errorInfo.message);
       },
     }
-  )
+  );
 
   // Code execution mutation
   const codeExecutionMutation = useMutation(
@@ -50,100 +109,105 @@ export function AnalysisPanel() {
     {
       onSuccess: (response) => {
         if (response.data.success) {
-          toast.success('Code executed successfully')
+          toast.success('Code executed successfully');
         } else {
-          toast.error('Code execution failed')
+          toast.error('Code execution failed');
         }
-        console.log('Execution results:', response.data)
+        console.log('Execution results:', response.data);
       },
       onError: (error) => {
-        const errorInfo = handleAPIError(error)
-        toast.error(errorInfo.message)
+        const errorInfo = handleAPIError(error);
+        toast.error(errorInfo.message);
       },
     }
-  )
+  );
 
   const handleAnalysis = () => {
-    if (!analysisTask.trim()) return
-    analysisMutation.mutate(analysisTask)
-  }
+    if (!analysisTask.trim()) return;
+    analysisMutation.mutate(analysisTask);
+  };
 
   const handleCodeExecution = () => {
-    if (!codeToExecute.trim()) return
-    codeExecutionMutation.mutate(codeToExecute)
-  }
+    if (!codeToExecute.trim()) return;
+    codeExecutionMutation.mutate(codeToExecute);
+  };
 
   const handleFraudDetection = () => {
-    refetchFraud()
-  }
+    refetchFraud();
+  };
 
-  return (
-    <div className="flex h-full bg-gray-50">
-      {/* Left panel - Controls */}
-      <div className="w-1/3 bg-white border-r border-gray-200 flex flex-col">
-        {/* Header */}
-        <div className="p-6 border-b border-gray-200">
-          <h2 className="text-xl font-semibold text-gray-900 flex items-center">
-            <ChartBarIcon className="h-6 w-6 mr-2" />
-            Data Analysis
-          </h2>
-          <p className="text-sm text-gray-500 mt-1">
-            AI-powered analysis and fraud detection
-          </p>
-        </div>
+  const handleTabChange = (_event: React.SyntheticEvent, newValue: ActiveTab) => {
+    setActiveTab(newValue);
+  };
 
-        {/* Tabs */}
-        <div className="border-b border-gray-200">
-          <nav className="flex space-x-8 px-6" aria-label="Tabs">
-            {[
-              { id: 'analysis', name: 'Analysis', icon: ChartBarIcon },
-              { id: 'fraud', name: 'Fraud Detection', icon: ExclamationTriangleIcon },
-              { id: 'code', name: 'Code Execution', icon: PlayIcon },
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={`${
-                  activeTab === tab.id
-                    ? 'border-primary-500 text-primary-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center`}
-              >
-                <tab.icon className="h-4 w-4 mr-2" />
-                {tab.name}
-              </button>
-            ))}
-          </nav>
-        </div>
-
-        {/* Tab content */}
-        <div className="flex-1 p-6 overflow-y-auto">
-          {activeTab === 'analysis' && (
+  const renderActiveTabContent = () => {
+    switch (activeTab) {
+      case 'wallet':
+        return (
+          <Box sx={{ p: 3 }}>
+            <TextField
+              label="Wallet Address"
+              fullWidth
+              value={walletAddressInput}
+              onChange={(e) => setWalletAddressInput(e.target.value)}
+              placeholder="e.g., 0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
+              sx={{ mb: 3 }}
+            />
+            {walletAddressInput ? (
+              <WalletAnalysisPanel walletAddress={walletAddressInput} />
+            ) : (
+              <Alert severity="info">
+                <AlertTitle>Enter a Wallet Address</AlertTitle>
+                Please enter a wallet address to view its analysis.
+              </Alert>
+            )}
+          </Box>
+        );
+      case 'transaction-flow':
+        return (
+          <Box sx={{ p: 3 }}>
+            <TransactionFlowPanel />
+          </Box>
+        );
+      case 'cross-chain':
+        return (
+          <Box sx={{ p: 3 }}>
+            <CrossChainIdentityPanel />
+          </Box>
+        );
+      case 'analysis':
+        return (
+          <Box sx={{ p: 3 }}>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <Typography variant="subtitle1" gutterBottom>
                   Analysis Task Description
-                </label>
-                <textarea
+                </Typography>
+                <TextField
                   value={analysisTask}
                   onChange={(e) => setAnalysisTask(e.target.value)}
                   placeholder="e.g., Analyze transaction patterns to identify potential money laundering schemes"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
+                  fullWidth
+                  multiline
                   rows={4}
+                  variant="outlined"
                 />
               </div>
-              
-              <button
+
+              <Button
+                variant="contained"
+                color="primary"
+                fullWidth
                 onClick={handleAnalysis}
                 disabled={!analysisTask.trim() || analysisMutation.isLoading}
-                className="w-full btn-primary"
+                startIcon={analysisMutation.isLoading ? <CircularProgress size={20} color="inherit" /> : <ChartBarIcon />}
               >
                 {analysisMutation.isLoading ? 'Analyzing...' : 'Start Analysis'}
-              </button>
+              </Button>
 
               {/* Quick analysis templates */}
-              <div className="mt-6">
-                <h3 className="text-sm font-medium text-gray-700 mb-3">Quick Templates</h3>
+              <Box sx={{ mt: 3 }}>
+                <Typography variant="subtitle2" gutterBottom>Quick Templates</Typography>
                 <div className="space-y-2">
                   {[
                     'Identify high-risk transaction patterns',
@@ -151,97 +215,114 @@ export function AnalysisPanel() {
                     'Detect circular money flows',
                     'Find suspicious account clustering',
                   ].map((template) => (
-                    <button
+                    <Button
                       key={template}
+                      fullWidth
+                      variant="outlined"
                       onClick={() => setAnalysisTask(template)}
-                      className="w-full text-left px-3 py-2 text-sm bg-gray-50 hover:bg-gray-100 rounded border"
+                      sx={{ justifyContent: 'flex-start', textTransform: 'none' }}
                     >
                       {template}
-                    </button>
+                    </Button>
                   ))}
                 </div>
-              </div>
+              </Box>
             </div>
-          )}
-
-          {activeTab === 'fraud' && (
+          </Box>
+        );
+      case 'fraud':
+        return (
+          <Box sx={{ p: 3 }}>
             <div className="space-y-4">
               <div>
-                <h3 className="text-lg font-medium text-gray-900 mb-4">
+                <Typography variant="h6" gutterBottom>
                   Fraud Detection Patterns
-                </h3>
-                
-                <button
+                </Typography>
+
+                <Button
+                  variant="contained"
+                  color="primary"
+                  fullWidth
                   onClick={handleFraudDetection}
                   disabled={fraudLoading}
-                  className="w-full btn-primary mb-4"
+                  startIcon={fraudLoading ? <CircularProgress size={20} color="inherit" /> : <BugReportIcon />}
                 >
                   {fraudLoading ? 'Detecting...' : 'Detect Money Laundering Patterns'}
-                </button>
+                </Button>
 
                 {fraudData?.data && (
-                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                    <h4 className="font-medium text-yellow-800 mb-2">
-                      Detection Results
-                    </h4>
-                    <p className="text-sm text-yellow-700">
+                  <Alert severity="warning" sx={{ mt: 3 }}>
+                    <AlertTitle>Detection Results</AlertTitle>
+                    <Typography variant="body2">
                       Found {fraudData.data.patterns_found} potential patterns
-                    </p>
+                    </Typography>
                     {fraudData.data.explanation && (
-                      <p className="text-sm text-yellow-700 mt-2">
+                      <Typography variant="body2" sx={{ mt: 1 }}>
                         {fraudData.data.explanation}
-                      </p>
+                      </Typography>
                     )}
-                  </div>
+                  </Alert>
                 )}
               </div>
 
               {/* Fraud detection options */}
-              <div className="space-y-3">
-                <h4 className="text-sm font-medium text-gray-700">Detection Types</h4>
-                {[
-                  'Money Laundering Schemes',
-                  'Circular Transactions',
-                  'Suspicious Velocity',
-                  'Account Takeover Patterns',
-                ].map((type) => (
-                  <button
-                    key={type}
-                    className="w-full text-left px-3 py-2 text-sm bg-gray-50 hover:bg-gray-100 rounded border"
-                  >
-                    {type}
-                  </button>
-                ))}
-              </div>
+              <Box sx={{ mt: 3 }}>
+                <Typography variant="subtitle2" gutterBottom>Detection Types</Typography>
+                <div className="space-y-2">
+                  {[
+                    'Money Laundering Schemes',
+                    'Circular Transactions',
+                    'Suspicious Velocity',
+                    'Account Takeover Patterns',
+                  ].map((type) => (
+                    <Button
+                      key={type}
+                      fullWidth
+                      variant="outlined"
+                      sx={{ justifyContent: 'flex-start', textTransform: 'none' }}
+                    >
+                      {type}
+                    </Button>
+                  ))}
+                </div>
+              </Box>
             </div>
-          )}
-
-          {activeTab === 'code' && (
+          </Box>
+        );
+      case 'code':
+        return (
+          <Box sx={{ p: 3 }}>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <Typography variant="subtitle1" gutterBottom>
                   Python Code
-                </label>
-                <textarea
+                </Typography>
+                <TextField
                   value={codeToExecute}
                   onChange={(e) => setCodeToExecute(e.target.value)}
-                  placeholder="import pandas as pd&#10;import numpy as np&#10;&#10;# Your analysis code here"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500 font-mono text-sm"
+                  placeholder="import pandas as pd\nimport numpy as np\n\n# Your analysis code here"
+                  fullWidth
+                  multiline
                   rows={8}
+                  variant="outlined"
+                  InputProps={{ style: { fontFamily: 'monospace', fontSize: '0.875rem' } }}
                 />
               </div>
-              
-              <button
+
+              <Button
+                variant="contained"
+                color="primary"
+                fullWidth
                 onClick={handleCodeExecution}
                 disabled={!codeToExecute.trim() || codeExecutionMutation.isLoading}
-                className="w-full btn-primary"
+                startIcon={codeExecutionMutation.isLoading ? <CircularProgress size={20} color="inherit" /> : <CodeIcon />}
               >
                 {codeExecutionMutation.isLoading ? 'Executing...' : 'Execute Code'}
-              </button>
+              </Button>
 
               {/* Code templates */}
-              <div className="mt-6">
-                <h3 className="text-sm font-medium text-gray-700 mb-3">Code Templates</h3>
+              <Box sx={{ mt: 3 }}>
+                <Typography variant="subtitle2" gutterBottom>Code Templates</Typography>
                 <div className="space-y-2">
                   {[
                     'Basic data analysis',
@@ -249,45 +330,72 @@ export function AnalysisPanel() {
                     'Visualization generation',
                     'Statistical analysis',
                   ].map((template) => (
-                    <button
+                    <Button
                       key={template}
-                      className="w-full text-left px-3 py-2 text-sm bg-gray-50 hover:bg-gray-100 rounded border"
+                      fullWidth
+                      variant="outlined"
+                      sx={{ justifyContent: 'flex-start', textTransform: 'none' }}
                     >
                       {template}
-                    </button>
+                    </Button>
                   ))}
                 </div>
-              </div>
+              </Box>
             </div>
-          )}
-        </div>
-      </div>
+          </Box>
+        );
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <StyledPanel>
+      {/* Left panel - Controls and Tabs */}
+      <LeftPanel>
+        <Box sx={{ p: 3, borderBottom: `1px solid ${theme => theme.palette.divider}` }}>
+          <Typography variant="h5" gutterBottom>
+            Data Analysis
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            AI-powered analysis and fraud detection
+          </Typography>
+        </Box>
+
+        {/* Tabs */}
+        <Tabs
+          orientation="vertical"
+          variant="scrollable"
+          value={activeTab}
+          onChange={handleTabChange}
+          aria-label="Analysis tabs"
+          sx={{ borderRight: 1, borderColor: 'divider', flexGrow: 1 }}
+        >
+          <Tab label="Wallet Analysis" value="wallet" icon={<WalletIcon />} iconPosition="start" />
+          <Tab label="Transaction Flow" value="transaction-flow" icon={<SwapHorizIcon />} iconPosition="start" />
+          <Tab label="Cross-Chain Identity" value="cross-chain" icon={<PublicIcon />} iconPosition="start" />
+          <Divider sx={{ my: 1 }} />
+          <Tab label="General Analysis" value="analysis" icon={<ChartBarIcon />} iconPosition="start" />
+          <Tab label="Fraud Detection" value="fraud" icon={<BugReportIcon />} iconPosition="start" />
+          <Tab label="Code Execution" value="code" icon={<CodeIcon />} iconPosition="start" />
+        </Tabs>
+      </LeftPanel>
 
       {/* Right panel - Results */}
-      <div className="flex-1 flex flex-col">
-        {/* Results header */}
-        <div className="p-6 border-b border-gray-200 bg-white">
-          <h3 className="text-lg font-medium text-gray-900">Analysis Results</h3>
-          <p className="text-sm text-gray-500">
+      <RightPanel>
+        <Box sx={{ p: 3, borderBottom: `1px solid ${theme => theme.palette.divider}` }}>
+          <Typography variant="h6" gutterBottom>
+            Analysis Results
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
             Results and visualizations will appear here
-          </p>
-        </div>
+          </Typography>
+        </Box>
 
-        {/* Results area */}
-        <div className="flex-1 p-6">
-          <div className="h-full bg-white rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center">
-            <div className="text-center">
-              <DocumentTextIcon className="mx-auto h-12 w-12 text-gray-400" />
-              <h3 className="mt-2 text-sm font-medium text-gray-900">
-                Analysis Results
-              </h3>
-              <p className="mt-1 text-sm text-gray-500">
-                Run an analysis to see results and visualizations
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
+        <TabContent>
+          {renderActiveTabContent()}
+        </TabContent>
+      </RightPanel>
+    </StyledPanel>
+  );
 }
