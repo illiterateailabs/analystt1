@@ -387,6 +387,103 @@ export interface SimActivityResponse {
   response_time?: string;
 }
 
+// ------- New Sim API Types (Collectibles / TokenInfo / Holders / Risk) -------
+
+export interface SimCollectible {
+  contract_address: string;
+  token_id: string;
+  token_standard: 'ERC721' | 'ERC1155' | 'UNKNOWN';
+  chain: string;
+  chain_id: number;
+  balance?: string;
+  name?: string;
+  collection_name?: string;
+  image_url?: string;
+}
+
+export interface SimCollectiblesResponse {
+  wallet_address: string;
+  entries: SimCollectible[];
+  next_offset?: string;
+  request_time?: string;
+  response_time?: string;
+}
+
+export interface SimTokenInfo {
+  token_address: string;
+  chain_id: number;
+  chain: string;
+  symbol: string;
+  decimals: number;
+  price_usd?: number;
+  pool_size_usd?: number;
+  pool_type?: string;
+  total_supply?: string;
+}
+
+export interface SimTokenInfoResponse {
+  entries: SimTokenInfo[];
+  request_time?: string;
+  response_time?: string;
+}
+
+export interface SimTokenHolder {
+  wallet_address: string;
+  balance: string;
+  balance_percentage: number;
+  value_usd?: number;
+}
+
+export interface SimTokenHoldersResponse {
+  token_address: string;
+  chain_id: string;
+  holders: SimTokenHolder[];
+  next_offset?: string;
+  request_time?: string;
+  response_time?: string;
+}
+
+export interface SimRiskScore {
+  wallet_address: string;
+  risk_score: number;
+  risk_level: 'LOW' | 'MEDIUM' | 'HIGH';
+  risk_factors: string[];
+  summary: Record<string, any>;
+}
+
+// ------- Transaction-Flow & Cross-Chain Types -------
+
+export interface TransactionFlowMetrics {
+  total_transactions: number;
+  total_value_usd: number;
+  unique_addresses: number;
+  unique_chains: number;
+  average_transaction_value_usd: number;
+  max_transaction_value_usd: number;
+  time_span_hours: number;
+  transaction_density: number;
+  value_density_usd: number;
+  graph_density: number;
+}
+
+export interface TransactionFlowAnalysis {
+  nodes: any[];
+  edges: any[];
+  patterns: any[];
+  metrics: TransactionFlowMetrics;
+  risk_score: number;
+  risk_factors: string[];
+}
+
+export interface CrossChainIdentityAnalysis {
+  wallets: any[];
+  cross_chain_movements: any[];
+  identity_clusters: any[];
+  bridge_usage: any[];
+  overall_risk_score: number;
+  overall_risk_factors: string[];
+}
+
 
 // Prompt Management Types
 export interface AgentListItem {
@@ -625,6 +722,111 @@ export const analysisAPI = {
     });
     return response.data;
   }
+
+  ,
+  /**
+   * Fetch NFT collectibles owned by a wallet
+   */
+  getSimCollectibles: async (
+    wallet: string,
+    limit: number = 50,
+    offset?: string,
+    chainIds?: string
+  ): Promise<SimCollectiblesResponse> => {
+    const response = await apiClient.get(`/analysis/sim/collectibles/${wallet}`, {
+      params: { limit, offset, chain_ids: chainIds },
+    });
+    return response.data;
+  },
+
+  /**
+   * Fetch token information (price, liquidity) for a token address
+   */
+  getSimTokenInfo: async (
+    tokenAddress: string,
+    chainIds: string
+  ): Promise<SimTokenInfoResponse> => {
+    const response = await apiClient.get(
+      `/analysis/sim/token-info/${tokenAddress}`,
+      { params: { chain_ids: chainIds } }
+    );
+    return response.data;
+  },
+
+  /**
+   * Fetch token holder distribution
+   */
+  getSimTokenHolders: async (
+    chainId: string,
+    tokenAddress: string,
+    limit: number = 100,
+    offset?: string
+  ): Promise<SimTokenHoldersResponse> => {
+    const response = await apiClient.get(
+      `/analysis/sim/token-holders/${chainId}/${tokenAddress}`,
+      { params: { limit, offset } }
+    );
+    return response.data;
+  },
+
+  /**
+   * Fetch wallet risk score (Sim heuristic)
+   */
+  getSimRiskScore: async (wallet: string): Promise<SimRiskScore> => {
+    const response = await apiClient.get(`/analysis/sim/risk-score/${wallet}`);
+    return response.data;
+  },
+
+  /**
+   * Transaction-flow analysis for one or more wallets
+   */
+  analyzeTransactionFlow: async (
+    request: Record<string, any>
+  ): Promise<TransactionFlowAnalysis> => {
+    const response = await apiClient.post(
+      '/analysis/transaction-flow/analyze',
+      request
+    );
+    return response.data;
+  },
+
+  /**
+   * Retrieve flow metrics for a wallet
+   */
+  getTransactionFlowMetrics: async (
+    wallet: string,
+    timeWindowHours: number = 24
+  ): Promise<TransactionFlowMetrics> => {
+    const response = await apiClient.get(
+      `/analysis/transaction-flow/metrics/${wallet}`,
+      { params: { time_window_hours: timeWindowHours } }
+    );
+    return response.data.metrics;
+  },
+
+  /**
+   * Cross-chain identity analysis
+   */
+  analyzeCrossChainIdentity: async (
+    request: Record<string, any>
+  ): Promise<CrossChainIdentityAnalysis> => {
+    const response = await apiClient.post('/analysis/cross-chain/analyze', request);
+    return response.data;
+  },
+
+  /**
+   * Retrieve identity cluster details
+   */
+  getCrossChainClusters: async (
+    clusterId: string,
+    walletAddresses: string[]
+  ): Promise<any> => {
+    const response = await apiClient.get(
+      `/analysis/cross-chain/clusters/${clusterId}`,
+      { params: { wallet_addresses: walletAddresses } }
+    );
+    return response.data;
+  },
 };
 
 // Prompt Management API
