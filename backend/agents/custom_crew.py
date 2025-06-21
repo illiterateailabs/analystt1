@@ -134,6 +134,11 @@ class CustomCrew:
         workflow_name: Optional[str] = None,
         mode: Optional[CrewMode] = None,
         tools: Optional[Dict[str, AbstractApiTool]] = None,
+        *,
+        graph_rag: Optional[Any] = None,            # Graph-Aware RAG service
+        redis_client: Optional[Any] = None,         # Redis client (tiered)
+        evidence_bundle: Optional[Any] = None,      # EvidenceBundle instance
+        extra_tools: Optional[Dict[str, AbstractApiTool]] = None,  # externally-discovered tools
         hitl_callback: Optional[callable] = None,
         environment_vars: Optional[Dict[str, Any]] = None,
     ):
@@ -145,11 +150,25 @@ class CustomCrew:
             workflow_name: Name of the workflow to execute (default: first workflow in config)
             mode: Execution mode (default: from CREW_MODE env var or config)
             tools: Dictionary of tools to use (default: auto-discover)
+            graph_rag: Injected Graph-Aware RAG service (optional)
+            redis_client: Injected Redis client for caching/vector store
+            evidence_bundle: EvidenceBundle to populate during run
+            extra_tools: Additional tool instances (e.g. global registry)
             hitl_callback: Callback function for HITL integration
             environment_vars: Additional environment variables to override config
         """
         self.config_path = Path(config_path)
-        self.tools = tools or {}
+        # Start with any explicitly-supplied tools
+        self.tools: Dict[str, AbstractApiTool] = (tools or {}).copy()
+
+        # Merge in externally-supplied extra tools (e.g. global registry)
+        if extra_tools:
+            self.tools.update(extra_tools)
+
+        # Store service handles for later advanced integrations
+        self.graph_rag = graph_rag
+        self.redis_client = redis_client
+        self.evidence_bundle = evidence_bundle
         self.hitl_callback = hitl_callback
         self.environment_vars = environment_vars or {}
         
@@ -288,6 +307,18 @@ class CustomCrew:
         instantiates them with the appropriate parameters.
         """
         from importlib import import_module
+
+        # ------------------------------------------------------------------ #
+        # 0. Global registry merge (if the tool auto-discovery module exists)
+        # ------------------------------------------------------------------ #
+        try:
+            from backend.api.v1.tools import global_tool_registry  # type: ignore
+            for tool_id, tool_obj in global_tool_registry.items():
+                # Do not overwrite if already provided locally
+                self.tools.setdefault(tool_id, tool_obj)
+        except Exception:
+            # Failing softly keeps this function non-blocking
+            pass
         
         # Get tool configurations
         tool_configs = self.config.tools or {}
@@ -318,6 +349,23 @@ class CustomCrew:
                 logger.warning(f"Could not import tool: {tool_id}")
             except Exception as e:
                 logger.error(f"Error initializing tool {tool_id}: {e}")
+
+        # ------------------------------------------------------------------ #
+        # 3. Inject Graph-Aware RAG as a tool if service was provided
+        # ------------------------------------------------------------------ #
+        if self.graph_rag and "graph_rag" not in self.tools:
+            class _GraphRagTool(AbstractApiTool):  # local lightweight wrapper
+                name = "graph_rag"
+                description = "Graph-Aware RAG: semantic search & embedding over blockchain graph"
+                provider_id = "internal"
+
+                async def _execute(self, query: Dict[str, Any]) -> Dict[str, Any]:
+                    return await self.graph_rag.search(query.get("text", ""), top_k=query.get("k", 5))  # type: ignore
+
+            # Bind service to instance
+            rag_tool = _GraphRagTool()
+            rag_tool.graph_rag = self.graph_rag  # type: ignore
+            self.tools["graph_rag"] = rag_tool
     
     def _initialize_agents(self) -> None:
         """
