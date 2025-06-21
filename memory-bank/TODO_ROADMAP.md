@@ -5,13 +5,25 @@
 
 ---
 
+### 📈 Progress Snapshot (2025-06-22)
+| Phase | Completion |
+|-------|------------|
+| 0 – House-Keeping | **✅ 100 %** |
+| 1 – Data Input → Graph → Cache | **✅ 100 %** |
+| 2 – Modular Agent / Crew Platform | **✅ 100 %** |
+| 3 – RAG & Explainability | **🟢 ≈ 80 %** |
+| 4 – Extensibility Hooks | 🔜 |
+| 5 – Polish & Harden | 🔜 |
+
+---
+
 ## PHASE 0 – House-Keeping (≤ 1 day)
 
 | ID | Task |
 |----|------|
-| 0-1 | Update `MASTER_STATUS.md` & `CAPABILITIES_CATALOG.md` to freeze **v1.8.0-beta** baseline |
-| 0-2 | Enable Sentry DSN in `core/sentry_config.py`; env-var sanity check in docker-compose |
-| 0-3 | Expose Prometheus `/metrics` in local compose → verify baseline traffic & cost counters |
+| 0-1 | ✅ Update `MASTER_STATUS.md` & `CAPABILITIES_CATALOG.md` to freeze **v1.8.0-beta** baseline |
+| 0-2 | ✅ Enable Sentry DSN in `core/sentry_config.py`; env-var sanity check in docker-compose |
+| 0-3 | ✅ Expose Prometheus `/metrics` in local compose → verify baseline traffic & cost counters |
 
 ---
 
@@ -19,11 +31,11 @@
 
 | ID | Task | Notes |
 |----|------|-------|
-| 1-1 | **Provider Registry** (`backend/providers/registry.yaml` + loader) | id, type (`rest`/`graphql`/`ws`), base_url, auth_key |
-| 1-2 | **AbstractApiTool** base class | Common retry/back-off, Prometheus timer, cost tag.  All Sim tools subclass. |
-| 1-3 | Harden `core/events.py` | Typed events: `GraphAddEvent`, `CacheAddEvent`, `LLMUsageEvent`; decorator `@subscribe(event)` |
-| 1-4 | `neo4j_loader.py` helpers | `ingest_balances()`, `ingest_activity()`… single schema touch-point |
-| 1-5 | Redis tiering | DB 0 = short-term cache, DB 1 = vector store; `redis_client.py` wrapper |
+| 1-1 | ✅ **Provider Registry** (`backend/providers/registry.yaml` + loader) | id, type (`rest`/`graphql`/`ws`), base_url, auth_key |
+| 1-2 | ✅ **AbstractApiTool** base class | Common retry/back-off, Prometheus timer, cost tag.  All Sim tools subclass. |
+| 1-3 | ✅ Harden `core/events.py` | Typed events: `GraphAddEvent`, `CacheAddEvent`, `LLMUsageEvent`; decorator `@subscribe(event)` |
+| 1-4 | ✅ `neo4j_loader.py` helpers | `ingest_balances()`, `ingest_activity()`… single schema touch-point |
+| 1-5 | ✅ Redis tiering | DB 0 = short-term cache, DB 1 = vector store; `redis_client.py` wrapper |
 
 ---
 
@@ -31,11 +43,11 @@
 
 | ID | Task |
 |----|------|
-| 2-1 | Formal **crew config convention** (`crews/<domain>/crew.yaml`, `tasks/*.yaml`) |
-| 2-2 | Toggle sequential / hierarchical / planning via `CREW_MODE` env | tests for all paths |
-| 2-3 | Centralise prompt templates (`agents/prompts/`) |
-| 2-4 | Tool auto-discovery stub (MCP-ready) – scan `agents/tools` at startup, expose `/api/v1/tools` |
-| 2-5 | Generic HITL scaffold – pause webhook, review endpoints, `hitl_reviews` table |
+| 2-1 | ✅ Formal **crew config convention** (`crews/<domain>/crew.yaml`, `tasks/*.yaml`) |
+| 2-2 | ✅ Toggle sequential / hierarchical / planning via `CREW_MODE` env (tests for all paths) |
+| 2-3 | ✅ Centralise prompt templates (`agents/prompts/`) |
+| 2-4 | ✅ Tool auto-discovery stub – scan `agents/tools` at startup, expose `/api/v1/tools` |
+| 2-5 | ✅ Generic HITL scaffold – pause webhook, review endpoints, `hitl_reviews` table |
 
 ---
 
@@ -43,9 +55,9 @@
 
 | ID | Task |
 |----|------|
-| 3-1 | **Graph-Aware RAG** service – embed subgraphs → Redis Vector |
-| 3-2 | Standard **EvidenceBundle** object (`narrative`, `evidence`, `raw`) |
-| 3-3 | “Explain-with-Cypher” prototype – store & cite generated Cypher queries |
+| 3-1 | ✅ **Graph-Aware RAG** service – embed subgraphs → Redis Vector |
+| 3-2 | ✅ Standard **EvidenceBundle** object (`narrative`, `evidence`, `raw`) |
+| 3-3 | ⏳ “Explain-with-Cypher” prototype – store & cite generated Cypher queries *(80 %)* |
 
 ---
 
@@ -74,10 +86,10 @@
 
 | Week | Deliverable |
 |------|-------------|
-| 1 | Phase 0 + Provider registry/base tool (Phase 1) → tag **1.8.1** |
-| 2–3 | Complete Phase 1 pipeline |
-| 3 | Phase 2 crew refactor & HITL scaffold |
-| 4 | Phase 3 (Graph-RAG) → release **1.9.0-alpha** |
+| 1 | **✔ Complete** Phase 0 + Provider registry/base tool (Phase 1) — tagged **1.8.1** |
+| 2–3 | **✔ Complete** Phase 1 pipeline |
+| 3 | **✔ Complete** Phase 2 crew refactor & HITL scaffold |
+| 4 | **🚧 In-progress** Phase 3 (Graph-RAG) → releasing **v1.9.0-alpha** |
 | 5 | Phase 4 scaffolds & code-gen script |
 | 6 | Phase 5 hardening & docs |
 
