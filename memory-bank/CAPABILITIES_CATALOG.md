@@ -1,5 +1,5 @@
-# Capabilities Catalog — v1.8.0-beta
-*Feature inventory as of 2025-06-21*
+# Capabilities Catalog — **v1.9.0-alpha**
+*Feature inventory updated 2025-06-22*
 
 ## 🔍 Fraud Detection & Analysis
 
@@ -25,6 +25,9 @@
 - **Balance Tracking**: Live wallet balance monitoring across chains
 - **Token Analysis**: ERC-20/ERC-721 token holder and transfer analysis
 - **Activity Monitoring**: Real-time transaction and contract interaction tracking
+- **Prometheus Metrics**: `/metrics` endpoint exposing rich business & infra metrics
+- **Sentry Error Tracking**: Centralised exception capture & performance tracing
+- **Typed EventBus**: Structured pub/sub event system with async & batching
 
 ### Graph Analytics
 - **Neo4j Integration**: Advanced graph database for relationship analysis
@@ -32,6 +35,11 @@
 - **Subgraph Analysis**: Focused analysis on specific network segments
 - **Centrality Metrics**: Network importance and influence calculations
 - **Path Analysis**: Shortest path and connectivity analysis between entities
+- **Graph-Aware RAG**:  
+  - Vector embeddings for nodes / edges / paths / subgraphs  
+  - Redis Vector store with semantic similarity search  
+  - Query expansion, re-ranking & hybrid search strategies  
+  - Cypher-backed context retrieval for LLM prompts
 
 ### Visualization & Reporting
 - **Interactive Graph Visualization**: Dynamic network relationship displays
@@ -39,6 +47,11 @@
 - **Evidence Bundling**: Structured investigation result packaging
 - **Export Capabilities**: Multiple format support for analysis results
 - **Audit Trail**: Comprehensive investigation history tracking
+- **Evidence Management**:  
+  - Standard `EvidenceBundle` (narrative / evidence / raw)  
+  - Confidence & quality scoring, uncertainty metrics  
+  - Export to JSON / HTML / PDF / DataFrame  
+  - Provenance tracking & chain-of-custody audit events
 
 ## 🤖 AI-Powered Analysis
 
@@ -48,6 +61,11 @@
 - **Hierarchical Planning**: Multi-level task decomposition and execution
 - **Context Awareness**: Persistent memory and cross-session learning
 - **Human-in-the-Loop**: Interactive review and approval workflows
+- **Enhanced Crew Platform**:  
+  - YAML crew configs with agents / tasks / workflows  
+  - `CREW_MODE` toggle (sequential / hierarchical / planning)  
+  - HITL pause / resume integration
+- **Graph-Aware RAG Service**: Seamless LLM context retrieval grounded in graph data
 
 ### LLM Integration
 - **Google Gemini**: Advanced reasoning and natural language processing
@@ -55,6 +73,7 @@
 - **Report Generation**: Automated narrative creation from analytical findings
 - **Query Translation**: Natural language to technical query conversion
 - **Explanation Generation**: Human-readable explanations of complex patterns
+- **Explain-with-Cypher (Proto)**: Captures & cites Cypher queries used for answers *(80 % complete)*
 
 ## 🛠️ Platform Infrastructure
 
@@ -64,6 +83,12 @@
 - **GraphQL Queries**: Flexible data retrieval interface
 - **Webhook Integration**: External system notification capabilities
 - **MCP Protocol**: Model Context Protocol for extensible integrations
+- **Tool Auto-Discovery**: Startup scan of `agents/tools` → `/api/v1/tools` registry  
+  - Health checks, metadata, schemas & MCP manifest  
+  - Sync/async execution endpoints  
+- **Provider Registry**: Central YAML for all external data providers (auth, rate-limit, retry)
+- **Redis Tiering**: DB 0 = cache, DB 1 = vector store (+ Pub/Sub Pipelines)
+- **Prometheus + Sentry Hooks**: First-class observability baked in
 
 ### Security & Authentication
 - **JWT Authentication**: Secure token-based user authentication
@@ -71,6 +96,7 @@
 - **Secure Cookie Handling**: Session management with security best practices
 - **API Rate Limiting**: Protection against abuse and overuse
 - **Input Validation**: Comprehensive request sanitization
+- **Back-Pressure Middleware (Planned)**: Automatic throttling when provider budget low
 
 ### Development & Operations
 - **Docker Compose**: Complete containerized development environment
@@ -78,6 +104,7 @@
 - **Code Quality**: Automated linting, type checking, and formatting
 - **Testing Suite**: Comprehensive unit, integration, and E2E testing
 - **Monitoring Ready**: Structured logging and metrics collection
+- **OpenTelemetry (Planned)**: Distributed tracing across API & agents
 
 ## 📈 Simulation & Modeling
 
@@ -121,6 +148,10 @@
 - **Custom Crew Definitions**: YAML-based workflow configuration
 - **Template Engine**: Reusable analysis and report templates
 - **Hook System**: Extensible event-driven architecture
+- **Human-in-the-Loop (HITL) System**:  
+  - `/api/v1/hitl` endpoints for review queue, templates, stats  
+  - WebSocket push notifications & webhook ingestion  
+  - Auto-timeout with fallback actions
 
 ### Integration Capabilities
 - **API-First Design**: All features accessible via programmatic interface
@@ -130,4 +161,4 @@
 - **Cloud-Native**: Kubernetes and container orchestration ready
 
 ---
-*Capabilities locked for v1.8.0-beta baseline*.
+*Catalog reflects capabilities delivered through **Phase 3 (v1.9.0-alpha)** – further expansion scheduled for Phases 4-5.*
