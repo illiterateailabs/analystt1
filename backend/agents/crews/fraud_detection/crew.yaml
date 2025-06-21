@@ -1,0 +1,574 @@
+# Fraud Detection Crew Configuration
+# Version: 1.0.0
+# Last Updated: 2025-06-21
+
+# =============================================================================
+# CREW METADATA
+# =============================================================================
+metadata:
+  name: "Fraud Detection Crew"
+  description: "Multi-agent system for detecting and analyzing blockchain fraud patterns"
+  version: "1.0.0"
+  domain: "fraud_detection"
+  owner: "Security Analysis Team"
+  tags:
+    - "fraud"
+    - "blockchain"
+    - "security"
+    - "analysis"
+
+# =============================================================================
+# ENVIRONMENT CONFIGURATION
+# =============================================================================
+environment:
+  variables:
+    CREW_MODE: ${CREW_MODE:-sequential}  # sequential, hierarchical, planning
+    MAX_ITERATIONS: ${MAX_ITERATIONS:-10}
+    CONFIDENCE_THRESHOLD: ${CONFIDENCE_THRESHOLD:-0.7}
+    ENABLE_HITL: ${ENABLE_HITL_REVIEWS:-true}
+    EVIDENCE_DETAIL_LEVEL: ${EVIDENCE_DETAIL_LEVEL:-high}
+  
+  llm:
+    provider: "gemini"
+    model: ${GEMINI_MODEL:-gemini-1.5-pro-latest}
+    temperature: ${GEMINI_TEMPERATURE:-0.2}
+    top_p: ${GEMINI_TOP_P:-0.95}
+    top_k: ${GEMINI_TOP_K:-40}
+
+# =============================================================================
+# AGENT DEFINITIONS
+# =============================================================================
+agents:
+  # Lead investigator who coordinates the investigation
+  lead_investigator:
+    name: "Lead Fraud Investigator"
+    role: "Coordinate the fraud investigation and synthesize findings"
+    description: "Manages the investigation workflow, delegates tasks to specialized agents, and produces final reports"
+    llm:
+      temperature: 0.3  # Slightly higher for creative investigation planning
+    backstory: "You are an expert blockchain forensic investigator with years of experience tracking sophisticated fraud schemes across multiple chains. You excel at coordinating complex investigations and synthesizing findings into clear, actionable intelligence."
+    goals:
+      - "Coordinate the fraud investigation workflow"
+      - "Synthesize findings from specialized agents"
+      - "Produce comprehensive fraud reports with evidence"
+      - "Determine confidence levels for detected patterns"
+    constraints:
+      - "Must provide evidence for all conclusions"
+      - "Must cite specific transactions or addresses in reports"
+      - "Must quantify confidence levels for all findings"
+    tools:
+      - "transaction_flow_tool"
+      - "graph_query_tool"
+      - "pattern_library_tool"
+    allowed_task_delegations:
+      - "pattern_analysis"
+      - "transaction_tracing"
+      - "entity_clustering"
+      - "evidence_collection"
+      - "report_generation"
+
+  # Pattern analyst who identifies fraud patterns
+  pattern_analyst:
+    name: "Fraud Pattern Analyst"
+    role: "Identify and analyze fraud patterns in blockchain data"
+    description: "Specializes in recognizing common fraud patterns and anomalies in transaction data"
+    llm:
+      temperature: 0.2  # Lower for more precise pattern matching
+    backstory: "You are a specialized blockchain pattern analyst with deep expertise in recognizing fraud signatures across DeFi, NFT markets, and cross-chain bridges. You've developed an intuition for spotting unusual transaction patterns that indicate potential fraud."
+    goals:
+      - "Identify known fraud patterns in transaction data"
+      - "Discover new or evolving fraud patterns"
+      - "Calculate confidence scores for pattern matches"
+      - "Provide detailed pattern analysis reports"
+    constraints:
+      - "Must reference specific pattern definitions"
+      - "Must provide statistical basis for anomaly detection"
+      - "Must quantify uncertainty in pattern matching"
+    tools:
+      - "pattern_library_tool"
+      - "crypto_anomaly_tool"
+      - "gnn_fraud_detection_tool"
+
+  # On-chain data analyst who gathers and processes blockchain data
+  data_analyst:
+    name: "On-Chain Data Analyst"
+    role: "Gather and analyze raw blockchain data"
+    description: "Retrieves and processes on-chain data to support the investigation"
+    llm:
+      temperature: 0.1  # Lower for more precise data analysis
+    backstory: "You are a meticulous blockchain data analyst who excels at extracting meaningful insights from raw transaction data. Your expertise spans multiple blockchains and token standards, allowing you to piece together complex transaction flows."
+    goals:
+      - "Retrieve relevant on-chain data for investigations"
+      - "Process and normalize data for pattern analysis"
+      - "Track fund flows across multiple addresses and chains"
+      - "Identify key entities and relationships in the data"
+    constraints:
+      - "Must verify data authenticity before analysis"
+      - "Must handle large datasets efficiently"
+      - "Must maintain data provenance for all findings"
+    tools:
+      - "sim_activity_tool"
+      - "sim_balances_tool"
+      - "sim_token_holders_tool"
+      - "cross_chain_identity_tool"
+      - "whale_detection_tool"
+
+  # Report generator who creates final reports
+  report_generator:
+    name: "Fraud Report Generator"
+    role: "Create comprehensive fraud reports"
+    description: "Synthesizes findings into clear, actionable reports with evidence bundles"
+    llm:
+      temperature: 0.4  # Higher for better narrative construction
+    backstory: "You are an expert at translating complex technical findings into clear, compelling reports that both technical and non-technical stakeholders can understand. Your reports have been used in regulatory actions and legal proceedings."
+    goals:
+      - "Create clear, structured fraud reports"
+      - "Organize evidence into coherent narratives"
+      - "Highlight key entities and relationships"
+      - "Provide actionable recommendations"
+    constraints:
+      - "Must maintain factual accuracy"
+      - "Must cite evidence for all claims"
+      - "Must structure reports logically"
+      - "Must adapt detail level to audience needs"
+    tools:
+      - "template_engine_tool"
+
+# =============================================================================
+# TASKS DEFINITIONS
+# =============================================================================
+tasks:
+  # Initial data gathering task
+  data_gathering:
+    name: "Gather On-Chain Data"
+    description: "Retrieve relevant blockchain data for the investigation"
+    assigned_to: "data_analyst"
+    inputs:
+      - name: "target_addresses"
+        description: "List of addresses to investigate"
+        required: true
+      - name: "chains"
+        description: "Blockchain networks to search"
+        required: true
+      - name: "time_range"
+        description: "Time period for the investigation"
+        required: false
+    outputs:
+      - name: "transaction_data"
+        description: "Collected transaction data"
+      - name: "balance_history"
+        description: "Historical balance information"
+      - name: "entity_relationships"
+        description: "Identified relationships between entities"
+    tools:
+      - "sim_activity_tool"
+      - "sim_balances_tool"
+      - "cross_chain_identity_tool"
+    success_criteria:
+      - "All target addresses have been queried"
+      - "Transaction data covers the specified time range"
+      - "Entity relationships have been mapped"
+    template: "tasks/data_gathering.yaml"
+    timeout_minutes: 10
+    retry:
+      max_attempts: 3
+      delay_seconds: 30
+
+  # Pattern analysis task
+  pattern_analysis:
+    name: "Analyze Fraud Patterns"
+    description: "Identify potential fraud patterns in the data"
+    assigned_to: "pattern_analyst"
+    inputs:
+      - name: "transaction_data"
+        description: "Transaction data to analyze"
+        required: true
+      - name: "entity_relationships"
+        description: "Entity relationship graph"
+        required: true
+    outputs:
+      - name: "detected_patterns"
+        description: "Detected fraud patterns"
+      - name: "confidence_scores"
+        description: "Confidence scores for each pattern"
+      - name: "anomalies"
+        description: "Detected anomalies that don't match known patterns"
+    tools:
+      - "pattern_library_tool"
+      - "crypto_anomaly_tool"
+      - "gnn_fraud_detection_tool"
+    success_criteria:
+      - "All transaction data has been analyzed"
+      - "Patterns are matched with confidence scores"
+      - "Anomalies are identified and documented"
+    template: "tasks/pattern_analysis.yaml"
+    timeout_minutes: 15
+    hitl:
+      enabled: true
+      review_threshold: 0.8  # Trigger human review for high-confidence findings
+      review_type: "approval"  # Require explicit approval before proceeding
+
+  # Transaction flow analysis task
+  transaction_flow:
+    name: "Analyze Transaction Flows"
+    description: "Track the flow of funds through the network"
+    assigned_to: "data_analyst"
+    inputs:
+      - name: "transaction_data"
+        description: "Transaction data to analyze"
+        required: true
+      - name: "target_addresses"
+        description: "Addresses of interest"
+        required: true
+    outputs:
+      - name: "fund_flows"
+        description: "Mapped flow of funds"
+      - name: "source_destination_pairs"
+        description: "Source and destination of funds"
+      - name: "flow_metrics"
+        description: "Metrics about the fund flows"
+    tools:
+      - "transaction_flow_tool"
+      - "graph_query_tool"
+    success_criteria:
+      - "Fund flows are traced for all target addresses"
+      - "Source and destination pairs are identified"
+      - "Flow metrics are calculated"
+    template: "tasks/transaction_flow.yaml"
+    timeout_minutes: 12
+
+  # Report generation task
+  report_generation:
+    name: "Generate Fraud Report"
+    description: "Create a comprehensive fraud report"
+    assigned_to: "report_generator"
+    inputs:
+      - name: "detected_patterns"
+        description: "Detected fraud patterns"
+        required: true
+      - name: "fund_flows"
+        description: "Mapped flow of funds"
+        required: true
+      - name: "confidence_scores"
+        description: "Confidence scores for findings"
+        required: true
+      - name: "entity_relationships"
+        description: "Entity relationship graph"
+        required: true
+    outputs:
+      - name: "fraud_report"
+        description: "Comprehensive fraud report"
+      - name: "evidence_bundle"
+        description: "Bundle of supporting evidence"
+      - name: "recommendations"
+        description: "Recommended actions"
+    tools:
+      - "template_engine_tool"
+    success_criteria:
+      - "Report includes executive summary"
+      - "All patterns are documented with evidence"
+      - "Recommendations are actionable"
+      - "Evidence bundle is complete"
+    template: "tasks/report_generation.yaml"
+    timeout_minutes: 15
+    hitl:
+      enabled: true
+      review_threshold: 0.0  # Always require review for reports
+      review_type: "approval"  # Require explicit approval
+
+  # Investigation coordination task
+  investigation_coordination:
+    name: "Coordinate Investigation"
+    description: "Manage the overall investigation workflow"
+    assigned_to: "lead_investigator"
+    inputs:
+      - name: "investigation_target"
+        description: "Target of the investigation"
+        required: true
+      - name: "investigation_scope"
+        description: "Scope of the investigation"
+        required: true
+    outputs:
+      - name: "investigation_plan"
+        description: "Plan for the investigation"
+      - name: "task_assignments"
+        description: "Tasks assigned to agents"
+      - name: "investigation_status"
+        description: "Status of the investigation"
+    tools:
+      - "graph_query_tool"
+    success_criteria:
+      - "Investigation plan is created"
+      - "Tasks are assigned to appropriate agents"
+      - "Investigation status is tracked"
+    template: "tasks/investigation_coordination.yaml"
+    timeout_minutes: 20
+
+# =============================================================================
+# WORKFLOW DEFINITIONS
+# =============================================================================
+workflows:
+  # Standard fraud investigation workflow
+  standard_investigation:
+    name: "Standard Fraud Investigation"
+    description: "Standard workflow for investigating potential fraud"
+    trigger:
+      type: "manual"
+      auto_start: false
+    tasks:
+      - task: "investigation_coordination"
+        id: "coordination"
+        next:
+          - "data_gathering"
+      - task: "data_gathering"
+        id: "gather_data"
+        depends_on: ["coordination"]
+        next:
+          - "pattern_analysis"
+          - "transaction_flow"
+      - task: "pattern_analysis"
+        id: "analyze_patterns"
+        depends_on: ["gather_data"]
+        next:
+          - "report_generation"
+      - task: "transaction_flow"
+        id: "trace_flows"
+        depends_on: ["gather_data"]
+        next:
+          - "report_generation"
+      - task: "report_generation"
+        id: "generate_report"
+        depends_on: ["analyze_patterns", "trace_flows"]
+        next: []
+    outputs:
+      - task_id: "generate_report"
+        output: "fraud_report"
+      - task_id: "generate_report"
+        output: "evidence_bundle"
+      - task_id: "generate_report"
+        output: "recommendations"
+    success_criteria:
+      - "All tasks completed successfully"
+      - "Fraud report generated with evidence"
+      - "Confidence scores exceed threshold"
+    timeout_minutes: 60
+    retry:
+      max_attempts: 2
+      delay_seconds: 300
+
+  # Quick triage workflow for urgent cases
+  quick_triage:
+    name: "Quick Fraud Triage"
+    description: "Expedited workflow for urgent fraud cases"
+    trigger:
+      type: "manual"
+      auto_start: false
+    tasks:
+      - task: "data_gathering"
+        id: "gather_data"
+        next:
+          - "pattern_analysis"
+      - task: "pattern_analysis"
+        id: "analyze_patterns"
+        depends_on: ["gather_data"]
+        next:
+          - "report_generation"
+      - task: "report_generation"
+        id: "generate_report"
+        depends_on: ["analyze_patterns"]
+        next: []
+    outputs:
+      - task_id: "generate_report"
+        output: "fraud_report"
+      - task_id: "analyze_patterns"
+        output: "detected_patterns"
+    success_criteria:
+      - "Pattern analysis completed"
+      - "Triage report generated"
+    timeout_minutes: 30
+
+# =============================================================================
+# TOOL CONFIGURATIONS
+# =============================================================================
+tools:
+  pattern_library_tool:
+    name: "Pattern Library Tool"
+    description: "Access and match against known fraud patterns"
+    config:
+      pattern_files:
+        - "agents/patterns/crypto_fraud_patterns.yaml"
+        - "agents/patterns/structuring_patterns.yaml"
+      match_threshold: 0.7
+      max_patterns: 50
+
+  crypto_anomaly_tool:
+    name: "Crypto Anomaly Tool"
+    description: "Detect anomalies in cryptocurrency transactions"
+    config:
+      sensitivity: "medium"
+      baseline_period_days: 30
+      anomaly_types:
+        - "volume_spike"
+        - "unusual_timing"
+        - "atypical_counterparties"
+        - "structural_deviation"
+
+  transaction_flow_tool:
+    name: "Transaction Flow Tool"
+    description: "Analyze the flow of funds through addresses"
+    config:
+      max_depth: 5
+      min_value: 0.01
+      include_contracts: true
+      visualize: true
+
+  gnn_fraud_detection_tool:
+    name: "GNN Fraud Detection Tool"
+    description: "Use graph neural networks to detect fraud patterns"
+    config:
+      model_version: "v2.3"
+      confidence_threshold: 0.65
+      batch_size: 1000
+      use_gpu: true
+
+  graph_query_tool:
+    name: "Graph Query Tool"
+    description: "Query the graph database for entity relationships"
+    config:
+      max_results: 1000
+      timeout_seconds: 30
+      cache_ttl_seconds: 300
+
+  template_engine_tool:
+    name: "Template Engine Tool"
+    description: "Generate reports from templates"
+    config:
+      template_dir: "agents/templates/reports"
+      default_template: "fraud_report.md"
+      formats:
+        - "markdown"
+        - "pdf"
+        - "html"
+
+  cross_chain_identity_tool:
+    name: "Cross-Chain Identity Tool"
+    description: "Correlate identities across multiple blockchains"
+    config:
+      supported_chains:
+        - "ethereum"
+        - "bitcoin"
+        - "polygon"
+        - "arbitrum"
+        - "optimism"
+      correlation_methods:
+        - "address_reuse"
+        - "transaction_pattern"
+        - "temporal_correlation"
+      confidence_threshold: 0.8
+
+# =============================================================================
+# HITL (HUMAN-IN-THE-LOOP) CONFIGURATION
+# =============================================================================
+hitl:
+  enabled: ${ENABLE_HITL_REVIEWS:-true}
+  review_points:
+    - task: "pattern_analysis"
+      condition: "confidence_score > 0.8"
+      timeout_minutes: 30
+      fallback: "proceed"  # proceed or abort
+    - task: "report_generation"
+      condition: "always"
+      timeout_minutes: 60
+      fallback: "abort"  # proceed or abort
+  notification:
+    channels:
+      - type: "webhook"
+        url: ${HITL_WEBHOOK_URL:-http://localhost:8000/api/v1/webhooks/hitl}
+      - type: "email"
+        recipients: ${HITL_EMAIL_RECIPIENTS:-""}
+  ui:
+    template: "hitl/fraud_review.html"
+    fields:
+      - name: "confidence_score"
+        type: "number"
+        editable: true
+      - name: "detected_patterns"
+        type: "table"
+        editable: false
+      - name: "evidence_bundle"
+        type: "document"
+        editable: false
+
+# =============================================================================
+# DEPENDENCIES AND PREREQUISITES
+# =============================================================================
+dependencies:
+  services:
+    - name: "neo4j"
+      required: true
+      healthcheck: "http://neo4j:7474"
+    - name: "redis"
+      required: true
+      healthcheck: "redis://redis:6379"
+  data:
+    - name: "pattern_library"
+      path: "agents/patterns/"
+      required: true
+    - name: "report_templates"
+      path: "agents/templates/reports/"
+      required: true
+  tools:
+    - name: "pattern_library_tool"
+      required: true
+    - name: "transaction_flow_tool"
+      required: true
+
+# =============================================================================
+# METRICS AND LOGGING
+# =============================================================================
+monitoring:
+  metrics:
+    - name: "investigation_duration_seconds"
+      type: "histogram"
+      description: "Duration of fraud investigations"
+    - name: "pattern_matches_total"
+      type: "counter"
+      description: "Number of fraud patterns matched"
+    - name: "confidence_score"
+      type: "gauge"
+      description: "Confidence score of fraud detection"
+  logging:
+    level: ${LOG_LEVEL:-INFO}
+    include_agent_thoughts: ${LOG_AGENT_THOUGHTS:-true}
+    sensitive_fields:
+      - "target_addresses"
+      - "private_notes"
+
+# =============================================================================
+# VALIDATION AND TESTING
+# =============================================================================
+validation:
+  test_cases:
+    - name: "known_ponzi_scheme"
+      input:
+        target_addresses: ["0x1234567890abcdef1234567890abcdef12345678"]
+        chains: ["ethereum"]
+      expected_output:
+        detected_patterns:
+          - name: "ponzi_scheme"
+            confidence: ">= 0.8"
+    - name: "wash_trading_detection"
+      input:
+        target_addresses: ["0xabcdef1234567890abcdef1234567890abcdef12"]
+        chains: ["polygon"]
+      expected_output:
+        detected_patterns:
+          - name: "wash_trading"
+            confidence: ">= 0.75"
+  schema:
+    report_format:
+      required_sections:
+        - "executive_summary"
+        - "detected_patterns"
+        - "evidence"
+        - "recommendations"
