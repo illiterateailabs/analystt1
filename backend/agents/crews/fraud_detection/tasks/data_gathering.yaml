@@ -1,0 +1,430 @@
+# Data Gathering Task Template
+# Version: 1.0.0
+# Last Updated: 2025-06-21
+
+# =============================================================================
+# TASK METADATA
+# =============================================================================
+metadata:
+  name: "Gather On-Chain Data"
+  description: "Retrieve and process relevant blockchain data for fraud investigations"
+  version: "1.0.0"
+  author: "Security Analysis Team"
+  tags:
+    - "data_collection"
+    - "blockchain"
+    - "on-chain"
+    - "preprocessing"
+
+# =============================================================================
+# TASK PARAMETERS
+# =============================================================================
+parameters:
+  target_addresses:
+    description: "List of blockchain addresses to investigate"
+    type: "array"
+    required: true
+    example: ["0x1234567890abcdef1234567890abcdef12345678"]
+  
+  chains:
+    description: "Blockchain networks to search"
+    type: "array"
+    required: true
+    example: ["ethereum", "polygon", "arbitrum"]
+    allowed_values:
+      - "ethereum"
+      - "bitcoin"
+      - "polygon"
+      - "arbitrum"
+      - "optimism"
+      - "base"
+      - "solana"
+      - "binance"
+  
+  time_range:
+    description: "Time period for the investigation"
+    type: "object"
+    required: false
+    properties:
+      start_date:
+        type: "string"
+        format: "date-time"
+        example: "2025-01-01T00:00:00Z"
+      end_date:
+        type: "string"
+        format: "date-time"
+        example: "2025-06-21T00:00:00Z"
+  
+  depth:
+    description: "Number of transaction hops to analyze from target addresses"
+    type: "integer"
+    default: 2
+    minimum: 1
+    maximum: 5
+  
+  min_value:
+    description: "Minimum transaction value to include (in native currency)"
+    type: "number"
+    default: 0.1
+  
+  include_tokens:
+    description: "Whether to include token transfers in analysis"
+    type: "boolean"
+    default: true
+
+# =============================================================================
+# TASK OUTPUTS
+# =============================================================================
+outputs:
+  transaction_data:
+    description: "Collected transaction data"
+    type: "object"
+    properties:
+      transactions:
+        type: "array"
+        items:
+          type: "object"
+          properties:
+            tx_hash: 
+              type: "string"
+              description: "Transaction hash"
+            from_address:
+              type: "string"
+              description: "Sender address"
+            to_address:
+              type: "string"
+              description: "Recipient address"
+            value:
+              type: "number"
+              description: "Transaction value"
+            timestamp:
+              type: "string"
+              format: "date-time"
+              description: "Transaction timestamp"
+            block_number:
+              type: "integer"
+              description: "Block number"
+            chain:
+              type: "string"
+              description: "Blockchain network"
+  
+  balance_history:
+    description: "Historical balance information"
+    type: "object"
+    properties:
+      address_balances:
+        type: "array"
+        items:
+          type: "object"
+          properties:
+            address:
+              type: "string"
+              description: "Blockchain address"
+            chain:
+              type: "string"
+              description: "Blockchain network"
+            balances:
+              type: "array"
+              items:
+                type: "object"
+                properties:
+                  asset:
+                    type: "string"
+                    description: "Asset symbol or contract address"
+                  amount:
+                    type: "number"
+                    description: "Balance amount"
+                  timestamp:
+                    type: "string"
+                    format: "date-time"
+                    description: "Balance timestamp"
+                  usd_value:
+                    type: "number"
+                    description: "USD value at timestamp"
+  
+  entity_relationships:
+    description: "Identified relationships between entities"
+    type: "object"
+    properties:
+      nodes:
+        type: "array"
+        items:
+          type: "object"
+          properties:
+            id:
+              type: "string"
+              description: "Node identifier (usually address)"
+            type:
+              type: "string"
+              description: "Node type (address, contract, etc.)"
+            attributes:
+              type: "object"
+              description: "Additional attributes"
+      relationships:
+        type: "array"
+        items:
+          type: "object"
+          properties:
+            source:
+              type: "string"
+              description: "Source node ID"
+            target:
+              type: "string"
+              description: "Target node ID"
+            type:
+              type: "string"
+              description: "Relationship type"
+            weight:
+              type: "number"
+              description: "Relationship strength/weight"
+            attributes:
+              type: "object"
+              description: "Additional attributes"
+
+# =============================================================================
+# TASK INSTRUCTIONS
+# =============================================================================
+instructions:
+  overview: |
+    As the On-Chain Data Analyst, your task is to gather comprehensive blockchain data 
+    for the specified target addresses across the requested chains. This data will form 
+    the foundation for fraud pattern analysis and transaction flow mapping.
+    
+    Your goal is to collect not just raw transaction data, but to organize it in a way 
+    that facilitates pattern recognition and relationship mapping. You should identify 
+    key entities, track balance changes, and map relationships between addresses.
+
+  steps:
+    - step: "Initialize data structures"
+      description: |
+        Create empty collections for transactions, balances, and entity relationships.
+        Set up tracking for processed addresses to avoid duplication.
+
+    - step: "Validate input parameters"
+      description: |
+        Verify that target addresses are valid for their respective chains.
+        Ensure time range is valid and adjust if necessary.
+        Check that requested chains are supported by available tools.
+
+    - step: "Collect transaction history"
+      description: |
+        For each target address and chain combination:
+        1. Retrieve all transactions where the address is sender or recipient
+        2. Filter by time range if specified
+        3. Filter by minimum value if specified
+        4. Include token transfers if requested
+        5. Store in standardized format with chain information
+
+    - step: "Retrieve balance history"
+      description: |
+        For each target address and chain combination:
+        1. Retrieve historical balance snapshots within time range
+        2. Include native currency and token balances
+        3. Convert to USD values where possible for comparison
+        4. Track significant balance changes
+
+    - step: "Expand to related addresses"
+      description: |
+        Based on transaction history:
+        1. Identify frequently interacting addresses
+        2. Expand data collection to these addresses (up to specified depth)
+        3. Prioritize addresses with large or frequent transactions
+        4. Track relationship strength based on transaction frequency and volume
+
+    - step: "Map entity relationships"
+      description: |
+        Create a relationship graph:
+        1. Define nodes for each unique address
+        2. Create relationships based on transactions
+        3. Weight relationships by transaction frequency and volume
+        4. Identify clusters of related addresses
+        5. Detect potential entity groupings
+
+    - step: "Enrich with metadata"
+      description: |
+        Enhance the collected data:
+        1. Identify known entities (exchanges, mixers, etc.)
+        2. Label contract addresses and their functions
+        3. Add risk scores where available
+        4. Tag addresses with behavioral attributes
+
+    - step: "Normalize and structure data"
+      description: |
+        Prepare data for analysis:
+        1. Standardize formats across chains
+        2. Remove duplicates and irrelevant transactions
+        3. Structure data according to output specifications
+        4. Ensure all required fields are populated
+
+    - step: "Validate data completeness"
+      description: |
+        Verify data quality:
+        1. Ensure all target addresses have been processed
+        2. Check for missing data within time range
+        3. Verify transaction counts against blockchain explorers
+        4. Confirm entity relationship graph is connected
+
+# =============================================================================
+# AGENT PROMPTS
+# =============================================================================
+prompts:
+  initial: |
+    You are tasked with gathering on-chain data for a fraud investigation. Your goal is to collect 
+    comprehensive transaction data, balance history, and entity relationships for the specified 
+    target addresses across multiple blockchain networks.
+    
+    Target addresses: {{parameters.target_addresses}}
+    Chains to investigate: {{parameters.chains}}
+    Time range: {{parameters.time_range.start_date}} to {{parameters.time_range.end_date}}
+    
+    Begin by validating the input parameters and initializing your data structures. Then proceed 
+    with collecting transaction history, balance information, and mapping entity relationships.
+    
+    Remember to:
+    - Prioritize data completeness and accuracy
+    - Look for unusual patterns in transaction flows
+    - Map relationships between addresses
+    - Enrich data with entity information where possible
+    - Structure outputs according to the required format
+
+  data_collection: |
+    Now that you've validated the input parameters, proceed with collecting transaction data for 
+    the target addresses. Use the sim_activity_tool to retrieve transaction history for each 
+    address on each specified chain.
+    
+    For each address:
+    1. Collect all incoming and outgoing transactions
+    2. Filter by the specified time range: {{parameters.time_range.start_date}} to {{parameters.time_range.end_date}}
+    3. Include transactions with value >= {{parameters.min_value}}
+    4. Include token transfers: {{parameters.include_tokens}}
+    
+    Be thorough in your data collection, as missing transactions could lead to incomplete analysis.
+
+  balance_analysis: |
+    With transaction data collected, now retrieve balance history for each target address using 
+    the sim_balances_tool. Focus on:
+    
+    1. Historical balance snapshots at regular intervals
+    2. Significant balance changes that might indicate suspicious activity
+    3. Both native currency and token balances
+    4. USD equivalent values for comparison across assets
+    
+    Look for patterns such as:
+    - Sudden large deposits or withdrawals
+    - Regular transfers of similar amounts
+    - Balance accumulation followed by rapid dispersal
+    - Dormant periods followed by high activity
+
+  relationship_mapping: |
+    Based on the transaction data collected, map the relationships between entities using the 
+    cross_chain_identity_tool. Your goal is to:
+    
+    1. Identify frequently interacting addresses (up to {{parameters.depth}} hops from targets)
+    2. Detect potential entity clusters that might represent the same real-world entity
+    3. Map transaction flows between entities
+    4. Quantify relationship strengths based on transaction frequency and volume
+    
+    Create a comprehensive entity relationship graph that will help the Pattern Analyst identify 
+    suspicious patterns and the Transaction Flow Analyst trace fund movements.
+
+  data_validation: |
+    Before finalizing your outputs, validate the collected data for completeness and accuracy:
+    
+    1. Ensure all target addresses have been processed across all specified chains
+    2. Verify that transaction data covers the entire specified time range
+    3. Check for any missing or incomplete data
+    4. Confirm that the entity relationship graph is properly connected
+    5. Validate that all required output fields are populated
+    
+    Address any gaps or inconsistencies in the data before proceeding.
+
+  final_summary: |
+    Summarize your data gathering results:
+    
+    1. Total transactions collected: [COUNT]
+    2. Number of unique addresses identified: [COUNT]
+    3. Total value of transactions (in USD): [AMOUNT]
+    4. Key entity clusters identified: [COUNT]
+    5. Potential areas of interest for further investigation: [LIST]
+    
+    Structure your outputs according to the required format and prepare them for the next steps 
+    in the investigation workflow.
+
+# =============================================================================
+# TOOLS CONFIGURATION
+# =============================================================================
+tools:
+  sim_activity_tool:
+    description: "Retrieve transaction activity for addresses"
+    parameters:
+      max_transactions: 10000
+      include_internal: true
+      include_token_transfers: "{{parameters.include_tokens}}"
+      page_size: 1000
+  
+  sim_balances_tool:
+    description: "Retrieve historical balance information"
+    parameters:
+      include_tokens: true
+      snapshot_interval_hours: 24
+      include_price_data: true
+  
+  cross_chain_identity_tool:
+    description: "Identify related entities across chains"
+    parameters:
+      confidence_threshold: 0.7
+      max_depth: "{{parameters.depth}}"
+      correlation_methods:
+        - "address_reuse"
+        - "transaction_pattern"
+        - "temporal_correlation"
+
+# =============================================================================
+# VALIDATION CRITERIA
+# =============================================================================
+validation:
+  completeness:
+    - "All target addresses have been processed"
+    - "Data covers the entire specified time range"
+    - "Both incoming and outgoing transactions are included"
+    - "Balance history includes both native currency and tokens"
+    - "Entity relationship graph includes all relevant addresses"
+  
+  quality:
+    - "Transaction data matches blockchain explorer records"
+    - "Balance history accurately reflects on-chain state"
+    - "Entity relationships are weighted appropriately"
+    - "Data is normalized across different chains"
+    - "Metadata enrichment adds value to raw data"
+  
+  format:
+    - "All outputs match the specified schema"
+    - "Timestamps are in consistent format"
+    - "Addresses are properly formatted for their respective chains"
+    - "Numerical values use appropriate precision"
+    - "Entity relationship graph is properly structured"
+
+# =============================================================================
+# ERROR HANDLING
+# =============================================================================
+error_handling:
+  rate_limiting:
+    strategy: "exponential_backoff"
+    max_retries: 5
+    initial_delay_seconds: 1
+  
+  missing_data:
+    strategy: "partial_results"
+    minimum_completion_percentage: 80
+    required_fields:
+      - "transaction_data.transactions"
+      - "entity_relationships.nodes"
+      - "entity_relationships.relationships"
+  
+  invalid_addresses:
+    strategy: "skip_and_report"
+    continue_on_error: true
+  
+  timeout:
+    strategy: "prioritize_and_return"
+    minimum_addresses_processed: 1
