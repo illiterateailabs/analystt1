@@ -19,14 +19,24 @@ from starlette.middleware.sessions import SessionMiddleware
 # Back-pressure / budget-control middleware
 from backend.core.backpressure import BackpressureMiddleware
 from backend.api.v1 import (
-    analysis, auth, chat, crew, graph, prompts, templates, 
-    webhooks, whale_endpoints, ws_progress
+    analysis,
+    auth,
+    chat,
+    crew,
+    graph,
+    prompts,
+    templates,
+    webhooks,
+    whale_endpoints,
+    ws_progress,
+    health,  # new health endpoints (worker / db / redis checks)
 )
 from backend.auth.dependencies import get_current_user
 from backend.core import events, logging as app_logging, metrics, sentry_config
 from backend.core.telemetry import setup_telemetry
 from backend.database import create_db_and_tables, get_engine
 from backend.jobs import sim_graph_job
+from backend.jobs.worker_monitor import WorkerMonitor  # start Celery worker monitor
 
 # Configure logging
 app_logging.setup_logging()
@@ -102,6 +112,8 @@ api_v1.include_router(templates.router, prefix="/templates", tags=["Templates"])
 api_v1.include_router(webhooks.router, prefix="/webhooks", tags=["Webhooks"])
 api_v1.include_router(whale_endpoints.router, prefix="/whales", tags=["Whales"])
 api_v1.include_router(ws_progress.router, prefix="/ws", tags=["WebSockets"])
+# Health endpoints (detailed component checks)
+api_v1.include_router(health.router)  # endpoints define their own /health/* paths
 
 # Mount API v1 under /api/v1
 app.mount("/api/v1", api_v1)
@@ -161,6 +173,8 @@ async def initialize_jobs() -> None:
     try:
         # Start SIM graph ingestion job
         sim_graph_job.start()
+        # Start Celery worker monitor background task
+        WorkerMonitor().start()
         logger.info("Scheduled jobs initialized")
     except Exception as e:
         logger.error(f"Job initialization failed: {e}")
