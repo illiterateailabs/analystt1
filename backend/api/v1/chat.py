@@ -18,21 +18,6 @@ from fastapi import Query
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# --------------------------------------------------------------------------- #
-# In-memory conversation store (will be replaced with DB persistence later)
-# --------------------------------------------------------------------------- #
-# Structure:
-#   conversations = {
-#       "conv_id": {
-#           "conversation_id": str,
-#           "messages": List[ChatMessage],
-#           "created_at": datetime,
-#           "updated_at": datetime
-#       }
-#   }
-# NOTE: **NOT** for production use – this is a temporary placeholder until
-#       proper database persistence is implemented.
-# --------------------------------------------------------------------------- #
 from datetime import datetime
 import uuid
 

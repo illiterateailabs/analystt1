@@ -32,7 +32,7 @@ app_logging.setup_logging()
 logger = logging.getLogger(__name__)
 
 # Get environment variables
-DEBUG = os.getenv("DEBUG", "false").lower() == "true"
+FASTAPI_DEBUG = os.getenv("FASTAPI_DEBUG", "false").lower() == "true"
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 APP_VERSION = os.getenv("APP_VERSION", "1.8.0-beta")
 ENABLE_METRICS = os.getenv("ENABLE_METRICS", "true").lower() == "true"
@@ -43,9 +43,9 @@ app = FastAPI(
     title="Coding Analyst Droid",
     description="Blockchain fraud analysis platform with agent-based intelligence",
     version=APP_VERSION,
-    debug=DEBUG,
-    docs_url="/api/docs" if DEBUG else None,
-    redoc_url="/api/redoc" if DEBUG else None,
+    debug=FASTAPI_DEBUG,
+    docs_url="/api/docs" if FASTAPI_DEBUG else None,
+    redoc_url="/api/redoc" if FASTAPI_DEBUG else None,
 )
 
 # Initialize Sentry for error tracking
@@ -63,7 +63,7 @@ if ENABLE_METRICS:
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if DEBUG else [
+    allow_origins=["*"] if FASTAPI_DEBUG else [
         "https://analyst-droid.example.com",
         "https://api.analyst-droid.example.com",
     ],
@@ -99,7 +99,7 @@ api_v1.include_router(ws_progress.router, prefix="/ws", tags=["WebSockets"])
 app.mount("/api/v1", api_v1)
 
 # Mount static files if in production
-if not DEBUG:
+if not FASTAPI_DEBUG:
     app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Global exception handler
@@ -246,6 +246,6 @@ if __name__ == "__main__":
         "backend.main:app",
         host=host,
         port=port,
-        reload=DEBUG,
-        log_level="debug" if DEBUG else "info",
+        reload=FASTAPI_DEBUG,
+        log_level="debug" if FASTAPI_DEBUG else "info",
     )
