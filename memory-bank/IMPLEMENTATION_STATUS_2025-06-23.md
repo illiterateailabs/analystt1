@@ -54,13 +54,32 @@ The following tasks were completed, addressing the most critical gaps identified
 
 ## 4. Updated Project Status
 
+### 🚀 **Commit `a7a59fe`**: Background Job System (Celery + Redis)
+
+*   **Improvement 1: Asynchronous Task Queue**
+    *   **Technical Details:** Introduced a fully-configured Celery application (`backend/jobs/celery_app.py`) using Redis as both broker and result backend. Task routing separates *data_ingestion*, *analysis*, and *default* workloads, enabling horizontal scaling of heavy operations without blocking the API.
+    *   **Impact:** Long-running jobs (e.g. SIM data ingestion, image analysis, GNN training) now execute in background workers, keeping request latency low and allowing additional worker nodes to be added for burst traffic.
+
+*   **Improvement 2: Task Refactors**
+    *   **Technical Details:**  
+        * Converted `sim_graph_job` to Celery tasks (`sim_tasks.*`).  
+        * Added dedicated modules `analysis_tasks.py` and `data_tasks.py` for GNN, embedding, and periodic ingestion workloads.  
+        * All tasks instrumented with OpenTelemetry traces and Prometheus metrics.
+    *   **Impact:** Core analytical pipelines are now fully asynchronous, with progress reporting, retry semantics, and back-pressure compatibility.
+
+*   **Improvement 3: Worker Health Monitoring**
+    *   **Technical Details:** Implemented `backend/jobs/worker_monitor.py` which publishes worker-online counts, queue depths, and active-task gauges, plus `/health/workers` endpoint.
+    *   **Impact:** Operations team can observe queue backlogs and worker health in Grafana and set alert rules.
+
+---
+
 As of the end of this session, all "Quick Win" tasks and two "High Priority" infrastructure tasks from the initial plan are complete and merged into `main`. The project's foundation is significantly stronger, with robust mechanisms for performance, cost control, and observability now in place.
 
-## 5. Next Recommended Actions
+All “Quick Win” tasks, two high-priority infrastructure tasks **and the full scalability layer** are now merged into `main`. The foundation includes robust performance, cost control, observability **and asynchronous background processing**, positioning the project for production workloads.
 
 The following steps are recommended to build upon today's progress:
 
 1.  **Create Grafana Dashboards:** Leverage the new Prometheus metrics and OpenTelemetry traces to build dashboards for API latency, provider costs, and back-pressure queue depth.
 2.  **Wire Up Cost Metrics:** Instrument the Gemini and E2B clients to emit the `external_api_credit_used_total` metric, which will feed real-time data into the back-pressure budget controller.
 3.  **Begin Security Hardening:** Prioritize the migration to secure, `httpOnly` cookies for authentication and implement the SlowAPI rate-limiter on sensitive endpoints.
-4.  **Address Scalability:** Begin scaffolding the Celery task queue to offload long-running analysis jobs from the main API process.
+
