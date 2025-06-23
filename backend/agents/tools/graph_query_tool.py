@@ -8,7 +8,7 @@ results for analysis.
 
 import json
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Tuple
 
 from crewai_tools import BaseTool
 from pydantic import BaseModel, Field
@@ -17,6 +17,10 @@ from backend.integrations.neo4j_client import Neo4jClient
 from backend.core.explain_cypher import (
     CypherExplanationService,
     QuerySource,
+)
+from backend.core.evidence import (
+    EvidenceBundle, GraphElementEvidence, EvidenceSource, 
+    create_evidence_bundle
 )
 
 logger = logging.getLogger(__name__)
@@ -36,6 +40,14 @@ class CypherQueryInput(BaseModel):
     limit_results: Optional[int] = Field(
         default=1000,
         description="Maximum number of results to return (for safety)"
+    )
+    create_evidence: Optional[bool] = Field(
+        default=True,
+        description="Whether to create evidence from query results"
+    )
+    evidence_description: Optional[str] = Field(
+        default=None,
+        description="Custom description for the evidence"
     )
 
 
@@ -81,8 +93,83 @@ class GraphQueryTool(BaseTool):
         # CypherExplanationService handles provenance, caching & evidence
         self.explanation_service: CypherExplanationService = CypherExplanationService()
     
-    async def _arun(self, query: str, parameters: Optional[Dict[str, Any]] = None, 
-                   limit_results: int = 1000) -> str:
+    async def _create_evidence_from_query(
+        self,
+        query_id: str,
+        query_text: str,
+        results: List[Dict[str, Any]],
+        description: Optional[str] = None
+    ) -> Tuple[EvidenceBundle, str]:
+        """
+        Creates evidence from query results.
+        
+        Args:
+            query_id: ID of the executed query
+            query_text: The Cypher query text
+            results: Query results
+            description: Optional description for the evidence
+            
+        Returns:
+            Tuple of (evidence_bundle, evidence_id)
+        """
+        # Create description if not provided
+        if not description:
+            result_count = len(results)
+            description = f"Evidence from Cypher query: {result_count} results found"
+            if result_count > 0:
+                # Add a bit more context about what was found
+                sample_keys = list(results[0].keys())
+                if sample_keys:
+                    description += f" with fields: {', '.join(sample_keys[:5])}"
+                if len(sample_keys) > 5:
+                    description += f" and {len(sample_keys) - 5} more"
+        
+        # Create evidence bundle
+        bundle = create_evidence_bundle(
+            narrative=f"Results from Cypher query: {query_text}",
+            metadata={
+                "query_id": query_id,
+                "result_count": len(results)
+            }
+        )
+        
+        # Create evidence item from query
+        evidence_id = await self.explanation_service.create_evidence_from_query(
+            query_id=query_id,
+            description=description,
+            confidence=0.9,  # High confidence for direct database results
+            source=EvidenceSource.GRAPH_ANALYSIS,
+            bundle=bundle
+        )
+        
+        # Add sample results as raw data
+        if results:
+            # Limit to first 10 results to avoid huge bundles
+            sample_results = results[:10]
+            bundle.add_raw_data(
+                data={"sample_results": sample_results},
+                description=f"Sample of {len(sample_results)} results from query"
+            )
+        
+        # Generate citation
+        citation = await self.explanation_service.cite_query_in_response(
+            query_id=query_id,
+            response_text=""  # We'll just get the citation part
+        )
+        
+        # Add citation to narrative
+        bundle.narrative += f"\n\n## Query Citation\n{citation}"
+        
+        return bundle, evidence_id
+    
+    async def _arun(
+        self, 
+        query: str, 
+        parameters: Optional[Dict[str, Any]] = None,
+        limit_results: int = 1000,
+        create_evidence: bool = True,
+        evidence_description: Optional[str] = None
+    ) -> str:
         """
         Execute a Cypher query asynchronously and return the results.
         
@@ -90,9 +177,11 @@ class GraphQueryTool(BaseTool):
             query: The Cypher query to execute
             parameters: Optional parameters for the query
             limit_results: Maximum number of results to return
+            create_evidence: Whether to create evidence from query results
+            evidence_description: Optional description for the evidence
             
         Returns:
-            JSON string containing the query results
+            JSON string containing the query results and evidence information
         """
         try:
             # Ensure the client is connected
@@ -114,25 +203,46 @@ class GraphQueryTool(BaseTool):
                 generated_by="GraphQueryTool",
             )
             
-            # Format and return results
-            if not results:
-                return json.dumps(
-                    {
-                        "status": "success",
-                        "results": [],
-                        "count": 0,
-                        "query_id": exec_record.query_id,
-                        "execution_id": exec_record.execution_id,
-                    }
-                )
-            
-            return json.dumps({
+            # Format response
+            response = {
                 "status": "success",
                 "results": results,
                 "count": len(results),
                 "query_id": exec_record.query_id,
                 "execution_id": exec_record.execution_id,
-            }, default=self._json_serializer)
+            }
+            
+            # Create evidence if enabled
+            if create_evidence and results:
+                try:
+                    bundle, evidence_id = await self._create_evidence_from_query(
+                        query_id=exec_record.query_id,
+                        query_text=query,
+                        results=results,
+                        description=evidence_description
+                    )
+                    
+                    # Add evidence information to response
+                    response["evidence"] = {
+                        "evidence_id": evidence_id,
+                        "bundle_id": bundle.investigation_id,
+                        "narrative": bundle.narrative,
+                        "quality_score": bundle.calculate_overall_confidence(),
+                    }
+                    
+                    logger.info(f"Created evidence {evidence_id} from query {exec_record.query_id}")
+                except Exception as e:
+                    logger.error(f"Error creating evidence from query: {e}", exc_info=True)
+                    response["evidence"] = {
+                        "error": f"Failed to create evidence: {str(e)}"
+                    }
+            
+            # Return JSON response
+            if not results:
+                response["results"] = []
+                return json.dumps(response)
+            
+            return json.dumps(response, default=self._json_serializer)
             
         except Exception as e:
             logger.error(f"Error executing Cypher query: {e}", exc_info=True)
@@ -152,8 +262,14 @@ class GraphQueryTool(BaseTool):
                 "query": query
             })
     
-    def _run(self, query: str, parameters: Optional[Dict[str, Any]] = None,
-            limit_results: int = 1000) -> str:
+    def _run(
+        self, 
+        query: str, 
+        parameters: Optional[Dict[str, Any]] = None,
+        limit_results: int = 1000,
+        create_evidence: bool = True,
+        evidence_description: Optional[str] = None
+    ) -> str:
         """
         Synchronous wrapper for _arun.
         
@@ -173,7 +289,7 @@ class GraphQueryTool(BaseTool):
             asyncio.set_event_loop(loop)
         
         return loop.run_until_complete(
-            self._arun(query, parameters, limit_results)
+            self._arun(query, parameters, limit_results, create_evidence, evidence_description)
         )
     
     def _json_serializer(self, obj: Any) -> Any:

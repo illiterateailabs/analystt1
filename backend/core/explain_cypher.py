@@ -35,7 +35,14 @@ from backend.core.events import EventPriority, publish_event
 from backend.core.metrics import DatabaseMetrics
 from backend.core.neo4j_loader import Neo4jLoader
 from backend.core.redis_client import RedisClient, RedisDb, SerializationFormat
-from backend.core.evidence import EvidenceBundle, EvidenceItem, EvidenceSource, create_evidence_bundle
+from backend.core.evidence import (
+    EvidenceBundle,
+    EvidenceItem,
+    EvidenceSource,
+    create_evidence_bundle,
+    GraphElementEvidence,  # proper import to avoid circular import inside method
+)
+from backend.core.graph_rag import GraphElementType  # needed for element_type enum
 
 # Configure module logger
 logger = logging.getLogger(__name__)
@@ -779,9 +786,7 @@ class CypherExplanationService:
             description = f"Evidence from Cypher query: {query.description or query.query_text[:100]}"
         
         # Create evidence item
-        from backend.core.evidence import GraphElementEvidence
         evidence_item = GraphElementEvidence(
-            category=EvidenceSource.GRAPH_ANALYSIS,
             description=description,
             source=source,
             confidence=confidence,
@@ -794,7 +799,7 @@ class CypherExplanationService:
             },
             provenance_link=f"cypher:query:{query_id}",
             element_id=query_id,
-            element_type="cypher_query",
+            element_type=GraphElementType.SUBGRAPH,  # best fit for a query result
             element_properties={
                 "query_text": query.query_text,
                 "source": query.source.value,
