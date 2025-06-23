@@ -33,6 +33,9 @@ import neo4j
 import numpy as np
 from neo4j import GraphDatabase
 from pydantic import BaseModel, Field, validator
+from redis.commands.search.field import TagField, TextField, VectorField
+from redis.commands.search.indexDefinition import IndexDefinition, IndexType
+from redis.commands.search.query import Query as RediSearchQuery
 
 from backend.core.events import publish_event
 from backend.core.metrics import ApiMetrics, DatabaseMetrics
@@ -623,7 +626,7 @@ class DummyEmbedder:
 
 class VectorStore:
     """
-    Service for storing and retrieving vector embeddings.
+    Service for storing and retrieving vector embeddings using Redis Vector Search.
     
     This class handles the storage and retrieval of vector embeddings in Redis,
     with support for similarity search and metadata filtering.
@@ -650,13 +653,42 @@ class VectorStore:
         self.similarity_threshold = similarity_threshold
         self.cache_ttl_seconds = cache_ttl_seconds
         
-        # Prefix for vector keys in Redis
-        self.vector_key_prefix = "vector:embedding:"
-        self.metadata_key_prefix = "vector:metadata:"
+        self.index_name = "graph_rag_index"
+        self.vector_key_prefix = "vector_embedding:"
     
+    async def create_index_if_not_exists(self):
+        """Create the Redis Search index if it doesn't already exist."""
+        raw_client = self.redis_client._get_client(RedisDb.VECTOR)
+        try:
+            await raw_client.ft(self.index_name).info()
+            logger.debug(f"Redis search index '{self.index_name}' already exists.")
+        except Exception:
+            logger.info(f"Redis search index '{self.index_name}' not found. Creating it.")
+            schema = (
+                VectorField(
+                    "vector",
+                    "HNSW",
+                    {
+                        "TYPE": "FLOAT32",
+                        "DIM": self.dimension,
+                        "DISTANCE_METRIC": "COSINE",
+                    },
+                ),
+                TagField("element_id"),
+                TagField("element_type"),
+                TagField("chain"),
+                TextField("text"),
+                TextField("created_at"),
+                TextField("updated_at"),
+                TextField("metadata_json"),
+            )
+            definition = IndexDefinition(prefix=[self.vector_key_prefix], index_type=IndexType.HASH)
+            await raw_client.ft(self.index_name).create_index(schema, definition=definition)
+            logger.info(f"Redis search index '{self.index_name}' created.")
+
     def _get_vector_key(self, embedding_id: str) -> str:
         """
-        Get the Redis key for a vector embedding.
+        Get the Redis key for a vector embedding hash.
         
         Args:
             embedding_id: ID of the embedding
@@ -666,21 +698,9 @@ class VectorStore:
         """
         return f"{self.vector_key_prefix}{embedding_id}"
     
-    def _get_metadata_key(self, embedding_id: str) -> str:
-        """
-        Get the Redis key for embedding metadata.
-        
-        Args:
-            embedding_id: ID of the embedding
-            
-        Returns:
-            Redis key
-        """
-        return f"{self.metadata_key_prefix}{embedding_id}"
-    
     async def store_embedding(self, embedding: VectorEmbedding) -> bool:
         """
-        Store a vector embedding in Redis.
+        Store a vector embedding in a Redis Hash.
         
         Args:
             embedding: Vector embedding to store
@@ -689,39 +709,32 @@ class VectorStore:
             True if successful, False otherwise
         """
         try:
-            # Store the vector
-            vector_key = self._get_vector_key(embedding.id)
-            vector_result = self.redis_client.store_vector(
-                key=embedding.id,
-                vector=embedding.vector,
-                metadata={
-                    "element_id": embedding.element_id,
-                    "element_type": embedding.element_type,
-                    "created_at": embedding.created_at,
-                    "updated_at": embedding.updated_at,
-                },
-                ttl_seconds=self.cache_ttl_seconds,
-            )
+            await self.create_index_if_not_exists()
+            key = self._get_vector_key(embedding.id)
+            vector_bytes = np.array(embedding.vector, dtype=np.float32).tobytes()
+
+            mapping = {
+                "vector": vector_bytes,
+                "element_id": embedding.element_id,
+                "element_type": embedding.element_type.value,
+                "chain": embedding.metadata.get("chain", "unknown"),
+                "text": embedding.metadata.get("text", ""),
+                "created_at": embedding.created_at,
+                "updated_at": embedding.updated_at,
+                "metadata_json": json.dumps(embedding.metadata),
+            }
             
-            # Store additional metadata
-            metadata_key = self._get_metadata_key(embedding.id)
-            metadata_result = self.redis_client.set(
-                key=metadata_key,
-                value=embedding.metadata,
-                ttl_seconds=self.cache_ttl_seconds,
-                db=RedisDb.VECTOR,
-                format=SerializationFormat.JSON,
-            )
-            
-            return vector_result and metadata_result
-        
+            raw_client = self.redis_client._get_client(RedisDb.VECTOR)
+            await raw_client.hset(key, mapping=mapping)
+            # Note: TTL on hashes is not directly supported by FT.CREATE, managed externally if needed.
+            return True
         except Exception as e:
-            logger.error(f"Error storing embedding {embedding.id}: {e}")
+            logger.error(f"Error storing embedding {embedding.id} in Redis hash: {e}")
             return False
     
     async def store_embeddings(self, embeddings: List[VectorEmbedding]) -> int:
         """
-        Store multiple vector embeddings in Redis.
+        Store multiple vector embeddings in Redis using a pipeline.
         
         Args:
             embeddings: List of vector embeddings to store
@@ -729,17 +742,41 @@ class VectorStore:
         Returns:
             Number of successfully stored embeddings
         """
+        await self.create_index_if_not_exists()
+        raw_client = self.redis_client._get_client(RedisDb.VECTOR)
+        pipe = raw_client.pipeline(transaction=False)
         success_count = 0
         
         for embedding in embeddings:
-            if await self.store_embedding(embedding):
+            try:
+                key = self._get_vector_key(embedding.id)
+                vector_bytes = np.array(embedding.vector, dtype=np.float32).tobytes()
+                mapping = {
+                    "vector": vector_bytes,
+                    "element_id": embedding.element_id,
+                    "element_type": embedding.element_type.value,
+                    "chain": embedding.metadata.get("chain", "unknown"),
+                    "text": embedding.metadata.get("text", ""),
+                    "created_at": embedding.created_at,
+                    "updated_at": embedding.updated_at,
+                    "metadata_json": json.dumps(embedding.metadata),
+                }
+                pipe.hset(key, mapping=mapping)
                 success_count += 1
-        
+            except Exception as e:
+                logger.warning(f"Could not prepare embedding {embedding.id} for pipeline: {e}")
+
+        if success_count > 0:
+            try:
+                await pipe.execute()
+            except Exception as e:
+                logger.error(f"Error executing batch embedding pipeline: {e}")
+                return 0
         return success_count
     
     async def get_embedding(self, embedding_id: str) -> Optional[VectorEmbedding]:
         """
-        Get a vector embedding from Redis.
+        Get a vector embedding from a Redis Hash.
         
         Args:
             embedding_id: ID of the embedding
@@ -748,44 +785,36 @@ class VectorStore:
             Vector embedding or None if not found
         """
         try:
-            # Get the vector
-            vector_result = self.redis_client.get_vector(embedding_id, with_metadata=True)
-            if not vector_result:
+            key = self._get_vector_key(embedding_id)
+            raw_client = self.redis_client._get_client(RedisDb.VECTOR)
+            result_hash = await raw_client.hgetall(key)
+
+            if not result_hash:
                 return None
-            
-            vector, metadata = vector_result
-            
-            # Get additional metadata
-            metadata_key = self._get_metadata_key(embedding_id)
-            additional_metadata = self.redis_client.get(
-                key=metadata_key,
-                db=RedisDb.VECTOR,
-                format=SerializationFormat.JSON,
-                default={},
-            )
-            
-            # Combine metadata
-            combined_metadata = {**metadata, **additional_metadata}
-            
-            # Create embedding object
+
+            # hgetall returns bytes, need to decode keys and some values
+            decoded_hash = {k.decode('utf-8'): v for k, v in result_hash.items()}
+
+            vector = np.frombuffer(decoded_hash['vector'], dtype=np.float32).tolist()
+            metadata = json.loads(decoded_hash.get('metadata_json', '{}'))
+
             return VectorEmbedding(
                 id=embedding_id,
                 vector=vector,
                 dimension=len(vector),
-                element_id=metadata.get("element_id", ""),
-                element_type=metadata.get("element_type", GraphElementType.NODE),
-                metadata=combined_metadata,
-                created_at=metadata.get("created_at", datetime.now().isoformat()),
-                updated_at=metadata.get("updated_at", datetime.now().isoformat()),
+                element_id=decoded_hash['element_id'].decode('utf-8'),
+                element_type=GraphElementType(decoded_hash['element_type'].decode('utf-8')),
+                metadata=metadata,
+                created_at=decoded_hash.get('created_at', b'').decode('utf-8'),
+                updated_at=decoded_hash.get('updated_at', b'').decode('utf-8')
             )
-        
         except Exception as e:
-            logger.error(f"Error getting embedding {embedding_id}: {e}")
+            logger.error(f"Error getting embedding {embedding_id} from hash: {e}")
             return None
     
     async def delete_embedding(self, embedding_id: str) -> bool:
         """
-        Delete a vector embedding from Redis.
+        Delete a vector embedding hash from Redis.
         
         Args:
             embedding_id: ID of the embedding
@@ -794,17 +823,12 @@ class VectorStore:
             True if successful, False otherwise
         """
         try:
-            # Delete the vector
-            vector_result = self.redis_client.delete_vector(embedding_id)
-            
-            # Delete metadata
-            metadata_key = self._get_metadata_key(embedding_id)
-            metadata_result = self.redis_client.delete(metadata_key, RedisDb.VECTOR)
-            
-            return vector_result or metadata_result
-        
+            key = self._get_vector_key(embedding_id)
+            raw_client = self.redis_client._get_client(RedisDb.VECTOR)
+            result = await raw_client.delete(key)
+            return result > 0
         except Exception as e:
-            logger.error(f"Error deleting embedding {embedding_id}: {e}")
+            logger.error(f"Error deleting embedding hash {embedding_id}: {e}")
             return False
     
     async def search_similar(
@@ -815,95 +839,68 @@ class VectorStore:
         min_similarity: float = None,
     ) -> List[Tuple[str, float, Dict[str, Any]]]:
         """
-        Search for similar vectors in Redis.
+        Search for similar vectors in Redis using FT.SEARCH.
         
         Args:
             query_vector: Query vector
-            filters: Metadata filters
+            filters: Metadata filters for TAG fields
             limit: Maximum number of results
             min_similarity: Minimum similarity threshold
             
         Returns:
             List of (embedding_id, similarity, metadata) tuples
         """
-        # This is a simplified implementation
-        # In a real implementation, we would use Redis Vector Search capabilities
+        await self.create_index_if_not_exists()
+        raw_client = self.redis_client._get_client(RedisDb.VECTOR)
         
-        # For now, we'll implement a simple brute-force search
-        similar_vectors = []
+        # Build filter expression
+        filter_parts = []
+        if filters:
+            for key, value in filters.items():
+                if isinstance(value, list):
+                    # Handles lists for element_types
+                    sanitized_values = [v.value if isinstance(v, Enum) else str(v) for v in value]
+                    filter_parts.append(f"@{key}:{{{'|'.join(sanitized_values)}}}")
+                else:
+                    sanitized_value = value.value if isinstance(value, Enum) else str(value)
+                    filter_parts.append(f"@{key}:{{{sanitized_value}}}")
+        
+        filter_str = " ".join(filter_parts) if filter_parts else "*"
+        
+        # Build KNN query
+        query_str = f"({filter_str})=>[KNN {limit} @vector $vector_bytes AS similarity]"
+        query_params = {
+            "vector_bytes": np.array(query_vector, dtype=np.float32).tobytes()
+        }
+        
+        # Create RediSearch query object
+        search_query = (
+            RediSearchQuery(query_str)
+            .sort_by("similarity")
+            .return_fields("id", "similarity", "element_id", "element_type", "metadata_json")
+            .dialect(2)
+        )
+        
+        try:
+            results = await raw_client.ft(self.index_name).search(search_query, query_params)
+        except Exception as e:
+            logger.error(f"Redis vector search failed: {e}")
+            return []
+
+        # Parse results
+        parsed_results = []
         threshold = min_similarity or self.similarity_threshold
         
-        # Get all vector keys
-        vector_keys = self.redis_client.keys(f"{self.vector_key_prefix}*", RedisDb.VECTOR)
-        
-        for key in vector_keys:
-            # Extract embedding ID from key
-            embedding_id = key.replace(self.vector_key_prefix, "")
+        for doc in results.docs:
+            # For COSINE, distance is 1 - similarity. The library returns distance.
+            similarity_score = 1 - float(doc.similarity)
             
-            # Get the vector
-            embedding = await self.get_embedding(embedding_id)
-            if not embedding:
-                continue
-            
-            # Apply filters if provided
-            if filters:
-                # Check if all filters match
-                match = True
-                for filter_key, filter_value in filters.items():
-                    if filter_key in embedding.metadata:
-                        if embedding.metadata[filter_key] != filter_value:
-                            match = False
-                            break
-                    elif filter_key == "element_type" and embedding.element_type != filter_value:
-                        match = False
-                        break
-                    elif filter_key == "element_id" and embedding.element_id != filter_value:
-                        match = False
-                        break
-                
-                if not match:
-                    continue
-            
-            # Calculate similarity
-            similarity = self._calculate_similarity(query_vector, embedding.vector)
-            
-            # Add to results if above threshold
-            if similarity >= threshold:
-                similar_vectors.append((embedding_id, similarity, embedding.metadata))
+            if similarity_score >= threshold:
+                metadata = json.loads(doc.metadata_json) if hasattr(doc, 'metadata_json') else {}
+                embedding_id = doc.id.replace(self.vector_key_prefix, "")
+                parsed_results.append((embedding_id, similarity_score, metadata))
         
-        # Sort by similarity (descending)
-        similar_vectors.sort(key=lambda x: x[1], reverse=True)
-        
-        # Limit results
-        return similar_vectors[:limit]
-    
-    def _calculate_similarity(self, vector1: List[float], vector2: List[float]) -> float:
-        """
-        Calculate cosine similarity between two vectors.
-        
-        Args:
-            vector1: First vector
-            vector2: Second vector
-            
-        Returns:
-            Cosine similarity (0-1)
-        """
-        # Convert to numpy arrays for efficient calculation
-        v1 = np.array(vector1)
-        v2 = np.array(vector2)
-        
-        # Calculate cosine similarity
-        dot_product = np.dot(v1, v2)
-        norm1 = np.linalg.norm(v1)
-        norm2 = np.linalg.norm(v2)
-        
-        if norm1 == 0 or norm2 == 0:
-            return 0.0
-        
-        similarity = dot_product / (norm1 * norm2)
-        
-        # Ensure result is between 0 and 1
-        return max(0.0, min(1.0, float(similarity)))
+        return parsed_results
 
 
 class GraphQuerier:
@@ -2281,4 +2278,5 @@ class GraphRAG:
             return None
         
         except Exception as e:
-            logger.error(f"Error fetching element {element_id} of type {element_type}:
+            logger.error(f"Error fetching element {element_id} of type {element_type}:\n", e)
+            return None

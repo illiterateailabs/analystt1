@@ -16,6 +16,8 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
+# Back-pressure / budget-control middleware
+from backend.core.backpressure import BackpressureMiddleware
 from backend.api.v1 import (
     analysis, auth, chat, crew, graph, prompts, templates, 
     webhooks, whale_endpoints, ws_progress
@@ -76,6 +78,9 @@ app.add_middleware(
     secret_key=SECRET_KEY,
     max_age=3600,  # 1 hour
 )
+
+# Mount back-pressure middleware (rate-limit, budget & circuit-breaker)
+app.add_middleware(BackpressureMiddleware)
 
 # Include API routers
 api_v1 = FastAPI(openapi_prefix="/api/v1")
