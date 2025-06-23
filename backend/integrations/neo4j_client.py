@@ -1,291 +1,177 @@
-"""Neo4j database client for graph operations."""
+"""
+Neo4j Database Client Integration
+
+This module provides a robust, asynchronous client for interacting with the Neo4j
+graph database. It is designed for high performance and is fully integrated with
+the application's core systems.
+
+Key Features:
+- Asynchronous query execution using the official neo4j driver.
+- Centralized configuration loaded from the provider registry.
+- Integration with the BackpressureMiddleware is not directly applied here, as
+  self-hosted databases typically don't have the same budget/rate-limit constraints
+  as external APIs. However, performance is tracked.
+- Comprehensive observability through Prometheus metrics (`DatabaseMetrics`) and
+  OpenTelemetry tracing (`@trace`).
+- Helper methods for common graph operations and schema management.
+"""
 
 import logging
-from typing import Dict, List, Optional, Any, Union
-import asyncio
-from contextlib import asynccontextmanager
+import os
+from typing import Any, Dict, List, Optional
 
-from neo4j import AsyncGraphDatabase, AsyncDriver, AsyncSession
-from neo4j.exceptions import ServiceUnavailable, AuthError
+from neo4j import AsyncDriver, AsyncGraphDatabase
+from neo4j.exceptions import AuthError, ServiceUnavailable
 
-# Use the global application settings object instead of a standalone Neo4j
-# config class. This prevents drift and ensures a single source of truth.
-from backend.config import settings
-
+from backend.core.metrics import DatabaseMetrics
+from backend.core.telemetry import trace
+from backend.providers import get_provider
 
 logger = logging.getLogger(__name__)
 
 
 class Neo4jClient:
-    """Async Neo4j client for graph database operations."""
-    
+    """An asynchronous client for the Neo4j graph database."""
+
     def __init__(self):
-        """Initialize the Neo4j client."""
-        # Keep a reference to the global settings for convenience.
-        self.config = settings
+        """
+        Initializes the Neo4jClient.
+
+        Loads all necessary configuration from the provider registry.
+        """
+        provider_config = get_provider("neo4j")
+        if not provider_config:
+            raise ValueError("Neo4j provider configuration not found in registry.")
+
+        self.uri = provider_config.get("connection_uri")
+        auth_config = provider_config.get("auth", {})
+        self.username = os.getenv(auth_config.get("username_env_var"))
+        self.password = os.getenv(auth_config.get("password_env_var"))
+        self.database = provider_config.get("database_name", "neo4j")
+
+        pool_config = provider_config.get("connection_pool", {})
+        self.max_pool_size = pool_config.get("max_connections", 100)
+        self.acquisition_timeout = pool_config.get("acquisition_timeout_seconds", 60)
+
+        if not all([self.uri, self.username, self.password]):
+            raise ValueError("Neo4j connection details (URI, USERNAME, PASSWORD) are not fully configured.")
+
         self.driver: Optional[AsyncDriver] = None
-        self._connected = False
-    
-    async def connect(self) -> None:
-        """Establish connection to Neo4j database."""
+        logger.info("Neo4jClient initialized with configuration from provider registry.")
+
+    @trace(name="neo4j.connect")
+    async def connect(self):
+        """
+        Establishes and verifies the connection to the Neo4j database.
+        """
+        if self.driver:
+            return
+
         try:
             self.driver = AsyncGraphDatabase.driver(
-                self.config.NEO4J_URI,
-                auth=(
-                    self.config.NEO4J_USERNAME,
-                    self.config.NEO4J_PASSWORD,
-                ),
+                self.uri,
+                auth=(self.username, self.password),
+                max_connection_pool_size=self.max_pool_size,
+                connection_acquisition_timeout=self.acquisition_timeout,
             )
-                max_connection_lifetime=getattr(
-                    self.config, "NEO4J_MAX_CONNECTION_LIFETIME", 3600
-                ),
-                max_connection_pool_size=getattr(
-                    self.config, "NEO4J_MAX_CONNECTION_POOL_SIZE", 10
-                ),
-                connection_acquisition_timeout=getattr(
-                    self.config, "NEO4J_CONNECTION_ACQUISITION_TIMEOUT", 30
-                ),
-            
-            # Verify connectivity
             await self.driver.verify_connectivity()
-            self._connected = True
-            
-            logger.info(f"Connected to Neo4j at {self.config.URI}")
-            
-            # Initialize schema
+            logger.info(f"Successfully connected to Neo4j at {self.uri}")
             await self._initialize_schema()
-            
-        except (ServiceUnavailable, AuthError) as e:
+        except (AuthError, ServiceUnavailable) as e:
             logger.error(f"Failed to connect to Neo4j: {e}")
             raise
         except Exception as e:
-            logger.error(f"Unexpected error connecting to Neo4j: {e}")
+            logger.error(f"An unexpected error occurred during Neo4j connection: {e}")
             raise
-    
-    async def close(self) -> None:
-        """Close the Neo4j connection."""
+
+    @trace(name="neo4j.close")
+    async def close(self):
+        """Closes the connection to the Neo4j database."""
         if self.driver:
             await self.driver.close()
-            self._connected = False
-            logger.info("Neo4j connection closed")
-    
-    @property
-    def is_connected(self) -> bool:
-        """Check if connected to Neo4j."""
-        return self._connected and self.driver is not None
-    
-    @asynccontextmanager
-    async def session(self, database: Optional[str] = None):
-        """Create an async session context manager."""
-        if not self.is_connected:
-            raise RuntimeError("Not connected to Neo4j")
-        
-        session = self.driver.session(database=database or self.config.NEO4J_DATABASE)
-        try:
-            yield session
-        finally:
-            await session.close()
-    
+            self.driver = None
+            logger.info("Neo4j connection closed.")
+
+    @DatabaseMetrics.track_operation(database="neo4j", operation="execute_query")
+    @trace(name="neo4j.execute_query")
     async def execute_query(
-        self,
-        query: str,
-        parameters: Optional[Dict[str, Any]] = None,
-        database: Optional[str] = None
+        self, query: str, parameters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
-        """Execute a Cypher query and return results."""
+        """
+        Executes a Cypher query and returns the results.
+
+        Args:
+            query: The Cypher query string to execute.
+            parameters: A dictionary of parameters to bind to the query.
+
+        Returns:
+            A list of dictionaries, where each dictionary represents a result record.
+        """
+        if not self.driver:
+            await self.connect()
+
+        params = parameters or {}
         try:
-            async with self.session(database) as session:
-                result = await session.run(query, parameters or {})
+            async with self.driver.session(database=self.database) as session:
+                result = await session.run(query, params)
                 records = await result.data()
-                
-                logger.debug(f"Executed query: {query[:100]}... | Records: {len(records)}")
+                logger.debug(f"Executed Cypher query successfully. Query: {query[:100]}...")
                 return records
-                
         except Exception as e:
-            logger.error(f"Error executing query: {e}")
-            logger.error(f"Query: {query}")
-            logger.error(f"Parameters: {parameters}")
+            logger.error(f"Error executing Cypher query: {e}\nQuery: {query}\nParams: {params}")
             raise
-    
-    async def execute_write_query(
-        self,
-        query: str,
-        parameters: Optional[Dict[str, Any]] = None,
-        database: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
-        """Execute a write query in a transaction."""
+
+    @trace(name="neo4j.initialize_schema")
+    async def _initialize_schema(self):
+        """
+        Ensures necessary constraints and indexes exist in the database.
+        This method is idempotent.
+        """
+        logger.info("Initializing Neo4j schema: ensuring constraints and indexes exist.")
+        # Define constraints for unique identifiers
+        constraints = [
+            "CREATE CONSTRAINT entity_id_unique IF NOT EXISTS FOR (e:Entity) REQUIRE e.id IS UNIQUE",
+            "CREATE CONSTRAINT wallet_address_unique IF NOT EXISTS FOR (w:Wallet) REQUIRE w.address IS UNIQUE",
+            "CREATE CONSTRAINT transaction_hash_unique IF NOT EXISTS FOR (t:Transaction) REQUIRE t.hash IS UNIQUE",
+            "CREATE CONSTRAINT block_hash_unique IF NOT EXISTS FOR (b:Block) REQUIRE b.hash IS UNIQUE",
+        ]
+        # Define indexes for frequently queried properties
+        indexes = [
+            "CREATE INDEX entity_name_index IF NOT EXISTS FOR (e:Entity) ON (e.name)",
+            "CREATE INDEX transaction_value_index IF NOT EXISTS FOR (t:Transaction) ON (t.value_usd)",
+            "CREATE INDEX wallet_chain_index IF NOT EXISTS FOR (w:Wallet) ON (w.chain)",
+        ]
+
         try:
-            async with self.session(database) as session:
-                result = await session.execute_write(
-                    self._execute_query_tx, query, parameters or {}
-                )
-                return result
-                
-        except Exception as e:
-            logger.error(f"Error executing write query: {e}")
-            raise
-    
-    @staticmethod
-    async def _execute_query_tx(tx, query: str, parameters: Dict[str, Any]):
-        """Execute query within a transaction."""
-        result = await tx.run(query, parameters)
-        return await result.data()
-    
-    async def get_schema_info(self) -> Dict[str, Any]:
-        """Get database schema information."""
-        try:
-            # Get node labels
-            labels_result = await self.execute_query("CALL db.labels()")
-            labels = [record["label"] for record in labels_result]
-            
-            # Get relationship types
-            rel_types_result = await self.execute_query("CALL db.relationshipTypes()")
-            relationship_types = [record["relationshipType"] for record in rel_types_result]
-            
-            # Get property keys
-            prop_keys_result = await self.execute_query("CALL db.propertyKeys()")
-            property_keys = [record["propertyKey"] for record in prop_keys_result]
-            
-            # Get constraints
-            constraints_result = await self.execute_query("SHOW CONSTRAINTS")
-            constraints = constraints_result
-            
-            # Get indexes
-            indexes_result = await self.execute_query("SHOW INDEXES")
-            indexes = indexes_result
-            
-            schema_info = {
-                "labels": labels,
-                "relationship_types": relationship_types,
-                "property_keys": property_keys,
-                "constraints": constraints,
-                "indexes": indexes,
-                "node_count": await self._get_node_count(),
-                "relationship_count": await self._get_relationship_count()
-            }
-            
-            logger.debug(f"Retrieved schema info: {len(labels)} labels, {len(relationship_types)} rel types")
-            return schema_info
-            
-        except Exception as e:
-            logger.error(f"Error getting schema info: {e}")
-            raise
-    
-    async def _get_node_count(self) -> int:
-        """Get total node count."""
-        result = await self.execute_query("MATCH (n) RETURN count(n) as count")
-        return result[0]["count"] if result else 0
-    
-    async def _get_relationship_count(self) -> int:
-        """Get total relationship count."""
-        result = await self.execute_query("MATCH ()-[r]->() RETURN count(r) as count")
-        return result[0]["count"] if result else 0
-    
-    async def create_node(
-        self,
-        labels: Union[str, List[str]],
-        properties: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Create a new node."""
-        if isinstance(labels, str):
-            labels = [labels]
-        
-        labels_str = ":".join(labels)
-        query = f"CREATE (n:{labels_str} $properties) RETURN n"
-        
-        result = await self.execute_write_query(query, {"properties": properties})
-        return result[0]["n"] if result else {}
-    
-    async def create_relationship(
-        self,
-        from_node_id: int,
-        to_node_id: int,
-        relationship_type: str,
-        properties: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """Create a relationship between two nodes."""
-        query = """
-        MATCH (a), (b)
-        WHERE id(a) = $from_id AND id(b) = $to_id
-        CREATE (a)-[r:%s $properties]->(b)
-        RETURN r
-        """ % relationship_type
-        
-        params = {
-            "from_id": from_node_id,
-            "to_id": to_node_id,
-            "properties": properties or {}
-        }
-        
-        result = await self.execute_write_query(query, params)
-        return result[0]["r"] if result else {}
-    
-    async def find_nodes(
-        self,
-        labels: Optional[Union[str, List[str]]] = None,
-        properties: Optional[Dict[str, Any]] = None,
-        limit: int = 100
-    ) -> List[Dict[str, Any]]:
-        """Find nodes matching criteria."""
-        query_parts = ["MATCH (n"]
-        
-        if labels:
-            if isinstance(labels, str):
-                labels = [labels]
-            query_parts.append(":" + ":".join(labels))
-        
-        query_parts.append(")")
-        
-        if properties:
-            where_clauses = []
-            for key, value in properties.items():
-                where_clauses.append(f"n.{key} = ${key}")
-            
-            if where_clauses:
-                query_parts.append("WHERE " + " AND ".join(where_clauses))
-        
-        query_parts.append(f"RETURN n LIMIT {limit}")
-        
-        query = " ".join(query_parts)
-        result = await self.execute_query(query, properties or {})
-        
-        return [record["n"] for record in result]
-    
-    async def _initialize_schema(self) -> None:
-        """Initialize the database schema with constraints and indexes."""
-        try:
-            # Create constraints for unique identifiers
-            constraints = [
-                "CREATE CONSTRAINT entity_id_unique IF NOT EXISTS FOR (e:Entity) REQUIRE e.id IS UNIQUE",
-                "CREATE CONSTRAINT person_id_unique IF NOT EXISTS FOR (p:Person) REQUIRE p.id IS UNIQUE",
-                "CREATE CONSTRAINT organization_id_unique IF NOT EXISTS FOR (o:Organization) REQUIRE o.id IS UNIQUE",
-                "CREATE CONSTRAINT transaction_id_unique IF NOT EXISTS FOR (t:Transaction) REQUIRE t.id IS UNIQUE",
-                "CREATE CONSTRAINT document_id_unique IF NOT EXISTS FOR (d:Document) REQUIRE d.id IS UNIQUE",
-            ]
-            
             for constraint in constraints:
-                try:
-                    await self.execute_write_query(constraint)
-                except Exception as e:
-                    # Constraint might already exist
-                    logger.debug(f"Constraint creation skipped: {e}")
-            
-            # Create indexes for common queries
-            indexes = [
-                "CREATE INDEX entity_name_index IF NOT EXISTS FOR (e:Entity) ON (e.name)",
-                "CREATE INDEX transaction_amount_index IF NOT EXISTS FOR (t:Transaction) ON (t.amount)",
-                "CREATE INDEX transaction_date_index IF NOT EXISTS FOR (t:Transaction) ON (t.date)",
-                "CREATE INDEX document_content_index IF NOT EXISTS FOR (d:Document) ON (d.content)",
-            ]
-            
+                await self.execute_query(constraint)
+            logger.debug("Successfully applied Neo4j constraints.")
+
             for index in indexes:
-                try:
-                    await self.execute_write_query(index)
-                except Exception as e:
-                    logger.debug(f"Index creation skipped: {e}")
-            
-            logger.info("Schema initialization completed")
-            
+                await self.execute_query(index)
+            logger.debug("Successfully applied Neo4j indexes.")
+            logger.info("Neo4j schema initialization complete.")
         except Exception as e:
-            logger.error(f"Error initializing schema: {e}")
-            # Don't raise - schema initialization is not critical for basic functionality
+            # It's okay if this fails (e.g., permissions), but we should log it.
+            logger.error(f"Could not initialize Neo4j schema (constraints/indexes): {e}")
+
+    @trace(name="neo4j.get_schema_info")
+    async def get_schema_info(self) -> Dict[str, Any]:
+        """Retrieves and returns the schema of the graph database."""
+        try:
+            labels_query = "CALL db.labels() YIELD label"
+            rel_types_query = "CALL db.relationshipTypes() YIELD relationshipType"
+            
+            labels_result = await self.execute_query(labels_query)
+            rel_types_result = await self.execute_query(rel_types_query)
+
+            schema_info = {
+                "labels": [record["label"] for record in labels_result],
+                "relationship_types": [record["relationshipType"] for record in rel_types_result],
+            }
+            logger.debug("Successfully retrieved Neo4j schema info.")
+            return schema_info
+        except Exception as e:
+            logger.error(f"Failed to retrieve Neo4j schema information: {e}")
+            return {"labels": [], "relationship_types": []}
+

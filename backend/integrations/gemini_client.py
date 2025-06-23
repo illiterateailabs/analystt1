@@ -1,367 +1,261 @@
-"""Google Gemini API client for multimodal AI capabilities."""
+"""
+Gemini API Client Integration
+
+This module provides a comprehensive client for interacting with Google's Gemini API.
+It handles text generation, embeddings, vision capabilities, and specialized tasks
+like Cypher query generation. It is fully integrated with the application's
+back-pressure, cost tracking, and observability systems.
+"""
 
 import logging
-from typing import Dict, List, Optional, Any, Union
-import base64
-import io
+import os
+from typing import Any, Dict, List, Optional
+
+import json
+import google.generativeai as genai
+from google.generativeai.types import GenerationConfig, HarmCategory, HarmBlockThreshold
 from PIL import Image
+import io
 
-from google import genai
-from google.genai.types import HarmCategory, HarmBlockThreshold, GenerateContentResponse
-
-from backend.config import GeminiConfig
-from backend.core.metrics import track_llm_usage
-
+from backend.core.backpressure import with_backpressure
+from backend.core.metrics import ApiMetrics, LlmMetrics
+from backend.providers import get_provider
 
 logger = logging.getLogger(__name__)
 
-# Define pricing per million tokens for different Gemini models
-GEMINI_PRICING = {
-    "models/gemini-1.5-flash-latest": {"input": 0.35/1_000_000, "output": 0.70/1_000_000},
-    "models/gemini-1.5-pro-latest": {"input": 3.50/1_000_000, "output": 10.50/1_000_000},
-    # Default pricing if model not found
-    "default": {"input": 1.0/1_000_000, "output": 2.0/1_000_000},
-}
-
 
 class GeminiClient:
-    """Client for interacting with Google's Gemini API."""
-    
+    """A client for Google's Gemini API, with integrated cost and back-pressure controls."""
+
     def __init__(self):
-        """Initialize the Gemini client."""
-        self.config = GeminiConfig()
-        
-        # Configure the API
-        genai.configure(api_key=self.config.API_KEY)
-        
-        # Initialize the model
-        self.model = genai.GenerativeModel(
-            model_name=self.config.MODEL,
-            generation_config=genai.types.GenerationConfig(
-                temperature=self.config.TEMPERATURE,
-                top_p=self.config.TOP_P,
-                top_k=self.config.TOP_K,
-                max_output_tokens=self.config.MAX_OUTPUT_TOKENS,
-            ),
-            safety_settings={
-                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-            }
+        """
+        Initializes the Gemini client by loading configuration from the provider
+        registry and setting up the API models.
+        """
+        provider_config = get_provider("gemini")
+        if not provider_config:
+            raise ValueError("Gemini provider configuration not found in registry.")
+
+        api_key = provider_config.get("auth", {}).get("api_key_env_var")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY environment variable not set.")
+
+        genai.configure(api_key=api_key)
+
+        self.text_model_name = provider_config.get("text_model", "gemini-1.5-pro-latest")
+        self.vision_model_name = provider_config.get("vision_model", "gemini-1.5-pro-latest") # Vision model is the same for 1.5
+        self.embedding_model_name = provider_config.get("embedding_model", "models/text-embedding-004")
+
+        self.cost_rules = provider_config.get("cost_rules", {})
+
+        # Configure safety settings to be less restrictive
+        self.safety_settings = {
+            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+        }
+
+        self.generation_config = GenerationConfig(
+            temperature=0.2,
+            top_p=0.9,
+            top_k=32,
+            max_output_tokens=4096,
         )
-        
-        logger.info(f"Gemini client initialized with model: {self.config.MODEL}")
-    
-    def _update_metrics(self, model: str, response: GenerateContentResponse, success: bool):
-        """
-        Update metrics for LLM usage.
-        
-        Args:
-            model: The model name
-            response: The response from Gemini
-            success: Whether the request was successful
-        """
-        # Extract token usage from response metadata
-        prompt_tokens = response.usage_metadata.get("prompt_token_count", 0) if response.usage_metadata else 0
-        output_tokens = response.usage_metadata.get("candidates_token_count", 0) if response.usage_metadata else 0
-        
-        # Get pricing for the model
-        pricing = GEMINI_PRICING.get(model, GEMINI_PRICING["default"])
-        
-        # Calculate cost
-        cost = (prompt_tokens * pricing["input"]) + (output_tokens * pricing["output"])
-        
-        # Track metrics
-        track_llm_usage(model, prompt_tokens, output_tokens, cost, success)
-    
-    async def generate_text(
-        self,
-        prompt: str,
-        context: Optional[str] = None,
-        system_instruction: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
-    ) -> str:
-        """Generate text response from Gemini."""
+
         try:
-            # Prepare the full prompt
-            full_prompt = prompt
-            if context:
-                full_prompt = f"Context: {context}\n\nQuery: {prompt}"
-            if system_instruction:
-                full_prompt = f"System: {system_instruction}\n\n{full_prompt}"
+            self.model = genai.GenerativeModel(
+                self.text_model_name,
+                generation_config=self.generation_config,
+                safety_settings=self.safety_settings,
+            )
+            self.vision_model = genai.GenerativeModel(
+                self.vision_model_name,
+                generation_config=self.generation_config,
+                safety_settings=self.safety_settings,
+            )
+            logger.info(f"Gemini models '{self.text_model_name}' and '{self.vision_model_name}' initialized.")
+        except Exception as e:
+            logger.error(f"Failed to initialize Gemini models: {e}")
+            raise
+
+    def _calculate_and_track_cost(
+        self,
+        model_name: str,
+        operation: str,
+        input_tokens: int,
+        output_tokens: int = 0,
+    ):
+        """Calculates cost based on token usage and emits metrics."""
+        cost = 0.0
+        model_cost_rules = self.cost_rules.get("param_multipliers", {}).get(model_name, {})
+        
+        input_cost_per_token = model_cost_rules.get("input_tokens", 0.0)
+        output_cost_per_token = model_cost_rules.get("output_tokens", 0.0)
+
+        cost += input_tokens * input_cost_per_token
+        cost += output_tokens * output_cost_per_token
+        
+        if cost > 0:
+            logger.debug(f"Gemini API call cost: ${cost:.6f} ({operation}, {model_name})")
+            # Emit detailed LLM cost metric
+            LlmMetrics.track_cost(
+                model=model_name,
+                operation=operation,
+                cost=cost,
+            )
+            # Emit generic provider credit metric
+            ApiMetrics.track_credits(
+                provider="gemini",
+                endpoint=operation,
+                credit_type="usd",
+                amount=cost
+            )
+        
+        # Track token usage
+        LlmMetrics.track_tokens(
+            model=model_name,
+            operation=operation,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+
+    @with_backpressure(provider_id="gemini", endpoint="generate_content")
+    async def generate_text(self, prompt: str, context: Optional[str] = None) -> str:
+        """
+        Generates text using the Gemini model.
+
+        Args:
+            prompt: The main prompt for the model.
+            context: Optional additional context to provide.
+
+        Returns:
+            The generated text response.
+        """
+        full_prompt = f"{context}\n\n{prompt}" if context else prompt
+        try:
+            response = await self.model.generate_content_async(full_prompt)
             
-            # Use custom parameters if provided, otherwise use defaults
-            generation_config = None
-            if temperature is not None or max_output_tokens is not None:
-                generation_config = genai.types.GenerationConfig(
-                    temperature=temperature if temperature is not None else self.config.TEMPERATURE,
-                    max_output_tokens=max_output_tokens if max_output_tokens is not None else self.config.MAX_OUTPUT_TOKENS,
+            # Track cost and tokens
+            if response.usage_metadata:
+                self._calculate_and_track_cost(
+                    model_name=self.text_model_name,
+                    operation="generate_content",
+                    input_tokens=response.usage_metadata.prompt_token_count,
+                    output_tokens=response.usage_metadata.candidates_token_count,
                 )
             
-            # Generate content
-            response = await self.model.generate_content_async(
-                full_prompt,
-                generation_config=generation_config
-            )
-            
-            if response.text:
-                logger.debug(f"Generated text response: {response.text[:100]}...")
-                # Update metrics
-                self._update_metrics(self.config.MODEL, response, True)
-                return response.text
-            else:
-                logger.warning("Empty response from Gemini")
-                # Update metrics with empty response
-                self._update_metrics(self.config.MODEL, response, False)
-                return "I apologize, but I couldn't generate a response for that query."
-                
+            return response.text
         except Exception as e:
             logger.error(f"Error generating text with Gemini: {e}")
-            # Track failed request
-            track_llm_usage(self.config.MODEL, 0, 0, 0, False)
             raise
-    
-    async def generate_text_with_tools(
-        self,
-        prompt: str,
-        tools: List[Any],
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
-    ) -> Any:
-        """Generate text with tool calling capabilities."""
+
+    @with_backpressure(provider_id="gemini", endpoint="embed_content")
+    async def get_embeddings(self, text: str) -> List[float]:
+        """
+        Generates vector embeddings for a given text.
+
+        Args:
+            text: The text to embed.
+
+        Returns:
+            A list of floats representing the vector embedding.
+        """
         try:
-            # Use custom parameters if provided, otherwise use defaults
-            generation_config = None
-            if temperature is not None or max_output_tokens is not None:
-                generation_config = genai.types.GenerationConfig(
-                    temperature=temperature if temperature is not None else self.config.TEMPERATURE,
-                    max_output_tokens=max_output_tokens if max_output_tokens is not None else self.config.MAX_OUTPUT_TOKENS,
-                )
-            
-            # Generate content with tools
-            response = await self.model.generate_content_async(
-                prompt,
-                tools=tools,
-                generation_config=generation_config
+            result = await genai.embed_content_async(
+                model=self.embedding_model_name,
+                content=text,
+                task_type="retrieval_document"
             )
             
-            # Update metrics
-            self._update_metrics(self.config.MODEL, response, True)
-            return response
-                
+            # Estimate token count for cost tracking (embedding API doesn't return it)
+            token_count = await self.model.count_tokens_async(text)
+            self._calculate_and_track_cost(
+                model_name=self.embedding_model_name,
+                operation="embed_content",
+                input_tokens=token_count.total_tokens,
+            )
+
+            return result['embedding']
         except Exception as e:
-            logger.error(f"Error generating text with tools: {e}")
-            # Track failed request
-            track_llm_usage(self.config.MODEL, 0, 0, 0, False)
+            logger.error(f"Error getting embeddings from Gemini: {e}")
             raise
-    
-    async def analyze_image(
-        self,
-        image_data: Union[bytes, str, Image.Image],
-        prompt: str = "Analyze this image and describe what you see."
-    ) -> str:
-        """Analyze an image using Gemini's vision capabilities."""
+
+    @with_backpressure(provider_id="gemini", endpoint="generate_content_vision")
+    async def analyze_image(self, image_data: bytes, prompt: str) -> str:
+        """
+        Analyzes an image using the Gemini vision model.
+
+        Args:
+            image_data: The raw bytes of the image.
+            prompt: The prompt to guide the analysis.
+
+        Returns:
+            A text description of the image analysis.
+        """
         try:
-            # Convert image data to PIL Image if needed
-            if isinstance(image_data, bytes):
-                image = Image.open(io.BytesIO(image_data))
-            elif isinstance(image_data, str):
-                # Assume base64 encoded image
-                image_bytes = base64.b64decode(image_data)
-                image = Image.open(io.BytesIO(image_bytes))
-            elif isinstance(image_data, Image.Image):
-                image = image_data
-            else:
-                raise ValueError("Unsupported image data format")
-            
-            # Generate content with image and prompt
-            response = await self.model.generate_content_async([prompt, image])
-            
-            if response.text:
-                logger.debug(f"Image analysis response: {response.text[:100]}...")
-                # Update metrics
-                self._update_metrics(self.config.MODEL, response, True)
-                return response.text
-            else:
-                logger.warning("Empty response from Gemini image analysis")
-                # Update metrics with empty response
-                self._update_metrics(self.config.MODEL, response, False)
-                return "I couldn't analyze this image."
-                
+            image = Image.open(io.BytesIO(image_data))
+            response = await self.vision_model.generate_content_async([prompt, image])
+
+            # Track cost and tokens
+            if response.usage_metadata:
+                self._calculate_and_track_cost(
+                    model_name=self.vision_model_name,
+                    operation="generate_content_vision",
+                    input_tokens=response.usage_metadata.prompt_token_count,
+                    output_tokens=response.usage_metadata.candidates_token_count,
+                )
+
+            return response.text
         except Exception as e:
             logger.error(f"Error analyzing image with Gemini: {e}")
-            # Track failed request
-            track_llm_usage(self.config.MODEL, 0, 0, 0, False)
             raise
-    
-    async def generate_cypher_query(
-        self,
-        natural_language_query: str,
-        schema_context: str,
-        examples: Optional[List[Dict[str, str]]] = None
-    ) -> str:
-        """Convert natural language to Cypher query."""
-        try:
-            # Build the prompt for Cypher generation
-            prompt = f"""
-You are an expert in converting natural language queries to Neo4j Cypher queries.
 
-Graph Schema Context:
+    @with_backpressure(provider_id="gemini", endpoint="generate_cypher")
+    async def generate_cypher_query(self, user_prompt: str, schema_context: str) -> str:
+        """
+        Generates a Cypher query from a natural language prompt and schema context.
+
+        Args:
+            user_prompt: The user's natural language request.
+            schema_context: The Neo4j graph schema description.
+
+        Returns:
+            A Cypher query string.
+        """
+        system_prompt = f"""
+You are an expert Neo4j developer. Your task is to write a Cypher query based on the user's request and the provided graph schema.
+- Only return the Cypher query. Do not include any explanations, comments, or markdown formatting like ```cypher.
+- The query must be compatible with Neo4j 5.
+- Use the provided schema to ensure correct node labels, relationship types, and property keys.
+
+Graph Schema:
 {schema_context}
-
-Natural Language Query: {natural_language_query}
-
-Please generate a Cypher query that answers the natural language question.
-Follow these guidelines:
-1. Use proper Cypher syntax
-2. Consider the provided schema context
-3. Return only the Cypher query without explanations
-4. Use appropriate MATCH, WHERE, RETURN clauses
-5. Handle case-insensitive matching where appropriate
-
 """
-            
-            if examples:
-                prompt += "\nExamples:\n"
-                for example in examples:
-                    prompt += f"Q: {example['question']}\nCypher: {example['cypher']}\n\n"
-            
-            prompt += "Cypher Query:"
-            
-            response = await self.model.generate_content_async(prompt)
-            
-            if response.text:
-                # Extract just the Cypher query
-                cypher_query = response.text.strip()
-                # Remove any markdown formatting
-                if cypher_query.startswith("```"):
-                    lines = cypher_query.split("\n")
-                    cypher_query = "\n".join(lines[1:-1])
-                
-                logger.debug(f"Generated Cypher query: {cypher_query}")
-                # Update metrics
-                self._update_metrics(self.config.MODEL, response, True)
-                return cypher_query
-            else:
-                logger.warning("Empty Cypher query response from Gemini")
-                # Update metrics with empty response
-                self._update_metrics(self.config.MODEL, response, False)
-                return "MATCH (n) RETURN n LIMIT 10"  # Fallback query
-                
-        except Exception as e:
-            logger.error(f"Error generating Cypher query: {e}")
-            # Track failed request
-            track_llm_usage(self.config.MODEL, 0, 0, 0, False)
-            raise
-    
-    async def generate_python_code(
-        self,
-        task_description: str,
-        context: Optional[str] = None,
-        libraries: Optional[List[str]] = None
-    ) -> str:
-        """Generate Python code for data analysis tasks."""
-        try:
-            prompt = f"""
-You are an expert Python developer specializing in data analysis and graph analytics.
+        return await self.generate_text(prompt=user_prompt, context=system_prompt)
 
-Task: {task_description}
+    @with_backpressure(provider_id="gemini", endpoint="explain_results")
+    async def explain_results(self, user_prompt: str, results: List[Dict[str, Any]], context: Optional[str] = None) -> str:
+        """
+        Generates a natural language explanation of graph query results.
 
+        Args:
+            user_prompt: The original user prompt that led to the results.
+            results: The data returned from the Cypher query execution.
+            context: Optional additional context.
+
+        Returns:
+            A natural language explanation.
+        """
+        system_prompt = f"""
+You are a helpful data analyst. The user asked: "{user_prompt}".
+A graph query was executed, and it returned the following data (in JSON format):
+{json.dumps(results, indent=2)}
+
+Your task is to provide a concise, natural language explanation of these results.
+- Do not just restate the JSON. Synthesize the findings into a clear answer.
+- If the results are empty, state that no data was found.
+- If there are many results, summarize them.
 """
-            
-            if context:
-                prompt += f"Context: {context}\n\n"
-            
-            if libraries:
-                prompt += f"Available libraries: {', '.join(libraries)}\n\n"
-            
-            prompt += """
-Please generate Python code that:
-1. Is well-commented and readable
-2. Handles errors appropriately
-3. Uses best practices
-4. Returns results in a structured format
-5. Includes necessary imports
+        return await self.generate_text(prompt="Explain these results to me.", context=system_prompt)
 
-Return only the Python code without explanations.
-"""
-            
-            response = await self.model.generate_content_async(prompt)
-            
-            if response.text:
-                # Extract Python code
-                code = response.text.strip()
-                # Remove markdown formatting if present
-                if code.startswith("```python"):
-                    lines = code.split("\n")
-                    code = "\n".join(lines[1:-1])
-                elif code.startswith("```"):
-                    lines = code.split("\n")
-                    code = "\n".join(lines[1:-1])
-                
-                logger.debug(f"Generated Python code: {code[:200]}...")
-                # Update metrics
-                self._update_metrics(self.config.MODEL, response, True)
-                return code
-            else:
-                logger.warning("Empty Python code response from Gemini")
-                # Update metrics with empty response
-                self._update_metrics(self.config.MODEL, response, False)
-                return "# No code generated"
-                
-        except Exception as e:
-            logger.error(f"Error generating Python code: {e}")
-            # Track failed request
-            track_llm_usage(self.config.MODEL, 0, 0, 0, False)
-            raise
-    
-    async def explain_results(
-        self,
-        query: str,
-        results: Any,
-        context: Optional[str] = None
-    ) -> str:
-        """Generate natural language explanation of query results."""
-        try:
-            prompt = f"""
-You are an expert data analyst. Please provide a clear, concise explanation of the following query results.
-
-Original Query: {query}
-
-Results: {str(results)[:2000]}  # Limit results size
-
-"""
-            
-            if context:
-                prompt += f"Context: {context}\n\n"
-            
-            prompt += """
-Please provide:
-1. A summary of what the results show
-2. Key insights or patterns
-3. Any notable findings or anomalies
-4. Recommendations for further analysis if applicable
-
-Keep the explanation clear and accessible to business users.
-"""
-            
-            response = await self.model.generate_content_async(prompt)
-            
-            if response.text:
-                logger.debug(f"Generated explanation: {response.text[:100]}...")
-                # Update metrics
-                self._update_metrics(self.config.MODEL, response, True)
-                return response.text
-            else:
-                logger.warning("Empty explanation response from Gemini")
-                # Update metrics with empty response
-                self._update_metrics(self.config.MODEL, response, False)
-                return "Unable to generate explanation for the results."
-                
-        except Exception as e:
-            logger.error(f"Error generating explanation: {e}")
-            # Track failed request
-            track_llm_usage(self.config.MODEL, 0, 0, 0, False)
-            raise
