@@ -24,6 +24,7 @@ from backend.api.v1 import (
 )
 from backend.auth.dependencies import get_current_user
 from backend.core import events, logging as app_logging, metrics, sentry_config
+from backend.core.telemetry import setup_telemetry
 from backend.database import create_db_and_tables, get_engine
 from backend.jobs import sim_graph_job
 
@@ -47,6 +48,13 @@ app = FastAPI(
     docs_url="/api/docs" if FASTAPI_DEBUG else None,
     redoc_url="/api/redoc" if FASTAPI_DEBUG else None,
 )
+
+# Initialize OpenTelemetry telemetry
+@app.on_event("startup")
+async def initialize_telemetry() -> None:
+    """Configure OpenTelemetry tracing on startup (if OTEL_ENABLED=true)."""
+    setup_telemetry(app)
+    logger.info("OpenTelemetry telemetry setup executed")
 
 # Initialize Sentry for error tracking
 @app.on_event("startup")

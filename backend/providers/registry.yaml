@@ -1,226 +1,135 @@
-# Provider Registry Configuration
-# Centralized configuration for all external data providers used in the system
-# Version: 1.0.0 (2025-06-21)
+#
+# Analyst Droid One - Provider Registry v1.0
+#
+# This file is the single source of truth for configuring all external providers.
+# It is used by the BackpressureMiddleware for budget control, rate limiting,
+# and by various clients for connection and authentication.
+#
+# Placeholders like `${ENV_VAR}` will be substituted at runtime.
+#
 
-# Global default settings applied to all providers unless overridden
-defaults:
-  retry:
-    max_attempts: 3
-    initial_backoff_seconds: 1.0
-    max_backoff_seconds: 30.0
-    backoff_factor: 2.0
-    retry_on_status_codes: [429, 500, 502, 503, 504]
-  timeout:
-    connect_seconds: 5.0
-    read_seconds: 30.0
-    total_seconds: 60.0
-  monitoring:
-    track_latency: true
-    track_errors: true
-    track_usage: true
-
-# Blockchain data providers
-blockchain:
-  - id: sim-api
-    type: rest
-    name: SIM Blockchain API
-    description: Primary blockchain data provider for transaction and wallet data
-    base_url: ${SIM_API_URL:-http://sim-api:8080/api/v1}
+providers:
+  # -------------------------------------------------------------------------- #
+  # 1. Redis (Cache & Vector Store)
+  # -------------------------------------------------------------------------- #
+  - id: "redis"
+    name: "Redis"
+    description: "In-memory data store for caching, session management, and vector search."
+    connection_uri: "redis://${REDIS_HOST}:${REDIS_PORT}"
     auth:
-      type: api_key
-      header_name: X-API-Key
-      key_env_var: SIM_API_KEY
-    rate_limits:
-      requests_per_minute: 300
-      requests_per_day: 10000
-    retry:
-      max_attempts: 5
-      initial_backoff_seconds: 0.5
-    endpoints:
-      balances: /balances
-      transactions: /transactions
-      tokens: /tokens
-      holders: /holders
-      activity: /activity
-      collectibles: /collectibles
-    supported_chains:
-      - ethereum
-      - bitcoin
-      - polygon
-      - arbitrum
-      - optimism
-      - base
-    features:
-      streaming: true
-      historical: true
-      real_time: true
-    timeout:
-      read_seconds: 60.0
-      total_seconds: 120.0
-
-  # Template for future blockchain data providers
-  - id: alchemy
-    type: rest
-    name: Alchemy API
-    description: Alternative blockchain data provider (not yet implemented)
-    enabled: false
-    base_url: https://eth-mainnet.g.alchemy.com/v2/
-    auth:
-      type: api_key
-      header_name: Authorization
-      key_env_var: ALCHEMY_API_KEY
-      key_prefix: "Bearer "
-    rate_limits:
-      requests_per_second: 50
-      compute_units_per_day: 350000
-    supported_chains:
-      - ethereum
-      - polygon
-      - arbitrum
-      - optimism
-      - solana
-
-  - id: bitquery
-    type: graphql
-    name: Bitquery GraphQL API
-    description: Advanced blockchain analytics provider (not yet implemented)
-    enabled: false
-    base_url: https://graphql.bitquery.io/
-    auth:
-      type: api_key
-      header_name: X-API-Key
-      key_env_var: BITQUERY_API_KEY
-    rate_limits:
-      requests_per_minute: 60
-      queries_per_day: 1000
-    supported_chains:
-      - ethereum
-      - bitcoin
-      - binance
-      - polygon
-
-# AI and LLM providers
-ai:
-  - id: gemini
-    type: rest
-    name: Google Gemini API
-    description: Large language model provider for AI capabilities
-    base_url: https://generativelanguage.googleapis.com/v1
-    auth:
-      type: api_key
-      query_param: key
-      key_env_var: GEMINI_API_KEY
-    rate_limits:
-      requests_per_minute: 60
-      tokens_per_minute: 60000
-    models:
-      default: ${GEMINI_MODEL:-gemini-1.5-pro-latest}
-      available:
-        - gemini-1.5-pro-latest
-        - gemini-1.5-flash-latest
-        - gemini-1.0-pro-latest
-    parameters:
-      temperature: ${GEMINI_TEMPERATURE:-0.2}
-      top_p: ${GEMINI_TOP_P:-0.95}
-      top_k: ${GEMINI_TOP_K:-40}
-      max_output_tokens: 8192
-    cost_tracking:
-      enabled: true
-      input_token_cost: 0.00000125
-      output_token_cost: 0.00000375
-    timeout:
-      read_seconds: 120.0
-      total_seconds: 180.0
-
-# Execution environments
-execution:
-  - id: e2b-sandbox
-    type: rest
-    name: E2B Sandbox
-    description: Secure code execution environment
-    base_url: https://api.e2b.dev/v1
-    auth:
-      type: api_key
-      header_name: Authorization
-      key_env_var: E2B_API_KEY
-      key_prefix: "Bearer "
-    rate_limits:
-      concurrent_sandboxes: 10
-      sandbox_time_limit_seconds: 300
-    parameters:
-      timeout_seconds: ${E2B_TIMEOUT_SECONDS:-30}
-      sdk_version: 0.12.0
-    environments:
-      default: python3
-      available:
-        - python3
-        - nodejs
-        - bash
-    cost_tracking:
-      enabled: true
-      compute_unit_cost: 0.0001
-
-# Databases
-databases:
-  - id: neo4j
-    type: graph_db
-    name: Neo4j Graph Database
-    description: Graph database for relationship analysis
-    connection_uri: ${NEO4J_URI:-neo4j://neo4j:7687}
-    auth:
-      type: basic
-      username_env_var: NEO4J_USER
-      password_env_var: NEO4J_PASSWORD
-    database_name: ${NEO4J_DATABASE:-neo4j}
-    connection_pool:
-      max_size: 50
-      max_idle_time_seconds: 300
-    retry:
-      max_attempts: 5
-      initial_backoff_seconds: 1.0
-    monitoring:
-      track_query_time: true
-      track_connection_pool: true
-
-  - id: redis
-    type: key_value
-    name: Redis Cache
-    description: In-memory data store for caching and vector storage
-    connection_uri: redis://${REDIS_HOST:-redis}:${REDIS_PORT:-6379}
-    auth:
-      type: password
-      password_env_var: REDIS_PASSWORD
-      optional: true
+      password_env_var: "REDIS_PASSWORD"
+    # Budget and cost rules are not applicable for self-hosted Redis
+    budget:
+      monthly_usd: 0.0
+    rate_limits: {}
+    cost_rules: {}
+    retry_policy:
+      attempts: 3
+      backoff_factor: 0.2 # seconds
+    # Tiered database configuration
     databases:
       cache:
-        db_number: ${REDIS_DB:-0}
-        ttl_seconds: 3600
+        db_number: 0
+        ttl_seconds: 3600 # 1 hour
       vector_store:
-        db_number: ${REDIS_VECTOR_DB:-1}
-        ttl_seconds: 86400
+        db_number: 1
+        ttl_seconds: 86400 # 24 hours
     connection_pool:
       max_connections: 20
-      min_connections: 2
-    monitoring:
-      track_hit_rate: true
-      track_memory_usage: true
+      socket_timeout_seconds: 5
 
-# MCP servers
-mcp:
-  - id: graph-server
-    type: mcp
-    name: Graph MCP Server
-    description: Model Context Protocol server for graph operations
-    host: localhost
-    port: ${MCP_GRAPH_SERVER_PORT:-5001}
-    enabled: true
-    timeout_seconds: 30
+  # -------------------------------------------------------------------------- #
+  # 2. Neo4j (Graph Database)
+  # -------------------------------------------------------------------------- #
+  - id: "neo4j"
+    name: "Neo4j"
+    description: "Graph database for storing and querying blockchain relationships."
+    connection_uri: "neo4j://${NEO4J_HOST}:${NEO4J_PORT}"
+    auth:
+      username_env_var: "NEO4J_USERNAME"
+      password_env_var: "NEO4J_PASSWORD"
+    # Budget and cost rules are not applicable for self-hosted Neo4j
+    budget:
+      monthly_usd: 0.0
+    rate_limits: {}
+    cost_rules: {}
+    retry_policy:
+      attempts: 3
+      backoff_factor: 0.2
+    connection_pool:
+      max_connections: 10
+      acquisition_timeout_seconds: 30
 
-  - id: echo-server
-    type: mcp
-    name: Echo MCP Server
-    description: Model Context Protocol server for testing
-    host: localhost
-    port: ${MCP_ECHO_SERVER_PORT:-5002}
-    enabled: true
-    timeout_seconds: 10
+  # -------------------------------------------------------------------------- #
+  # 3. Google Gemini (LLM & Embeddings)
+  # -------------------------------------------------------------------------- #
+  - id: "gemini"
+    name: "Google Gemini"
+    description: "LLM provider for text generation, analysis, and vector embeddings."
+    auth:
+      api_key_env_var: "GEMINI_API_KEY"
+    budget:
+      monthly_usd: 100.00
+    rate_limits:
+      requests_per_minute: 60
+    # Cost rules based on Google AI Platform pricing (illustrative)
+    cost_rules:
+      default_cost_per_request: 0.0001
+      param_multipliers:
+        # Cost per 1M input tokens
+        "gemini-1.5-pro-latest":
+          input_tokens: 3.50 / 1_000_000
+          output_tokens: 10.50 / 1_000_000
+        # Cost per 1M tokens for embeddings
+        "text-embedding-004":
+          input_tokens: 0.20 / 1_000_000
+    retry_policy:
+      attempts: 3
+      backoff_factor: 0.5
+
+  # -------------------------------------------------------------------------- #
+  # 4. E2B (Sandboxed Code Execution)
+  # -------------------------------------------------------------------------- #
+  - id: "e2b"
+    name: "E2B Sandbox"
+    description: "Secure environment for executing generated code and tools."
+    auth:
+      api_key_env_var: "E2B_API_KEY"
+    budget:
+      monthly_usd: 50.00
+    rate_limits:
+      requests_per_minute: 30
+    # Cost rules based on compute time
+    cost_rules:
+      default_cost_per_request: 0.005
+      param_multipliers:
+        # Cost per second of sandbox execution
+        execution_seconds: 0.001
+    retry_policy:
+      attempts: 2
+      backoff_factor: 1.0
+
+  # -------------------------------------------------------------------------- #
+  # 5. SIM API (Blockchain Data)
+  # -------------------------------------------------------------------------- #
+  - id: "sim"
+    name: "SIM Blockchain API"
+    description: "Core data provider for real-time multi-chain blockchain data."
+    auth:
+      api_key_env_var: "SIM_API_KEY"
+    budget:
+      monthly_usd: 250.00
+    rate_limits:
+      requests_per_minute: 120
+      # More granular limits can be added here if needed
+    # Cost rules based on credits per endpoint
+    cost_rules:
+      default_cost_per_request: 0.01 # 1 credit = $0.01
+      endpoints:
+        "activity": 0.02 # 2 credits
+        "balances": 0.01 # 1 credit
+        "token-info": 0.01 # 1 credit
+        "transactions": 0.05 # 5 credits
+    retry_policy:
+      attempts: 5 # Critical data source, higher retry count
+      backoff_factor: 0.3

@@ -15,6 +15,9 @@ from sqlalchemy import select, func
 from backend.models.conversation import Conversation, Message
 from fastapi import Query
 
+# OpenTelemetry tracing
+from backend.core.telemetry import trace
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
@@ -90,6 +93,7 @@ async def get_e2b_client(request: Request) -> E2BClient:
 
 
 @router.post("/message", response_model=ChatResponse)
+@trace()  # OpenTelemetry span for full request handling
 async def send_message(
     request: ChatRequest,
     gemini: GeminiClient = Depends(get_gemini_client),
@@ -235,6 +239,7 @@ Graph Database Schema:
 
 
 @router.post("/analyze-image", response_model=ImageAnalysisResponse)
+@trace()  # Trace image-analysis pipeline
 async def analyze_image(
     file: UploadFile = File(...),
     request: ImageAnalysisRequest = ImageAnalysisRequest(),
