@@ -10,16 +10,21 @@ import logging
 from typing import Dict, Any, List, Optional
 
 from backend.integrations.neo4j_client import Neo4jClient
-from backend.integrations.sim_client import SimClient
+from backend.integrations.sim_client import SimApiClient
 from backend.agents.tools.sim_graph_ingestion_tool import SimGraphIngestionTool
 from backend.core.metrics import record_job_execution_time, record_job_status
+from backend.jobs.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
-async def run_sim_graph_ingestion_job(
+# --------------------------------------------------------------------------- #
+# Internal async helpers (kept async for direct reuse & easier unit-testing)
+# --------------------------------------------------------------------------- #
+
+async def _run_sim_graph_ingestion_job_async(
     wallet_address: str,
     neo4j_client: Neo4jClient,
-    sim_client: SimClient,
+    sim_client: SimApiClient,
     ingest_balances: bool = True,
     ingest_activity: bool = True,
     limit_balances: int = 100,
@@ -80,10 +85,10 @@ async def run_sim_graph_ingestion_job(
             record_job_execution_time(job_name, status, start_time)
         record_job_status(job_name, status)
 
-async def batch_sim_graph_ingestion_job(
+async def _batch_sim_graph_ingestion_job_async(
     wallet_addresses: List[str],
     neo4j_client: Neo4jClient,
-    sim_client: SimClient,
+    sim_client: SimApiClient,
     **kwargs
 ) -> Dict[str, Any]:
     """
@@ -133,3 +138,99 @@ async def batch_sim_graph_ingestion_job(
         if start_time is not None:
             record_job_execution_time(job_name, status, start_time)
         record_job_status(job_name, status)
+
+# --------------------------------------------------------------------------- #
+# Celery task wrappers – these are the public entry-points used by workers.
+# Celery requires sync callables, so we run the async helpers via asyncio.
+# --------------------------------------------------------------------------- #
+
+import asyncio
+
+
+@celery_app.task(bind=True, name="sim_tasks.run_single_ingestion", queue="data_ingestion")
+def run_sim_graph_ingestion_task(self, wallet_address: str, **params) -> Dict[str, Any]:
+    """
+    Celery task wrapper around the single-wallet SIM graph ingestion job.
+    """
+    neo4j_client = Neo4jClient()
+    sim_client = SimApiClient()
+    return asyncio.run(
+        _run_sim_graph_ingestion_job_async(
+            wallet_address=wallet_address,
+            neo4j_client=neo4j_client,
+            sim_client=sim_client,
+            **params,
+        )
+    )
+
+
+@celery_app.task(bind=True, name="sim_tasks.run_batch_ingestion", queue="data_ingestion")
+def batch_sim_graph_ingestion_task(self, wallet_addresses: List[str], **params) -> Dict[str, Any]:
+    """
+    Celery task wrapper around the batch SIM graph ingestion job.
+    """
+    neo4j_client = Neo4jClient()
+    sim_client = SimApiClient()
+    return asyncio.run(
+        _batch_sim_graph_ingestion_job_async(
+            wallet_addresses=wallet_addresses,
+            neo4j_client=neo4j_client,
+            sim_client=sim_client,
+            **params,
+        )
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Convenience helpers requested by earlier design
+# --------------------------------------------------------------------------- #
+
+# NOTE: `main.py` (and possibly other modules) previously relied on a simple
+# `start()` / `stop()` duo from this module.  When the job was refactored to
+# Celery tasks those functions were removed, which would break the import path.
+# We re-introduce *thin wrappers* to preserve backward-compatibility without
+# changing the new Celery-based architecture.
+
+def start(addresses: Optional[List[str]] = None, **params) -> str:  # pylint: disable=unused-argument
+    """
+    Back-compat helper that queues a batch ingestion job or becomes a no-op.
+
+    Existing code may call ``sim_graph_job.start()`` with no parameters, so we
+    guard for that scenario and merely log instead of raising.
+
+    Args:
+        addresses: Optional list of wallet addresses to ingest.  If omitted we
+                   perform no ingestion but return a neutral status string.
+        **params: Additional keyword arguments forwarded to the Celery task.
+
+    Returns:
+        A short status string useful for basic health checks / logging.
+    """
+    if addresses:
+        return start_batch_ingestion(addresses, **params)
+
+    logger.info(
+        "sim_graph_job.start() called with no addresses – nothing queued; returning 'noop'."
+    )
+    return "noop"
+
+
+# --------------------------------------------------------------------------- #
+# Convenience start/stop helpers requested by instructions
+# --------------------------------------------------------------------------- #
+
+def start_batch_ingestion(addresses: List[str], **params) -> str:
+    """
+    Convenience helper used by the API or scheduler to queue a batch ingestion
+    without importing Celery specifics everywhere.
+    """
+    batch_sim_graph_ingestion_task.delay(wallet_addresses=addresses, **params)
+    return "queued"
+
+
+def stop() -> None:
+    """
+    Placeholder stop() required by instructions. Real cancellation /
+    revocation logic can be added later.
+    """
+    logger.info("Sim-graph ingestion stop() called – no-op (tasks run independently).")
