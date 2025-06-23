@@ -14,6 +14,10 @@ from crewai_tools import BaseTool
 from pydantic import BaseModel, Field
 
 from backend.integrations.neo4j_client import Neo4jClient
+from backend.core.explain_cypher import (
+    CypherExplanationService,
+    QuerySource,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +78,8 @@ class GraphQueryTool(BaseTool):
         """
         super().__init__()
         self.neo4j_client = neo4j_client or Neo4jClient()
+        # CypherExplanationService handles provenance, caching & evidence
+        self.explanation_service: CypherExplanationService = CypherExplanationService()
     
     async def _arun(self, query: str, parameters: Optional[Dict[str, Any]] = None, 
                    limit_results: int = 1000) -> str:
@@ -98,19 +104,34 @@ class GraphQueryTool(BaseTool):
             if "LIMIT" not in query.upper() and limit_results > 0:
                 query = f"{query} LIMIT {limit_results}"
             
-            # Execute the query
-            logger.info(f"Executing Cypher query: {query}")
+            # Execute & track via CypherExplanationService
+            logger.info(f"Executing Cypher query via ExplanationService: {query}")
             parameters = parameters or {}
-            results = await self.neo4j_client.run_query(query, parameters)
+            results, exec_record = await self.explanation_service.execute_and_track_query(
+                query_text=query,
+                parameters=parameters,
+                source=QuerySource.TOOL_GENERATED,
+                generated_by="GraphQueryTool",
+            )
             
             # Format and return results
             if not results:
-                return json.dumps({"status": "success", "results": [], "count": 0})
+                return json.dumps(
+                    {
+                        "status": "success",
+                        "results": [],
+                        "count": 0,
+                        "query_id": exec_record.query_id,
+                        "execution_id": exec_record.execution_id,
+                    }
+                )
             
             return json.dumps({
                 "status": "success",
                 "results": results,
-                "count": len(results)
+                "count": len(results),
+                "query_id": exec_record.query_id,
+                "execution_id": exec_record.execution_id,
             }, default=self._json_serializer)
             
         except Exception as e:

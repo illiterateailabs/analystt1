@@ -72,3 +72,35 @@ ci:
     autofix_commit_msg: 'style: auto fixes from pre-commit hooks'
     autoupdate_commit_msg: 'chore: update pre-commit hooks'
     autoupdate_schedule: monthly
+
+# --------------------------------------------------------------------------- #
+# Front-end (Next.js) hooks – run only on files inside /frontend
+# --------------------------------------------------------------------------- #
+-   repo: local
+    hooks:
+    -   id: eslint-frontend
+        name: ESLint (frontend)
+        description: Lint TS/JS in the frontend folder
+        entry: npm
+        args: ["run", "lint", "--", "--max-warnings=0"]
+        language: system
+        types: [javascript, typescript]
+        files: ^frontend/
+
+    -   id: prettier-frontend
+        name: Prettier (frontend)
+        description: Enforce code style for TS/JS/JSON/MD inside frontend
+        entry: npm
+        args: ["run", "format", "--", "--check"]
+        language: system
+        types: [javascript, typescript, json, markdown, css]
+        files: ^frontend/
+
+    -   id: tsc-frontend
+        name: TypeScript type-check (frontend)
+        description: Static type checking for the frontend
+        entry: npm
+        args: ["run", "type-check"]
+        language: system
+        pass_filenames: false
+        files: ^frontend/
