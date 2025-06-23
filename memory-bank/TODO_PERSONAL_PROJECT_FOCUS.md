@@ -12,7 +12,7 @@ Legend
 ## P0 – Core Functionality & Quick Wins
 | # | Task | Effort | Status | Notes |
 |---|------|--------|--------|-------|
-| 0-1 | **Expose `/health/workers` endpoint** from `worker_monitor.py` via API v1 | S | ☐ | Verify returns queue depth & worker count |
+| 0-1 | **Expose `/health/workers` endpoint** from `worker_monitor.py` via API v1 | S | ☑ | Completed in commit `154bc34` – returns queue depth & worker count |
 | 0-2 | **Emit SIM client cost metrics** (`external_api_credit_used_total`) | M | ☐ | Mirror Gemini pattern; unit-test budget guard |
 | 0-3 | **Finish Graph-Aware RAG “Explain-with-Cypher”** | M | ☐ | Persist Cypher + citation in EvidenceBundle |
 | 0-4 | **Smoke-test suite**: chat → graph → background job flow | M | ☐ | Add to `tests/` as `test_smoke_flow.py` |
