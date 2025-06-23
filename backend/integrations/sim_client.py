@@ -1,224 +1,428 @@
 """
-SIM API Client for Blockchain Data
+SIM Blockchain API Client
 
-This module provides a robust and comprehensive client for interacting with the 
-SIM Blockchain Data API. It is designed for high-performance, asynchronous
-operations and is fully integrated with the application's core systems.
+This module provides a client for interacting with the SIM (Structured Intelligence Metrics)
+blockchain data API. It handles authentication, rate limiting, retries, and cost tracking
+for all SIM API endpoints.
 
-Key Features:
-- Asynchronous API calls using httpx.
-- Integration with the BackpressureMiddleware for rate limiting, budget control,
-  and circuit breaking.
-- Automated cost tracking that emits metrics based on the provider registry.
-- Centralized configuration loading from the provider registry.
-- Graceful error handling and detailed logging.
+The client is configured via the central provider registry and automatically tracks
+API costs for budget monitoring and back-pressure control.
 """
 
+import asyncio
+import json
 import logging
 import os
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, Dict, List, Optional, Union
 
-import httpx
-from fastapi import HTTPException, status
+import aiohttp
+from aiohttp import ClientResponseError, ClientSession
 
-from backend.core.backpressure import with_backpressure
 from backend.core.metrics import ApiMetrics
 from backend.providers import get_provider
 
+# Configure module logger
 logger = logging.getLogger(__name__)
 
+class SimApiError(Exception):
+    """Exception raised for SIM API errors."""
+    def __init__(self, message: str, status_code: Optional[int] = None, response_text: Optional[str] = None):
+        self.status_code = status_code
+        self.response_text = response_text
+        super().__init__(message)
 
-class SimApiClient:
+class SimClient:
     """
-    An asynchronous client for the SIM Blockchain Data API.
+    Client for the SIM Blockchain API.
+    
+    This client handles authentication, rate limiting, retries, and cost tracking
+    for all SIM API endpoints. It is configured via the central provider registry.
     """
-
-    def __init__(self):
+    
+    def __init__(self, api_key: Optional[str] = None):
         """
-        Initializes the SimApiClient.
-
-        Loads configuration from the provider registry, sets up the HTTP client,
-        and prepares for making authenticated API calls.
+        Initialize the SIM API client.
         
-        Raises:
-            ValueError: If the 'sim' provider is not configured in the registry
-                        or if the API key is missing.
-        """
-        provider_config = get_provider("sim")
-        if not provider_config:
-            raise ValueError("SIM provider configuration not found in registry.")
-
-        self.api_key = provider_config.get("auth", {}).get("api_key_env_var")
-        if not self.api_key:
-            raise ValueError("SIM_API_KEY environment variable not set.")
-
-        self.base_url = provider_config.get("connection_uri", "https://api.sim.io/v1")
-        self.cost_rules = provider_config.get("cost_rules", {})
-        
-        self.client = httpx.AsyncClient(
-            base_url=self.base_url,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            timeout=30.0  # Set a reasonable timeout for API calls
-        )
-        logger.info("SimApiClient initialized.")
-
-    def _track_cost(self, endpoint: str):
-        """
-        Calculates and tracks the cost of an API call for a given endpoint.
-
         Args:
-            endpoint: The name of the API endpoint that was called (e.g., "activity").
+            api_key: Optional API key. If not provided, it will be loaded from the provider registry.
         """
-        # Get cost from endpoint-specific rules, or fall back to default
-        cost = self.cost_rules.get("endpoints", {}).get(
-            endpoint, self.cost_rules.get("default_cost_per_request", 0.0)
-        )
-
-        if cost > 0:
-            logger.debug(f"SIM API call cost: ${cost:.4f} for endpoint '{endpoint}'")
-            ApiMetrics.track_credits(
-                provider="sim",
-                endpoint=endpoint,
-                credit_type="usd",
-                amount=cost
+        self._provider_config = get_provider("sim")
+        if not self._provider_config:
+            raise ValueError("SIM provider configuration not found in registry")
+        
+        # Get API key from parameter, provider config, or environment variable
+        self._api_key = api_key
+        if not self._api_key:
+            api_key_env_var = self._provider_config.get("auth", {}).get("api_key_env_var")
+            if api_key_env_var:
+                self._api_key = os.getenv(api_key_env_var)
+        
+        if not self._api_key:
+            raise ValueError("SIM API key not provided and not found in environment")
+        
+        # Get base URL from provider config
+        self._base_url = self._provider_config.get("connection_uri", "https://api.sim-blockchain.com/v1")
+        
+        # Get retry configuration
+        retry_config = self._provider_config.get("retry_policy", {})
+        self._max_retries = retry_config.get("attempts", 3)
+        self._backoff_factor = retry_config.get("backoff_factor", 0.5)
+        
+        # Get rate limits
+        self._rate_limits = self._provider_config.get("rate_limits", {})
+        self._requests_per_minute = self._rate_limits.get("requests_per_minute", 60)
+        
+        # Get cost rules
+        self._cost_rules = self._provider_config.get("cost_rules", {})
+        self._default_cost = self._cost_rules.get("default_cost_per_request", 0.01)
+        self._endpoint_costs = self._cost_rules.get("endpoints", {})
+        
+        # Initialize session
+        self._session = None
+        
+        logger.info(f"SIM client initialized with base URL: {self._base_url}")
+    
+    async def _ensure_session(self) -> ClientSession:
+        """
+        Ensure that an aiohttp ClientSession exists.
+        
+        Returns:
+            An aiohttp ClientSession
+        """
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "User-Agent": "AnalystDroidOne/1.0",
+                }
             )
-
-    @with_backpressure(provider_id="sim", endpoint="activity")
-    async def get_activity(
-        self, address: str, chain: str, limit: int = 100
+        return self._session
+    
+    async def close(self) -> None:
+        """Close the aiohttp session."""
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
+    
+    async def _make_request(
+        self,
+        method: str,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        data: Optional[Dict[str, Any]] = None,
+        retry_count: int = 0
     ) -> Dict[str, Any]:
         """
-        Fetches the recent activity for a given blockchain address.
-
+        Make an HTTP request to the SIM API with retry logic.
+        
         Args:
-            address: The blockchain address.
-            chain: The blockchain to query (e.g., "ethereum").
-            limit: The maximum number of activity items to return.
-
+            method: HTTP method (GET, POST, etc.)
+            endpoint: API endpoint path
+            params: Optional query parameters
+            data: Optional request body data
+            retry_count: Current retry attempt (used internally)
+            
         Returns:
-            A dictionary containing the activity data.
+            API response as a dictionary
             
         Raises:
-            HTTPException: If the API call fails.
+            SimApiError: If the API request fails after all retries
         """
-        endpoint = "activity"
-        params = {"address": address, "chain": chain, "limit": limit}
-        logger.debug(f"Fetching SIM activity for {address} on {chain}")
+        session = await self._ensure_session()
+        url = f"{self._base_url}/{endpoint}"
         
         try:
-            response = await self.client.get(f"/{endpoint}", params=params)
-            response.raise_for_status()  # Raise exception for 4xx/5xx responses
+            # Calculate cost for this endpoint
+            endpoint_name = endpoint.split("/")[0]  # Get the base endpoint name
+            cost = self._endpoint_costs.get(endpoint_name, self._default_cost)
             
-            self._track_cost(endpoint)
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error fetching SIM activity for {address}: {e.response.status_code} - {e.response.text}")
-            raise HTTPException(
-                status_code=e.response.status_code,
-                detail=f"Error from SIM API: {e.response.text}"
-            )
-        except httpx.RequestError as e:
-            logger.error(f"Request error fetching SIM activity for {address}: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=f"Could not connect to SIM API: {e}"
-            )
-
-    @with_backpressure(provider_id="sim", endpoint="balances")
-    async def get_balances(self, address: str, chain: str) -> Dict[str, Any]:
+            # Make the request
+            async with session.request(method, url, params=params, json=data) as response:
+                # Check for rate limiting
+                if response.status == 429:
+                    retry_after = int(response.headers.get("Retry-After", "5"))
+                    logger.warning(f"Rate limited by SIM API. Retrying after {retry_after} seconds.")
+                    await asyncio.sleep(retry_after)
+                    return await self._make_request(method, endpoint, params, data, retry_count)
+                
+                # Check for other errors
+                if response.status >= 400:
+                    error_text = await response.text()
+                    logger.error(f"SIM API error: {response.status} - {error_text}")
+                    
+                    # Retry on server errors (5xx) or specific client errors
+                    if (response.status >= 500 or response.status in [408, 429]) and retry_count < self._max_retries:
+                        retry_delay = self._backoff_factor * (2 ** retry_count)
+                        logger.info(f"Retrying SIM API request in {retry_delay:.2f} seconds (attempt {retry_count + 1}/{self._max_retries})")
+                        await asyncio.sleep(retry_delay)
+                        return await self._make_request(method, endpoint, params, data, retry_count + 1)
+                    
+                    raise SimApiError(
+                        f"SIM API request failed: {response.status}",
+                        status_code=response.status,
+                        response_text=error_text
+                    )
+                
+                # Parse successful response
+                result = await response.json()
+                
+                # Record cost after successful request
+                ApiMetrics.record_api_cost("sim", endpoint_name, cost)
+                
+                return result
+                
+        except aiohttp.ClientError as e:
+            # Handle network errors
+            logger.error(f"Network error in SIM API request: {str(e)}")
+            
+            if retry_count < self._max_retries:
+                retry_delay = self._backoff_factor * (2 ** retry_count)
+                logger.info(f"Retrying SIM API request in {retry_delay:.2f} seconds (attempt {retry_count + 1}/{self._max_retries})")
+                await asyncio.sleep(retry_delay)
+                return await self._make_request(method, endpoint, params, data, retry_count + 1)
+            
+            raise SimApiError(f"SIM API network error after {self._max_retries} retries: {str(e)}")
+    
+    @ApiMetrics.track_api_call("sim", "activity")
+    async def get_activity(
+        self,
+        address: str,
+        chain_id: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None
+    ) -> Dict[str, Any]:
         """
-        Fetches the token balances for a given blockchain address.
-
+        Get blockchain activity for an address.
+        
         Args:
-            address: The blockchain address.
-            chain: The blockchain to query.
-
-        Returns:
-            A dictionary containing the balance data.
-        """
-        endpoint = "balances"
-        params = {"address": address, "chain": chain}
-        logger.debug(f"Fetching SIM balances for {address} on {chain}")
-
-        try:
-            response = await self.client.get(f"/{endpoint}", params=params)
-            response.raise_for_status()
+            address: Blockchain address to query
+            chain_id: Optional chain ID (e.g., 'ethereum', 'bitcoin')
+            limit: Maximum number of results to return
+            offset: Pagination offset
+            start_time: Optional start timestamp (Unix seconds)
+            end_time: Optional end timestamp (Unix seconds)
             
-            self._track_cost(endpoint)
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error fetching SIM balances for {address}: {e.response.status_code} - {e.response.text}")
-            raise HTTPException(status_code=e.response.status_code, detail=f"Error from SIM API: {e.response.text}")
-        except httpx.RequestError as e:
-            logger.error(f"Request error fetching SIM balances for {address}: {e}")
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Could not connect to SIM API: {e}")
-
-    @with_backpressure(provider_id="sim", endpoint="token-info")
-    async def get_token_info(self, token_address: str, chain: str) -> Dict[str, Any]:
+        Returns:
+            Activity data for the address
         """
-        Fetches information about a specific token.
-
+        params = {
+            "address": address,
+            "limit": limit,
+            "offset": offset
+        }
+        
+        if chain_id:
+            params["chain_id"] = chain_id
+        
+        if start_time:
+            params["start_time"] = start_time
+        
+        if end_time:
+            params["end_time"] = end_time
+        
+        return await self._make_request("GET", "activity", params=params)
+    
+    @ApiMetrics.track_api_call("sim", "balances")
+    async def get_balances(
+        self,
+        address: str,
+        chain_id: Optional[str] = None,
+        include_tokens: bool = True,
+        include_nfts: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Get token balances for an address.
+        
         Args:
-            token_address: The address of the token contract.
-            chain: The blockchain where the token exists.
-
-        Returns:
-            A dictionary containing token metadata.
-        """
-        endpoint = "token-info"
-        params = {"token_address": token_address, "chain": chain}
-        logger.debug(f"Fetching SIM token info for {token_address} on {chain}")
-
-        try:
-            response = await self.client.get(f"/{endpoint}", params=params)
-            response.raise_for_status()
+            address: Blockchain address to query
+            chain_id: Optional chain ID (e.g., 'ethereum', 'bitcoin')
+            include_tokens: Whether to include fungible tokens
+            include_nfts: Whether to include non-fungible tokens
             
-            self._track_cost(endpoint)
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error fetching SIM token info for {token_address}: {e.response.status_code} - {e.response.text}")
-            raise HTTPException(status_code=e.response.status_code, detail=f"Error from SIM API: {e.response.text}")
-        except httpx.RequestError as e:
-            logger.error(f"Request error fetching SIM token info for {token_address}: {e}")
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Could not connect to SIM API: {e}")
-
-    @with_backpressure(provider_id="sim", endpoint="transactions")
-    async def get_transactions(self, tx_hashes: List[str], chain: str) -> Dict[str, Any]:
+        Returns:
+            Balance data for the address
         """
-        Fetches details for a list of transaction hashes.
-
+        params = {
+            "address": address,
+            "include_tokens": str(include_tokens).lower(),
+            "include_nfts": str(include_nfts).lower()
+        }
+        
+        if chain_id:
+            params["chain_id"] = chain_id
+        
+        return await self._make_request("GET", "balances", params=params)
+    
+    @ApiMetrics.track_api_call("sim", "token-info")
+    async def get_token_info(
+        self,
+        token_address: str,
+        chain_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get information about a token.
+        
         Args:
-            tx_hashes: A list of transaction hashes to query.
-            chain: The blockchain to query.
-
-        Returns:
-            A dictionary containing the transaction data.
-        """
-        endpoint = "transactions"
-        # The SIM API might expect a comma-separated string or repeated query params.
-        # Assuming a POST request with a JSON body is more robust for lists.
-        payload = {"tx_hashes": tx_hashes, "chain": chain}
-        logger.debug(f"Fetching {len(tx_hashes)} SIM transactions on {chain}")
-
-        try:
-            response = await self.client.post(f"/{endpoint}", json=payload)
-            response.raise_for_status()
+            token_address: Token contract address
+            chain_id: Optional chain ID (e.g., 'ethereum', 'polygon')
             
-            self._track_cost(endpoint)
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error fetching SIM transactions: {e.response.status_code} - {e.response.text}")
-            raise HTTPException(status_code=e.response.status_code, detail=f"Error from SIM API: {e.response.text}")
-        except httpx.RequestError as e:
-            logger.error(f"Request error fetching SIM transactions: {e}")
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Could not connect to SIM API: {e}")
-
-    async def close(self):
+        Returns:
+            Token information
         """
-        Closes the underlying HTTP client. Should be called on application shutdown.
+        params = {
+            "token_address": token_address
+        }
+        
+        if chain_id:
+            params["chain_id"] = chain_id
+        
+        return await self._make_request("GET", "token-info", params=params)
+    
+    @ApiMetrics.track_api_call("sim", "transactions")
+    async def get_transactions(
+        self,
+        tx_hash: Optional[str] = None,
+        address: Optional[str] = None,
+        chain_id: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None
+    ) -> Dict[str, Any]:
         """
-        await self.client.aclose()
-        logger.info("SimApiClient closed.")
+        Get transaction details.
+        
+        Args:
+            tx_hash: Optional transaction hash to query a specific transaction
+            address: Optional address to get transactions for
+            chain_id: Optional chain ID (e.g., 'ethereum', 'bitcoin')
+            limit: Maximum number of results to return
+            offset: Pagination offset
+            start_time: Optional start timestamp (Unix seconds)
+            end_time: Optional end timestamp (Unix seconds)
+            
+        Returns:
+            Transaction data
+        """
+        if not tx_hash and not address:
+            raise ValueError("Either tx_hash or address must be provided")
+        
+        params = {
+            "limit": limit,
+            "offset": offset
+        }
+        
+        if tx_hash:
+            params["tx_hash"] = tx_hash
+        
+        if address:
+            params["address"] = address
+        
+        if chain_id:
+            params["chain_id"] = chain_id
+        
+        if start_time:
+            params["start_time"] = start_time
+        
+        if end_time:
+            params["end_time"] = end_time
+        
+        return await self._make_request("GET", "transactions", params=params)
+    
+    @ApiMetrics.track_api_call("sim", "token-holders")
+    async def get_token_holders(
+        self,
+        token_address: str,
+        chain_id: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0
+    ) -> Dict[str, Any]:
+        """
+        Get holders of a token.
+        
+        Args:
+            token_address: Token contract address
+            chain_id: Optional chain ID (e.g., 'ethereum', 'polygon')
+            limit: Maximum number of results to return
+            offset: Pagination offset
+            
+        Returns:
+            Token holder data
+        """
+        params = {
+            "token_address": token_address,
+            "limit": limit,
+            "offset": offset
+        }
+        
+        if chain_id:
+            params["chain_id"] = chain_id
+        
+        return await self._make_request("GET", "token-holders", params=params)
+    
+    @ApiMetrics.track_api_call("sim", "collectibles")
+    async def get_collectibles(
+        self,
+        address: str,
+        chain_id: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0
+    ) -> Dict[str, Any]:
+        """
+        Get NFT collectibles owned by an address.
+        
+        Args:
+            address: Blockchain address to query
+            chain_id: Optional chain ID (e.g., 'ethereum', 'polygon')
+            limit: Maximum number of results to return
+            offset: Pagination offset
+            
+        Returns:
+            NFT collectible data
+        """
+        params = {
+            "address": address,
+            "limit": limit,
+            "offset": offset
+        }
+        
+        if chain_id:
+            params["chain_id"] = chain_id
+        
+        return await self._make_request("GET", "collectibles", params=params)
+    
+    @ApiMetrics.track_api_call("sim", "graph-data")
+    async def get_graph_data(
+        self,
+        address: str,
+        depth: int = 1,
+        chain_id: Optional[str] = None,
+        include_contracts: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Get graph relationship data for an address.
+        
+        Args:
+            address: Blockchain address to query
+            depth: Relationship depth to traverse (1-3)
+            chain_id: Optional chain ID (e.g., 'ethereum', 'polygon')
+            include_contracts: Whether to include contract interactions
+            
+        Returns:
+            Graph relationship data
+        """
+        params = {
+            "address": address,
+            "depth": depth,
+            "include_contracts": str(include_contracts).lower()
+        }
+        
+        if chain_id:
+            params["chain_id"] = chain_id
+        
+        return await self._make_request("GET", "graph-data", params=params)

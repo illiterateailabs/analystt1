@@ -1,770 +1,754 @@
 """
-Prometheus metrics configuration and instrumentation for the application.
+Prometheus Metrics Module
 
-This module provides:
-1. Middleware for automatic request tracking
-2. Custom metrics for business operations
-3. Helper functions for manual instrumentation
-4. Metrics endpoint setup for Prometheus scraping
+This module defines and manages Prometheus metrics for the application,
+providing observability for API usage, costs, performance, and business metrics.
+It follows Prometheus naming conventions and best practices.
+
+Key metric categories:
+- External API usage (calls, duration, costs)
+- Database connection pools
+- Cache operations
+- Business metrics (analysis tasks, fraud detection)
+- System health
 """
 
+import functools
+import logging
 import time
-from enum import Enum
-from functools import wraps
-from typing import Any, Callable, Dict, List, Optional, Type, Union, cast
+from typing import Any, Callable, Dict, List, Optional, TypeVar, cast
 
-from fastapi import FastAPI, Request, Response
-from fastapi.routing import APIRoute
-from prometheus_client import (
-    REGISTRY,
-    Counter,
-    Gauge,
-    Histogram,
-    Summary,
-    CollectorRegistry,
-    multiprocess,
-    generate_latest,
-)
-from prometheus_client.exposition import CONTENT_TYPE_LATEST
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response as StarletteResponse
-from starlette.types import ASGIApp
+from fastapi import FastAPI
+from prometheus_client import Counter, Gauge, Histogram, Summary
+from prometheus_client import REGISTRY, CONTENT_TYPE_LATEST
+from prometheus_client.exposition import generate_latest
+from starlette.requests import Request
+from starlette.responses import Response
 
-# Define common label sets
-COMMON_LABELS = ["environment", "version"]
-HTTP_LABELS = ["method", "endpoint", "status_code"]
-DB_LABELS = ["database", "operation", "status"]
-API_LABELS = ["provider", "endpoint", "status"]
-LLM_LABELS = ["model", "operation", "status"]
-AGENT_LABELS = ["agent_type", "task", "status"]
-FRAUD_LABELS = ["detection_type", "chain", "severity"]
+# Configure module logger
+logger = logging.getLogger(__name__)
 
-# Buckets for latency histograms (in seconds)
-LATENCY_BUCKETS = [0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10, 30, 60]
+# Type variables for generic functions
+F = TypeVar('F', bound=Callable[..., Any])
+R = TypeVar('R')
 
-# Define metric collectors
-# HTTP metrics
-http_requests_total = Counter(
-    "http_requests_total",
-    "Total count of HTTP requests",
-    HTTP_LABELS + COMMON_LABELS,
-)
+# --- External API Metrics ---
 
-http_request_duration_seconds = Histogram(
-    "http_request_duration_seconds",
-    "HTTP request duration in seconds",
-    HTTP_LABELS + COMMON_LABELS,
-    buckets=LATENCY_BUCKETS,
-)
-
-http_request_size_bytes = Histogram(
-    "http_request_size_bytes",
-    "HTTP request size in bytes",
-    HTTP_LABELS + COMMON_LABELS,
-    buckets=[100, 1_000, 10_000, 100_000, 1_000_000],
-)
-
-http_response_size_bytes = Histogram(
-    "http_response_size_bytes",
-    "HTTP response size in bytes",
-    HTTP_LABELS + COMMON_LABELS,
-    buckets=[100, 1_000, 10_000, 100_000, 1_000_000],
-)
-
-# External API metrics
+# Count of external API calls by provider and endpoint
 external_api_calls_total = Counter(
-    "external_api_calls_total",
-    "Total count of external API calls",
-    API_LABELS + COMMON_LABELS,
+    'external_api_calls_total',
+    'Total number of external API calls',
+    ['provider', 'endpoint', 'status']
 )
 
+# Duration of external API calls
 external_api_duration_seconds = Histogram(
-    "external_api_duration_seconds",
-    "External API call duration in seconds",
-    API_LABELS + COMMON_LABELS,
-    buckets=LATENCY_BUCKETS,
+    'external_api_duration_seconds',
+    'Duration of external API calls in seconds',
+    ['provider', 'endpoint'],
+    buckets=[0.01, 0.05, 0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0]
 )
 
+# Cost of external API calls in USD
 external_api_credit_used_total = Counter(
-    "external_api_credit_used_total",
-    "Total API credits used by external providers",
-    API_LABELS + ["credit_type"] + COMMON_LABELS,
+    'external_api_credit_used_total',
+    'Total cost of external API calls in USD',
+    ['provider', 'credit_type']
 )
 
-# Database metrics
-db_operations_total = Counter(
-    "db_operations_total",
-    "Total count of database operations",
-    DB_LABELS + COMMON_LABELS,
-)
+# --- LLM Metrics ---
 
-db_operation_duration_seconds = Histogram(
-    "db_operation_duration_seconds",
-    "Database operation duration in seconds",
-    DB_LABELS + COMMON_LABELS,
-    buckets=LATENCY_BUCKETS,
-)
-
-db_pool_connections = Gauge(
-    "db_pool_connections",
-    "Database connection pool metrics",
-    ["database", "state"] + COMMON_LABELS,
-)
-
-db_errors_total = Counter(
-    "db_errors_total",
-    "Total count of database errors",
-    DB_LABELS + ["error_type"] + COMMON_LABELS,
-)
-
-# LLM metrics
+# Count of LLM requests by model
 llm_requests_total = Counter(
-    "llm_requests_total",
-    "Total count of LLM requests",
-    LLM_LABELS + COMMON_LABELS,
+    'llm_requests_total',
+    'Total number of LLM requests',
+    ['provider', 'model', 'status']
 )
 
+# Duration of LLM requests
+llm_request_duration_seconds = Histogram(
+    'llm_request_duration_seconds',
+    'Duration of LLM requests in seconds',
+    ['provider', 'model'],
+    buckets=[0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0]
+)
+
+# Token counts for LLM requests
 llm_tokens_total = Counter(
-    "llm_tokens_total",
-    "Total count of tokens processed by LLMs",
-    LLM_LABELS + ["token_type"] + COMMON_LABELS,
+    'llm_tokens_total',
+    'Total number of tokens processed by LLMs',
+    ['provider', 'model', 'token_type']  # token_type: 'input' or 'output'
 )
 
-llm_latency_seconds = Histogram(
-    "llm_latency_seconds",
-    "LLM request latency in seconds",
-    LLM_LABELS + COMMON_LABELS,
-    buckets=LATENCY_BUCKETS,
-)
-
+# LLM cost in USD
 llm_cost_total = Counter(
-    "llm_cost_total",
-    "Total cost of LLM usage in USD",
-    LLM_LABELS + COMMON_LABELS,
+    'llm_cost_total',
+    'Total cost of LLM usage in USD',
+    ['provider', 'model']
 )
 
-# Agent metrics
-agent_executions_total = Counter(
-    "agent_executions_total",
-    "Total count of agent executions",
-    AGENT_LABELS + COMMON_LABELS,
-)
+# --- Agent Execution Metrics ---
 
+# Duration of agent executions
 agent_execution_duration_seconds = Histogram(
-    "agent_execution_duration_seconds",
-    "Agent execution duration in seconds",
-    AGENT_LABELS + COMMON_LABELS,
-    buckets=LATENCY_BUCKETS + [120, 300, 600],
+    'agent_execution_duration_seconds',
+    'Duration of agent executions in seconds',
+    ['agent_type', 'task_type'],
+    buckets=[0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0]
 )
 
-agent_memory_usage_bytes = Gauge(
-    "agent_memory_usage_bytes",
-    "Agent memory usage in bytes",
-    AGENT_LABELS + COMMON_LABELS,
+# Count of agent executions
+agent_executions_total = Counter(
+    'agent_executions_total',
+    'Total number of agent executions',
+    ['agent_type', 'task_type', 'status']
 )
 
-# Business metrics
-fraud_detections_total = Counter(
-    "fraud_detections_total",
-    "Total count of fraud detections",
-    FRAUD_LABELS + COMMON_LABELS,
+# --- Database Metrics ---
+
+# Database connection pool metrics
+db_connections = Gauge(
+    'db_connections',
+    'Database connection pool status',
+    ['database', 'state', 'environment', 'version']  # state: 'used', 'idle', 'max'
 )
 
-fraud_detection_confidence = Histogram(
-    "fraud_detection_confidence",
-    "Confidence score of fraud detections",
-    FRAUD_LABELS + COMMON_LABELS,
-    buckets=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99],
+# Database query metrics
+db_query_duration_seconds = Histogram(
+    'db_query_duration_seconds',
+    'Duration of database queries in seconds',
+    ['database', 'operation'],
+    buckets=[0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0]
 )
 
+# --- Cache Metrics ---
+
+# Cache operation counts
+cache_operations_total = Counter(
+    'cache_operations_total',
+    'Total number of cache operations',
+    ['operation', 'status']  # operation: 'get', 'set', 'delete', etc.
+)
+
+# Cache hit/miss ratio
+cache_hits_total = Counter(
+    'cache_hits_total',
+    'Total number of cache hits',
+    ['cache_type']  # cache_type: 'data', 'vector', etc.
+)
+
+cache_misses_total = Counter(
+    'cache_misses_total',
+    'Total number of cache misses',
+    ['cache_type']
+)
+
+# --- Graph Database Metrics ---
+
+# Neo4j query metrics
+graph_query_duration_seconds = Histogram(
+    'graph_query_duration_seconds',
+    'Duration of graph database queries in seconds',
+    ['operation'],
+    buckets=[0.01, 0.05, 0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0]
+)
+
+# Node and relationship counts
 graph_nodes_total = Gauge(
-    "graph_nodes_total",
-    "Total count of nodes in the graph database",
-    ["node_type", "chain"] + COMMON_LABELS,
+    'graph_nodes_total',
+    'Total number of nodes in the graph database',
+    ['label']
 )
 
 graph_relationships_total = Gauge(
-    "graph_relationships_total",
-    "Total count of relationships in the graph database",
-    ["relationship_type", "chain"] + COMMON_LABELS,
+    'graph_relationships_total',
+    'Total number of relationships in the graph database',
+    ['type']
 )
 
+# --- HTTP Metrics ---
+
+# HTTP request duration
+http_request_duration_seconds = Histogram(
+    'http_request_duration_seconds',
+    'Duration of HTTP requests in seconds',
+    ['method', 'endpoint', 'status_code'],
+    buckets=[0.01, 0.05, 0.1, 0.5, 1.0, 2.5, 5.0, 10.0]
+)
+
+# HTTP request size
+http_request_size_bytes = Histogram(
+    'http_request_size_bytes',
+    'Size of HTTP requests in bytes',
+    ['method', 'endpoint'],
+    buckets=[10, 100, 1000, 10000, 100000, 1000000]
+)
+
+# HTTP response size
+http_response_size_bytes = Histogram(
+    'http_response_size_bytes',
+    'Size of HTTP responses in bytes',
+    ['method', 'endpoint', 'status_code'],
+    buckets=[10, 100, 1000, 10000, 100000, 1000000]
+)
+
+# --- Business Metrics ---
+
+# Analysis task metrics
 analysis_tasks_total = Counter(
-    "analysis_tasks_total",
-    "Total count of analysis tasks",
-    ["analysis_type", "status"] + COMMON_LABELS,
+    'analysis_tasks_total',
+    'Total number of analysis tasks',
+    ['analysis_type', 'status', 'environment', 'version']
 )
 
 analysis_task_duration_seconds = Histogram(
-    "analysis_task_duration_seconds",
-    "Analysis task duration in seconds",
-    ["analysis_type", "status"] + COMMON_LABELS,
-    buckets=LATENCY_BUCKETS + [120, 300, 600, 1800, 3600],
+    'analysis_task_duration_seconds',
+    'Duration of analysis tasks in seconds',
+    ['analysis_type', 'environment', 'version'],
+    buckets=[0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0]
 )
 
+# Fraud detection metrics
+fraud_detections_total = Counter(
+    'fraud_detections_total',
+    'Total number of fraud detections',
+    ['detection_type', 'confidence_level', 'environment', 'version']
+)
 
-class MetricsMiddleware(BaseHTTPMiddleware):
-    """
-    Middleware for automatically tracking HTTP request metrics.
-    
-    Captures request counts, durations, and sizes for all endpoints.
-    """
-    
-    def __init__(
-        self,
-        app: ASGIApp,
-        environment: str = "development",
-        version: str = "1.8.0-beta",
-    ):
-        super().__init__(app)
-        self.environment = environment
-        self.version = version
-    
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        # Extract path template for better grouping in Prometheus
-        route = request.scope.get("route")
-        endpoint = getattr(route, "path", request.url.path) if route else request.url.path
-        
-        # Common labels
-        labels = {
-            "method": request.method,
-            "endpoint": endpoint,
-            "environment": self.environment,
-            "version": self.version,
-        }
-        
-        # Track request size
-        content_length = request.headers.get("content-length")
-        if content_length:
-            http_request_size_bytes.labels(**labels, status_code="unknown").observe(int(content_length))
-        
-        # Track request timing
-        start_time = time.time()
-        
-        try:
-            response = await call_next(request)
-            
-            # Update labels with status code
-            labels["status_code"] = str(response.status_code)
-            
-            # Track response size
-            resp_content_length = response.headers.get("content-length")
-            if resp_content_length:
-                http_response_size_bytes.labels(**labels).observe(int(resp_content_length))
-            
-            return response
-        
-        except Exception as exc:
-            # Handle exceptions and track as 500 errors
-            labels["status_code"] = "500"
-            raise exc
-        
-        finally:
-            # Always track request count and duration
-            http_requests_total.labels(**labels).inc()
-            http_request_duration_seconds.labels(**labels).observe(time.time() - start_time)
+# User activity metrics
+user_actions_total = Counter(
+    'user_actions_total',
+    'Total number of user actions',
+    ['action_type', 'environment', 'version']
+)
 
-
-class DatabaseMetrics:
-    """Helper class for tracking database operations."""
-    
-    @staticmethod
-    def track_operation(
-        database: str,
-        operation: str,
-        func: Callable,
-        environment: str = "development",
-        version: str = "1.8.0-beta",
-    ) -> Callable:
-        """
-        Decorator for tracking database operations.
-        
-        Args:
-            database: The database name (e.g., "neo4j", "postgres", "redis")
-            operation: The operation name (e.g., "query", "insert", "update")
-            func: The function to wrap
-            environment: The environment name
-            version: The application version
-            
-        Returns:
-            Decorated function with metrics tracking
-        """
-        @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            labels = {
-                "database": database,
-                "operation": operation,
-                "environment": environment,
-                "version": version,
-                "status": "success",
-            }
-            
-            start_time = time.time()
-            
-            try:
-                result = func(*args, **kwargs)
-                return result
-            except Exception as e:
-                # Update status and track error
-                labels["status"] = "error"
-                db_errors_total.labels(
-                    **labels,
-                    error_type=e.__class__.__name__,
-                ).inc()
-                raise
-            finally:
-                # Track operation count and duration
-                db_operations_total.labels(**labels).inc()
-                db_operation_duration_seconds.labels(**labels).observe(time.time() - start_time)
-        
-        return wrapper
-    
-    @staticmethod
-    def set_pool_metrics(
-        database: str,
-        used: int,
-        idle: int,
-        max_size: int,
-        environment: str = "development",
-        version: str = "1.8.0-beta",
-    ) -> None:
-        """
-        Set connection pool metrics for a database.
-        
-        Args:
-            database: The database name
-            used: Number of connections in use
-            idle: Number of idle connections
-            max_size: Maximum pool size
-            environment: The environment name
-            version: The application version
-        """
-        common = {"database": database, "environment": environment, "version": version}
-        
-        db_pool_connections.labels(**common, state="used").set(used)
-        db_pool_connections.labels(**common, state="idle").set(idle)
-        db_pool_connections.labels(**common, state="max").set(max_size)
-        db_pool_connections.labels(**common, state="available").set(max_size - used)
-
+# --- Helper Classes ---
 
 class ApiMetrics:
-    """Helper class for tracking external API calls."""
+    """Helper class for tracking external API metrics."""
     
     @staticmethod
-    def track_call(
-        provider: str,
-        endpoint: str,
-        func: Callable,
-        environment: str = "development",
-        version: str = "1.8.0-beta",
-    ) -> Callable:
+    def track_api_call(provider: str, endpoint: str) -> Callable[[F], F]:
         """
-        Decorator for tracking external API calls.
+        Decorator to track external API calls with Prometheus metrics.
         
         Args:
-            provider: The API provider name (e.g., "sim", "gemini", "e2b")
-            endpoint: The endpoint being called
-            func: The function to wrap
-            environment: The environment name
-            version: The application version
+            provider: The API provider name (e.g., 'gemini', 'sim')
+            endpoint: The API endpoint name
             
         Returns:
-            Decorated function with metrics tracking
+            Decorated function that tracks metrics
         """
-        @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            labels = {
-                "provider": provider,
-                "endpoint": endpoint,
-                "environment": environment,
-                "version": version,
-                "status": "success",
-            }
+        def decorator(func: F) -> F:
+            @functools.wraps(func)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                start_time = time.time()
+                try:
+                    result = await func(*args, **kwargs)
+                    external_api_calls_total.labels(
+                        provider=provider,
+                        endpoint=endpoint,
+                        status="success"
+                    ).inc()
+                    return result
+                except Exception as e:
+                    external_api_calls_total.labels(
+                        provider=provider,
+                        endpoint=endpoint,
+                        status="error"
+                    ).inc()
+                    raise
+                finally:
+                    duration = time.time() - start_time
+                    external_api_duration_seconds.labels(
+                        provider=provider,
+                        endpoint=endpoint
+                    ).observe(duration)
             
-            start_time = time.time()
+            @functools.wraps(func)
+            def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+                start_time = time.time()
+                try:
+                    result = func(*args, **kwargs)
+                    external_api_calls_total.labels(
+                        provider=provider,
+                        endpoint=endpoint,
+                        status="success"
+                    ).inc()
+                    return result
+                except Exception as e:
+                    external_api_calls_total.labels(
+                        provider=provider,
+                        endpoint=endpoint,
+                        status="error"
+                    ).inc()
+                    raise
+                finally:
+                    duration = time.time() - start_time
+                    external_api_duration_seconds.labels(
+                        provider=provider,
+                        endpoint=endpoint
+                    ).observe(duration)
             
-            try:
-                result = func(*args, **kwargs)
-                return result
-            except Exception as e:
-                # Update status on error
-                labels["status"] = "error"
-                raise
-            finally:
-                # Track call count and duration
-                external_api_calls_total.labels(**labels).inc()
-                external_api_duration_seconds.labels(**labels).observe(time.time() - start_time)
+            if asyncio.iscoroutinefunction(func):
+                return cast(F, async_wrapper)
+            return cast(F, sync_wrapper)
         
-        return wrapper
+        return decorator
     
     @staticmethod
-    def track_credits(
-        provider: str,
-        endpoint: str,
-        credit_type: str,
-        amount: float,
-        environment: str = "development",
-        version: str = "1.8.0-beta",
-        status: str = "success",
-    ) -> None:
+    def record_api_cost(provider: str, credit_type: str, cost: float) -> None:
         """
-        Track API credit usage.
+        Record the cost of an external API call.
         
         Args:
-            provider: The API provider name
-            endpoint: The endpoint being called
-            credit_type: The type of credits (e.g., "tokens", "requests", "compute_units")
-            amount: The amount of credits used
-            environment: The environment name
-            version: The application version
-            status: The call status
+            provider: The API provider name (e.g., 'gemini', 'sim')
+            credit_type: The type of credit used (e.g., 'token', 'request')
+            cost: The cost in USD
         """
+        if cost <= 0:
+            logger.warning(f"Attempted to record non-positive API cost: {cost} for {provider}/{credit_type}")
+            return
+        
         external_api_credit_used_total.labels(
             provider=provider,
-            endpoint=endpoint,
-            credit_type=credit_type,
-            environment=environment,
-            version=version,
-            status=status,
-        ).inc(amount)
+            credit_type=credit_type
+        ).inc(cost)
+        logger.debug(f"Recorded API cost: ${cost:.6f} for {provider}/{credit_type}")
 
 
 class LlmMetrics:
-    """Helper class for tracking LLM operations."""
+    """Helper class for tracking LLM metrics."""
     
     @staticmethod
-    def track_request(
-        model: str,
-        operation: str,
-        func: Callable,
-        environment: str = "development",
-        version: str = "1.8.0-beta",
-    ) -> Callable:
+    def track_llm_request(provider: str, model: str) -> Callable[[F], F]:
         """
-        Decorator for tracking LLM requests.
+        Decorator to track LLM requests with Prometheus metrics.
         
         Args:
-            model: The LLM model name
-            operation: The operation type (e.g., "completion", "embedding")
-            func: The function to wrap
-            environment: The environment name
-            version: The application version
+            provider: The LLM provider name (e.g., 'gemini', 'openai')
+            model: The model name (e.g., 'gemini-1.5-pro', 'gpt-4')
             
         Returns:
-            Decorated function with metrics tracking
+            Decorated function that tracks metrics
         """
-        @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            labels = {
-                "model": model,
-                "operation": operation,
-                "environment": environment,
-                "version": version,
-                "status": "success",
-            }
+        def decorator(func: F) -> F:
+            @functools.wraps(func)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                start_time = time.time()
+                try:
+                    result = await func(*args, **kwargs)
+                    llm_requests_total.labels(
+                        provider=provider,
+                        model=model,
+                        status="success"
+                    ).inc()
+                    return result
+                except Exception as e:
+                    llm_requests_total.labels(
+                        provider=provider,
+                        model=model,
+                        status="error"
+                    ).inc()
+                    raise
+                finally:
+                    duration = time.time() - start_time
+                    llm_request_duration_seconds.labels(
+                        provider=provider,
+                        model=model
+                    ).observe(duration)
             
-            start_time = time.time()
+            @functools.wraps(func)
+            def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+                start_time = time.time()
+                try:
+                    result = func(*args, **kwargs)
+                    llm_requests_total.labels(
+                        provider=provider,
+                        model=model,
+                        status="success"
+                    ).inc()
+                    return result
+                except Exception as e:
+                    llm_requests_total.labels(
+                        provider=provider,
+                        model=model,
+                        status="error"
+                    ).inc()
+                    raise
+                finally:
+                    duration = time.time() - start_time
+                    llm_request_duration_seconds.labels(
+                        provider=provider,
+                        model=model
+                    ).observe(duration)
             
-            try:
-                result = func(*args, **kwargs)
-                return result
-            except Exception as e:
-                # Update status on error
-                labels["status"] = "error"
-                raise
-            finally:
-                # Track request count and latency
-                llm_requests_total.labels(**labels).inc()
-                llm_latency_seconds.labels(**labels).observe(time.time() - start_time)
+            if asyncio.iscoroutinefunction(func):
+                return cast(F, async_wrapper)
+            return cast(F, sync_wrapper)
         
-        return wrapper
+        return decorator
     
     @staticmethod
-    def track_tokens(
-        model: str,
-        operation: str,
-        input_tokens: int,
-        output_tokens: int = 0,
-        environment: str = "development",
-        version: str = "1.8.0-beta",
-        status: str = "success",
-    ) -> None:
+    def record_token_usage(provider: str, model: str, input_tokens: int, output_tokens: int, cost: Optional[float] = None) -> None:
         """
-        Track token usage for an LLM request.
+        Record token usage and optionally cost for an LLM request.
         
         Args:
-            model: The LLM model name
-            operation: The operation type
+            provider: The LLM provider name (e.g., 'gemini', 'openai')
+            model: The model name (e.g., 'gemini-1.5-pro', 'gpt-4')
             input_tokens: Number of input tokens
             output_tokens: Number of output tokens
-            environment: The environment name
-            version: The application version
-            status: The request status
+            cost: Optional cost in USD
         """
-        common = {
-            "model": model,
-            "operation": operation,
-            "environment": environment,
-            "version": version,
-            "status": status,
-        }
+        if input_tokens > 0:
+            llm_tokens_total.labels(
+                provider=provider,
+                model=model,
+                token_type="input"
+            ).inc(input_tokens)
         
-        llm_tokens_total.labels(**common, token_type="input").inc(input_tokens)
+        if output_tokens > 0:
+            llm_tokens_total.labels(
+                provider=provider,
+                model=model,
+                token_type="output"
+            ).inc(output_tokens)
         
-        if output_tokens:
-            llm_tokens_total.labels(**common, token_type="output").inc(output_tokens)
-    
-    @staticmethod
-    def track_cost(
-        model: str,
-        operation: str,
-        cost: float,
-        environment: str = "development",
-        version: str = "1.8.0-beta",
-        status: str = "success",
-    ) -> None:
-        """
-        Track cost for an LLM request.
-        
-        Args:
-            model: The LLM model name
-            operation: The operation type
-            cost: The cost in USD
-            environment: The environment name
-            version: The application version
-            status: The request status
-        """
-        llm_cost_total.labels(
-            model=model,
-            operation=operation,
-            environment=environment,
-            version=version,
-            status=status,
-        ).inc(cost)
+        if cost is not None and cost > 0:
+            llm_cost_total.labels(
+                provider=provider,
+                model=model
+            ).inc(cost)
+            
+            # Also record as external API cost for consistency
+            external_api_credit_used_total.labels(
+                provider=provider,
+                credit_type="llm"
+            ).inc(cost)
 
 
-class AgentMetrics:
-    """Helper class for tracking agent and crew operations."""
+class DatabaseMetrics:
+    """Helper class for tracking database metrics."""
     
     @staticmethod
-    def track_execution(
-        agent_type: str,
-        task: str,
-        func: Callable,
-        environment: str = "development",
-        version: str = "1.8.0-beta",
-    ) -> Callable:
+    def set_pool_metrics(database: str, used: int, idle: int, max_size: int, environment: str, version: str) -> None:
         """
-        Decorator for tracking agent executions.
+        Set database connection pool metrics.
         
         Args:
-            agent_type: The agent type (e.g., "analyst", "investigator")
-            task: The task being performed
-            func: The function to wrap
-            environment: The environment name
-            version: The application version
+            database: Database name (e.g., 'postgres', 'neo4j')
+            used: Number of used connections
+            idle: Number of idle connections
+            max_size: Maximum pool size
+            environment: Deployment environment
+            version: Application version
+        """
+        db_connections.labels(database=database, state="used", environment=environment, version=version).set(used)
+        db_connections.labels(database=database, state="idle", environment=environment, version=version).set(idle)
+        db_connections.labels(database=database, state="max", environment=environment, version=version).set(max_size)
+    
+    @staticmethod
+    def track_query(database: str, operation: str) -> Callable[[F], F]:
+        """
+        Decorator to track database query metrics.
+        
+        Args:
+            database: Database name (e.g., 'postgres', 'neo4j')
+            operation: Query operation type (e.g., 'select', 'insert')
             
         Returns:
-            Decorated function with metrics tracking
+            Decorated function that tracks metrics
         """
-        @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            labels = {
-                "agent_type": agent_type,
-                "task": task,
-                "environment": environment,
-                "version": version,
-                "status": "success",
-            }
+        def decorator(func: F) -> F:
+            @functools.wraps(func)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                start_time = time.time()
+                try:
+                    result = await func(*args, **kwargs)
+                    return result
+                finally:
+                    duration = time.time() - start_time
+                    db_query_duration_seconds.labels(
+                        database=database,
+                        operation=operation
+                    ).observe(duration)
             
-            start_time = time.time()
+            @functools.wraps(func)
+            def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+                start_time = time.time()
+                try:
+                    result = func(*args, **kwargs)
+                    return result
+                finally:
+                    duration = time.time() - start_time
+                    db_query_duration_seconds.labels(
+                        database=database,
+                        operation=operation
+                    ).observe(duration)
             
-            try:
-                result = func(*args, **kwargs)
-                return result
-            except Exception as e:
-                # Update status on error
-                labels["status"] = "error"
-                raise
-            finally:
-                # Track execution count and duration
-                agent_executions_total.labels(**labels).inc()
-                agent_execution_duration_seconds.labels(**labels).observe(time.time() - start_time)
+            if asyncio.iscoroutinefunction(func):
+                return cast(F, async_wrapper)
+            return cast(F, sync_wrapper)
         
-        return wrapper
+        return decorator
+
+
+class CacheMetrics:
+    """Helper class for tracking cache metrics."""
     
     @staticmethod
-    def set_memory_usage(
-        agent_type: str,
-        task: str,
-        memory_bytes: float,
-        environment: str = "development",
-        version: str = "1.8.0-beta",
-        status: str = "running",
-    ) -> None:
+    def track_operation(operation: str) -> Callable[[F], F]:
         """
-        Set memory usage for an agent.
+        Decorator to track cache operation metrics.
         
         Args:
-            agent_type: The agent type
-            task: The task being performed
-            memory_bytes: Memory usage in bytes
-            environment: The environment name
-            version: The application version
-            status: The agent status
+            operation: Cache operation type (e.g., 'get', 'set')
+            
+        Returns:
+            Decorated function that tracks metrics
         """
-        agent_memory_usage_bytes.labels(
-            agent_type=agent_type,
-            task=task,
-            environment=environment,
-            version=version,
-            status=status,
-        ).set(memory_bytes)
+        def decorator(func: F) -> F:
+            @functools.wraps(func)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                try:
+                    result = await func(*args, **kwargs)
+                    cache_operations_total.labels(
+                        operation=operation,
+                        status="success"
+                    ).inc()
+                    return result
+                except Exception as e:
+                    cache_operations_total.labels(
+                        operation=operation,
+                        status="error"
+                    ).inc()
+                    raise
+            
+            @functools.wraps(func)
+            def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+                try:
+                    result = func(*args, **kwargs)
+                    cache_operations_total.labels(
+                        operation=operation,
+                        status="success"
+                    ).inc()
+                    return result
+                except Exception as e:
+                    cache_operations_total.labels(
+                        operation=operation,
+                        status="error"
+                    ).inc()
+                    raise
+            
+            if asyncio.iscoroutinefunction(func):
+                return cast(F, async_wrapper)
+            return cast(F, sync_wrapper)
+        
+        return decorator
+    
+    @staticmethod
+    def record_cache_hit(cache_type: str) -> None:
+        """
+        Record a cache hit.
+        
+        Args:
+            cache_type: Type of cache (e.g., 'data', 'vector')
+        """
+        cache_hits_total.labels(cache_type=cache_type).inc()
+    
+    @staticmethod
+    def record_cache_miss(cache_type: str) -> None:
+        """
+        Record a cache miss.
+        
+        Args:
+            cache_type: Type of cache (e.g., 'data', 'vector')
+        """
+        cache_misses_total.labels(cache_type=cache_type).inc()
 
 
 class BusinessMetrics:
-    """Helper class for tracking business-specific metrics."""
+    """Helper class for tracking business metrics."""
     
     @staticmethod
-    def track_fraud_detection(
-        detection_type: str,
-        chain: str,
-        severity: str,
-        confidence: float,
-        environment: str = "development",
-        version: str = "1.8.0-beta",
-    ) -> None:
+    def track_analysis_task(analysis_type: str, func: Callable[..., R], environment: str = "development", version: str = "unknown") -> Callable[..., R]:
         """
-        Track a fraud detection event.
+        Decorator to track analysis task metrics.
         
         Args:
-            detection_type: The type of fraud detected
-            chain: The blockchain or system where fraud was detected
-            severity: The severity level (e.g., "high", "medium", "low")
-            confidence: The confidence score (0.0-1.0)
-            environment: The environment name
-            version: The application version
-        """
-        labels = {
-            "detection_type": detection_type,
-            "chain": chain,
-            "severity": severity,
-            "environment": environment,
-            "version": version,
-        }
-        
-        fraud_detections_total.labels(**labels).inc()
-        fraud_detection_confidence.labels(**labels).observe(confidence)
-    
-    @staticmethod
-    def set_graph_metrics(
-        node_counts: Dict[str, int],
-        relationship_counts: Dict[str, int],
-        chain: str = "all",
-        environment: str = "development",
-        version: str = "1.8.0-beta",
-    ) -> None:
-        """
-        Set graph database metrics.
-        
-        Args:
-            node_counts: Dictionary mapping node types to counts
-            relationship_counts: Dictionary mapping relationship types to counts
-            chain: The blockchain or system
-            environment: The environment name
-            version: The application version
-        """
-        common = {"chain": chain, "environment": environment, "version": version}
-        
-        # Set node counts
-        for node_type, count in node_counts.items():
-            graph_nodes_total.labels(node_type=node_type, **common).set(count)
-        
-        # Set relationship counts
-        for rel_type, count in relationship_counts.items():
-            graph_relationships_total.labels(relationship_type=rel_type, **common).set(count)
-    
-    @staticmethod
-    def track_analysis_task(
-        analysis_type: str,
-        func: Callable,
-        environment: str = "development",
-        version: str = "1.8.0-beta",
-    ) -> Callable:
-        """
-        Decorator for tracking analysis tasks.
-        
-        Args:
-            analysis_type: The type of analysis being performed
-            func: The function to wrap
-            environment: The environment name
-            version: The application version
+            analysis_type: Type of analysis (e.g., 'fraud_detection', 'whale_tracking')
+            func: Function to decorate
+            environment: Deployment environment
+            version: Application version
             
         Returns:
-            Decorated function with metrics tracking
+            Decorated function that tracks metrics
         """
-        @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            labels = {
-                "analysis_type": analysis_type,
-                "environment": environment,
-                "version": version,
-                "status": "success",
-            }
-            
+        @functools.wraps(func)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> R:
             start_time = time.time()
-            
             try:
-                result = func(*args, **kwargs)
+                result = await func(*args, **kwargs)
+                analysis_tasks_total.labels(
+                    analysis_type=analysis_type,
+                    status="success",
+                    environment=environment,
+                    version=version
+                ).inc()
                 return result
             except Exception as e:
-                # Update status on error
-                labels["status"] = "error"
+                analysis_tasks_total.labels(
+                    analysis_type=analysis_type,
+                    status="error",
+                    environment=environment,
+                    version=version
+                ).inc()
                 raise
             finally:
-                # Track task count and duration
-                analysis_tasks_total.labels(**labels).inc()
-                analysis_task_duration_seconds.labels(**labels).observe(time.time() - start_time)
+                duration = time.time() - start_time
+                analysis_task_duration_seconds.labels(
+                    analysis_type=analysis_type,
+                    environment=environment,
+                    version=version
+                ).observe(duration)
         
-        return wrapper
-
-
-def metrics_endpoint() -> StarletteResponse:
-    """
-    Generate Prometheus metrics response.
+        @functools.wraps(func)
+        def sync_wrapper(*args: Any, **kwargs: Any) -> R:
+            start_time = time.time()
+            try:
+                result = func(*args, **kwargs)
+                analysis_tasks_total.labels(
+                    analysis_type=analysis_type,
+                    status="success",
+                    environment=environment,
+                    version=version
+                ).inc()
+                return result
+            except Exception as e:
+                analysis_tasks_total.labels(
+                    analysis_type=analysis_type,
+                    status="error",
+                    environment=environment,
+                    version=version
+                ).inc()
+                raise
+            finally:
+                duration = time.time() - start_time
+                analysis_task_duration_seconds.labels(
+                    analysis_type=analysis_type,
+                    environment=environment,
+                    version=version
+                ).observe(duration)
+        
+        if asyncio.iscoroutinefunction(func):
+            return async_wrapper
+        return sync_wrapper
     
-    Returns:
-        Starlette Response with Prometheus metrics in text format
-    """
-    return StarletteResponse(
-        generate_latest(REGISTRY),
-        media_type=CONTENT_TYPE_LATEST,
-    )
+    @staticmethod
+    def record_fraud_detection(detection_type: str, confidence_level: str, environment: str = "development", version: str = "unknown") -> None:
+        """
+        Record a fraud detection.
+        
+        Args:
+            detection_type: Type of fraud detection (e.g., 'whale', 'structuring')
+            confidence_level: Confidence level (e.g., 'high', 'medium', 'low')
+            environment: Deployment environment
+            version: Application version
+        """
+        fraud_detections_total.labels(
+            detection_type=detection_type,
+            confidence_level=confidence_level,
+            environment=environment,
+            version=version
+        ).inc()
+    
+    @staticmethod
+    def record_user_action(action_type: str, environment: str = "development", version: str = "unknown") -> None:
+        """
+        Record a user action.
+        
+        Args:
+            action_type: Type of user action (e.g., 'login', 'search', 'analysis')
+            environment: Deployment environment
+            version: Application version
+        """
+        user_actions_total.labels(
+            action_type=action_type,
+            environment=environment,
+            version=version
+        ).inc()
 
 
-def setup_metrics(app: FastAPI, environment: str = "development", version: str = "1.8.0-beta") -> None:
+# --- FastAPI Integration ---
+
+def setup_metrics(app: FastAPI, environment: str = "development", version: str = "unknown") -> None:
     """
-    Set up metrics for a FastAPI application.
+    Set up Prometheus metrics for a FastAPI application.
     
     Args:
-        app: The FastAPI application
-        environment: The environment name
-        version: The application version
+        app: FastAPI application instance
+        environment: Deployment environment
+        version: Application version
     """
-    # Add metrics endpoint
-    app.add_route("/metrics", metrics_endpoint)
+    @app.middleware("http")
+    async def metrics_middleware(request: Request, call_next: Callable) -> Response:
+        start_time = time.time()
+        
+        # Extract endpoint and method
+        method = request.method
+        endpoint = request.url.path
+        
+        # Skip metrics endpoint itself to avoid recursion
+        if endpoint == "/metrics":
+            return await call_next(request)
+        
+        # Calculate request size
+        request_size = 0
+        if "content-length" in request.headers:
+            request_size = int(request.headers["content-length"])
+        
+        http_request_size_bytes.labels(
+            method=method,
+            endpoint=endpoint
+        ).observe(request_size)
+        
+        # Process request
+        response = await call_next(request)
+        
+        # Record metrics
+        duration = time.time() - start_time
+        status_code = response.status_code
+        
+        http_request_duration_seconds.labels(
+            method=method,
+            endpoint=endpoint,
+            status_code=status_code
+        ).observe(duration)
+        
+        # Calculate response size
+        response_size = 0
+        if "content-length" in response.headers:
+            response_size = int(response.headers["content-length"])
+        
+        http_response_size_bytes.labels(
+            method=method,
+            endpoint=endpoint,
+            status_code=status_code
+        ).observe(response_size)
+        
+        return response
     
-    # Add metrics middleware
-    app.add_middleware(
-        MetricsMiddleware,
-        environment=environment,
-        version=version,
-    )
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics() -> Response:
+        """Expose Prometheus metrics."""
+        return Response(
+            content=generate_latest(REGISTRY),
+            media_type=CONTENT_TYPE_LATEST
+        )
     
-    # Initialize multiprocess mode if needed
-    # This is useful when running with Gunicorn
-    try:
-        if "prometheus_multiproc_dir" in app.state.__dict__:
-            multiprocess.MultiProcessCollector(REGISTRY)
-    except Exception:
-        pass
+    logger.info(f"Prometheus metrics set up for {environment}/{version}")
+
+
+# Import asyncio at the end to avoid circular imports
+import asyncio
