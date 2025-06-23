@@ -1,0 +1,44 @@
+# Personal-Project TODO – Analyst Droid One  
+_Focus: Fun features & usable tooling (ignore enterprise ops)_  
+_Last updated: 2025-06-23_
+
+Legend  
+• **Priority** – P0 (now) · P1 (next) · P2 (later)  
+• **Effort** – S (≤2 h) · M (½–1 day) · L (multi-day)  
+• **Status** – ☐ todo · ☐⧗ in-progress · ☑ done  
+
+---
+
+## P0 – Core Functionality & Quick Wins
+| # | Task | Effort | Status | Notes |
+|---|------|--------|--------|-------|
+| 0-1 | **Expose `/health/workers` endpoint** from `worker_monitor.py` via API v1 | S | ☐ | Verify returns queue depth & worker count |
+| 0-2 | **Emit SIM client cost metrics** (`external_api_credit_used_total`) | M | ☐ | Mirror Gemini pattern; unit-test budget guard |
+| 0-3 | **Finish Graph-Aware RAG “Explain-with-Cypher”** | M | ☐ | Persist Cypher + citation in EvidenceBundle |
+| 0-4 | **Smoke-test suite**: chat → graph → background job flow | M | ☐ | Add to `tests/` as `test_smoke_flow.py` |
+
+## P1 – Feature Epics (Pick & Build)
+| # | Epic | Effort | Status | Notes |
+|---|------|--------|--------|-------|
+| 1-1 | ⚡ **DeFi Stress-Test What-If** (AI explains stress scenarios) | L | ☐ | Celery task + prompt template |
+| 1-2 | 🔍 **Anomaly Hunting Fraud Detector** (GNN + heuristics) | L | ☐ | Use existing gnn_fraud_detection_tool |
+| 1-3 | 🌉 **Cross-Chain Liquidity Migration Predictor** | L | ☐ | Time-series model + LLM narrative |
+
+_Start implementation with #1-1 once P0 items pass tests._
+
+## P2 – Polish & Delight
+| # | Task | Effort | Status | Notes |
+|---|------|--------|--------|-------|
+| 2-1 | Chat UI progress indicator for Celery tasks | M | ☐ | WebSocket updates → toast/progress bar |
+| 2-2 | Graph visualisation tweaks – colour fraud scores | M | ☐ | D3/Vis-Network update |
+| 2-3 | Data ingestion demo script (`scripts/demo_ingest.py`) | M | ☐ | Pull real ETH tx, ingest to Neo4j/Redis |
+| 2-4 | Sample fraud scenario dataset & README walkthrough | S | ☐ | Helps new users reproduce demo |
+
+---
+
+### Working Guidelines
+1. Push straight to **main**; document each win here (update Status column).  
+2. Keep tasks small & testable – aim for green smoke tests at all times.  
+3. After each completed item, commit with message `feat(todo-id): …` and mark ☑ here.  
+
+_Have fun & build cool stuff!_
