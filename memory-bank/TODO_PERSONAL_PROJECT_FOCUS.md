@@ -34,7 +34,7 @@ _Start implementation with #1-1 once P0 items pass tests._
 | # | Task | Effort | Status | Notes |
 |---|------|--------|--------|-------|
 | 2-1 | Chat UI progress indicator for Celery tasks | M | ☑ | Completed in commit `eb08bfa` – WebSocket real-time updates |
-| 2-2 | Graph visualisation tweaks – colour fraud scores | M | ☐ | D3/Vis-Network update |
+| 2-2 | Graph visualisation tweaks – colour fraud scores | M | ☑ | Completed in commit `ef7bd5e` – enhanced D3/Vis graph colouring |
 | 2-3 | Data ingestion demo script (`scripts/demo_ingest.py`) | M | ☑ | Completed in commit `eb08bfa` – demo generator & fraud showcase |
 | 2-4 | Sample fraud scenario dataset & README walkthrough | S | ☐ | Helps new users reproduce demo |
 
