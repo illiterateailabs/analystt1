@@ -1,635 +1,418 @@
 #!/usr/bin/env python3
 """
-Comprehensive Smoke Test for Analystt1 Platform
+Smoke Test Runner for Analyst Droid One Platform
 
-This script performs an end-to-end test of the Analystt1 platform, verifying:
-1. Authentication & JWT handling
-2. Template creation
-3. Analysis execution
-4. Results retrieval
-5. All critical integration points (GraphQuery, GNN, CodeGen, PolicyDocs)
-6. HITL workflow
-7. Redis JWT blacklist persistence
+This script runs the smoke tests to validate that the entire platform is working
+correctly. It checks the environment, runs the tests, and reports the results in
+a user-friendly way.
 
 Usage:
-    python scripts/smoke_test.py [--host HOST] [--port PORT]
+    python smoke_test.py [--verbose] [--quick] [--skip-env-check]
 
-Requirements:
-    pip install requests redis colorama
+Options:
+    --verbose       Show detailed test output
+    --quick         Run only essential tests for a quick check
+    --skip-env-check Skip environment checks (useful if you know services are running)
 """
 
 import argparse
+import asyncio
 import json
 import os
+import subprocess
 import sys
 import time
-import unittest
-import uuid
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Tuple
 
-import requests
-import redis
-from colorama import Fore, Style, init
+# Try to import required packages
+try:
+    import pytest
+    import redis
+    import requests
+    from neo4j import GraphDatabase
+except ImportError as e:
+    print(f"Error: Missing required package: {e}")
+    print("Please install required packages: pip install pytest redis requests neo4j")
+    sys.exit(1)
 
-# Initialize colorama
-init(autoreset=True)
-
-# Default configuration
-DEFAULT_HOST = "localhost"
-DEFAULT_PORT = 8000
-DEFAULT_USERNAME = "admin"
-DEFAULT_PASSWORD = "admin123"
-DEFAULT_REDIS_HOST = "localhost"
-DEFAULT_REDIS_PORT = 6379
-DEFAULT_REDIS_PASSWORD = "analyst123"
-POLL_INTERVAL = 5  # seconds
-MAX_POLL_TIME = 300  # seconds (5 minutes)
-
-# Test template for fraud investigation
-TEST_TEMPLATE = """
-name: smoke_test_template
-description: Template created by smoke test script
-version: 1.0.0
-agents:
-  - id: investigator
-    name: Lead Investigator
-    goal: Orchestrate the fraud investigation workflow
-    backstory: You are a senior financial crime analyst tasked with coordinating complex investigations.
-    tools:
-      - GraphQueryTool
-      - GNNFraudDetectionTool
-      - PatternLibraryTool
-  - id: code_analyst
-    name: Code Analyst
-    goal: Generate visualizations and analysis code
-    backstory: You are a data scientist who specializes in creating visual representations of fraud patterns.
-    tools:
-      - CodeGenTool
-      - SandboxExecTool
-  - id: compliance_officer
-    name: Compliance Officer
-    goal: Ensure all findings comply with regulations
-    backstory: You ensure all investigations follow proper regulatory guidelines.
-    tools:
-      - PolicyDocsTool
-  - id: report_writer
-    name: Report Writer
-    goal: Create a comprehensive investigation report
-    backstory: You specialize in creating clear, actionable reports from complex investigations.
-workflow:
-  - agent: investigator
-    tasks:
-      - description: Extract relevant transaction subgraph
-        expected_output: JSON with graph structure
-  - agent: investigator
-    tasks:
-      - description: Run GNN fraud detection on the subgraph
-        expected_output: JSON with fraud predictions
-  - agent: code_analyst
-    tasks:
-      - description: Generate visualization code for the fraud patterns
-        expected_output: Python code and visualization artifacts
-  - agent: compliance_officer
-    tasks:
-      - description: Check findings against AML and KYC policies
-        expected_output: Compliance report with policy references
-  - agent: report_writer
-    tasks:
-      - description: Compile all findings into a comprehensive report
-        expected_output: Markdown report with executive summary
-"""
+# ANSI color codes for terminal output
+class Colors:
+    HEADER = '\033[95m'
+    BLUE = '\033[94m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    RED = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
 
 
-class SmokeTestResult:
-    """Class to track test results and generate a report"""
-
-    def __init__(self):
-        self.start_time = datetime.now()
-        self.end_time = None
-        self.tests = []
-        self.passed = 0
-        self.failed = 0
-        self.warnings = 0
-
-    def add_result(self, name: str, passed: bool, message: str, warning: bool = False):
-        """Add a test result"""
-        self.tests.append({
-            "name": name,
-            "passed": passed,
-            "message": message,
-            "warning": warning,
-            "timestamp": datetime.now()
-        })
-        if passed:
-            if warning:
-                self.warnings += 1
-            else:
-                self.passed += 1
-        else:
-            self.failed += 1
-
-    def finish(self):
-        """Mark the test suite as complete"""
-        self.end_time = datetime.now()
-
-    def print_report(self):
-        """Print a formatted report of test results"""
-        print("\n" + "=" * 80)
-        print(f"{Fore.CYAN}ANALYSTT1 SMOKE TEST REPORT{Style.RESET_ALL}")
-        print("=" * 80)
-        
-        duration = (self.end_time - self.start_time).total_seconds()
-        print(f"Started: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"Completed: {self.end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"Duration: {duration:.2f} seconds")
-        print(f"Results: {Fore.GREEN}{self.passed} passed{Style.RESET_ALL}, "
-              f"{Fore.YELLOW}{self.warnings} warnings{Style.RESET_ALL}, "
-              f"{Fore.RED}{self.failed} failed{Style.RESET_ALL}")
-        print("-" * 80)
-        
-        for i, test in enumerate(self.tests, 1):
-            if test["passed"]:
-                if test["warning"]:
-                    status = f"{Fore.YELLOW}WARNING{Style.RESET_ALL}"
-                else:
-                    status = f"{Fore.GREEN}PASS{Style.RESET_ALL}"
-            else:
-                status = f"{Fore.RED}FAIL{Style.RESET_ALL}"
-                
-            print(f"{i:2d}. [{status}] {test['name']}")
-            print(f"    {test['message']}")
-            
-        print("=" * 80)
-        if self.failed == 0:
-            if self.warnings > 0:
-                print(f"{Fore.YELLOW}SMOKE TEST PASSED WITH WARNINGS{Style.RESET_ALL}")
-            else:
-                print(f"{Fore.GREEN}SMOKE TEST PASSED SUCCESSFULLY{Style.RESET_ALL}")
-        else:
-            print(f"{Fore.RED}SMOKE TEST FAILED{Style.RESET_ALL}")
-        print("=" * 80)
-
-    def save_report(self, filename: str = "smoke_test_report.json"):
-        """Save the test results to a JSON file"""
-        report = {
-            "start_time": self.start_time.isoformat(),
-            "end_time": self.end_time.isoformat(),
-            "duration_seconds": (self.end_time - self.start_time).total_seconds(),
-            "tests_passed": self.passed,
-            "tests_warnings": self.warnings,
-            "tests_failed": self.failed,
-            "tests": [{
-                "name": t["name"],
-                "passed": t["passed"],
-                "warning": t["warning"],
-                "message": t["message"],
-                "timestamp": t["timestamp"].isoformat()
-            } for t in self.tests]
-        }
-        
-        with open(filename, 'w') as f:
-            json.dump(report, f, indent=2)
-        
-        print(f"Report saved to {filename}")
+def print_header(message: str) -> None:
+    """Print a header message."""
+    print("\n" + "=" * 80)
+    print(f"{Colors.HEADER}{Colors.BOLD}{message}{Colors.ENDC}")
+    print("=" * 80)
 
 
-class APIClient:
-    """Client for interacting with the Analystt1 API"""
-
-    def __init__(self, host: str, port: int):
-        self.base_url = f"http://{host}:{port}"
-        self.session = requests.Session()
-        self.access_token = None
-        self.refresh_token = None
-
-    def login(self, username: str, password: str) -> Tuple[bool, str]:
-        """Authenticate with the API and get JWT tokens"""
-        try:
-            response = self.session.post(
-                f"{self.base_url}/api/v1/auth/login",
-                json={"username": username, "password": password}
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                self.access_token = data.get("access_token")
-                self.refresh_token = data.get("refresh_token")
-                return True, "Authentication successful"
-            else:
-                return False, f"Authentication failed: {response.status_code} - {response.text}"
-        except Exception as e:
-            return False, f"Authentication error: {str(e)}"
-
-    def create_template(self, yaml_content: str) -> Tuple[bool, str, Optional[str]]:
-        """Create a new investigation template"""
-        if not self.access_token:
-            return False, "Not authenticated", None
-            
-        try:
-            headers = {"Authorization": f"Bearer {self.access_token}"}
-            response = self.session.post(
-                f"{self.base_url}/api/v1/templates",
-                headers=headers,
-                files={"yaml": ("template.yaml", yaml_content, "text/yaml")}
-            )
-            
-            if response.status_code in (200, 201):
-                data = response.json()
-                template_id = data.get("id") or data.get("template_id")
-                template_name = data.get("name") or "smoke_test_template"
-                return True, f"Template created with ID: {template_id}", template_name
-            else:
-                return False, f"Template creation failed: {response.status_code} - {response.text}", None
-        except Exception as e:
-            return False, f"Template creation error: {str(e)}", None
-
-    def run_analysis(self, template_name: str) -> Tuple[bool, str, Optional[str]]:
-        """Start an analysis using the specified template"""
-        if not self.access_token:
-            return False, "Not authenticated", None
-            
-        try:
-            headers = {"Authorization": f"Bearer {self.access_token}"}
-            response = self.session.post(
-                f"{self.base_url}/api/v1/analysis",
-                headers=headers,
-                json={"template": template_name}
-            )
-            
-            if response.status_code in (200, 201):
-                data = response.json()
-                task_id = data.get("task_id")
-                return True, f"Analysis started with task ID: {task_id}", task_id
-            else:
-                return False, f"Analysis start failed: {response.status_code} - {response.text}", None
-        except Exception as e:
-            return False, f"Analysis start error: {str(e)}", None
-
-    def get_analysis_status(self, task_id: str) -> Tuple[bool, str, Optional[str]]:
-        """Get the status of an analysis task"""
-        if not self.access_token:
-            return False, "Not authenticated", None
-            
-        try:
-            headers = {"Authorization": f"Bearer {self.access_token}"}
-            response = self.session.get(
-                f"{self.base_url}/api/v1/analysis/{task_id}/status",
-                headers=headers
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                status = data.get("status")
-                return True, f"Analysis status: {status}", status
-            else:
-                return False, f"Status check failed: {response.status_code} - {response.text}", None
-        except Exception as e:
-            return False, f"Status check error: {str(e)}", None
-
-    def get_analysis_results(self, task_id: str) -> Tuple[bool, str, Optional[Dict]]:
-        """Get the results of a completed analysis"""
-        if not self.access_token:
-            return False, "Not authenticated", None
-            
-        try:
-            headers = {"Authorization": f"Bearer {self.access_token}"}
-            response = self.session.get(
-                f"{self.base_url}/api/v1/analysis/{task_id}/results",
-                headers=headers
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                return True, "Results retrieved successfully", data
-            else:
-                return False, f"Results retrieval failed: {response.status_code} - {response.text}", None
-        except Exception as e:
-            return False, f"Results retrieval error: {str(e)}", None
-
-    def create_hitl_review(self, task_id: str, review_type: str = "compliance", 
-                         risk_level: str = "medium") -> Tuple[bool, str, Optional[str]]:
-        """Create a HITL review for an analysis task"""
-        if not self.access_token:
-            return False, "Not authenticated", None
-            
-        try:
-            headers = {"Authorization": f"Bearer {self.access_token}"}
-            response = self.session.post(
-                f"{self.base_url}/api/v1/hitl/reviews",
-                headers=headers,
-                json={
-                    "task_id": task_id,
-                    "review_type": review_type,
-                    "risk_level": risk_level
-                }
-            )
-            
-            if response.status_code in (200, 201):
-                data = response.json()
-                review_id = data.get("id")
-                return True, f"HITL review created with ID: {review_id}", review_id
-            else:
-                return False, f"HITL review creation failed: {response.status_code} - {response.text}", None
-        except Exception as e:
-            return False, f"HITL review creation error: {str(e)}", None
-
-    def approve_hitl_review(self, review_id: str, comments: str = "Approved by smoke test") -> Tuple[bool, str]:
-        """Approve a HITL review"""
-        if not self.access_token:
-            return False, "Not authenticated"
-            
-        try:
-            headers = {"Authorization": f"Bearer {self.access_token}"}
-            response = self.session.post(
-                f"{self.base_url}/api/v1/hitl/reviews/{review_id}/approve",
-                headers=headers,
-                json={"comments": comments}
-            )
-            
-            if response.status_code == 200:
-                return True, "HITL review approved successfully"
-            else:
-                return False, f"HITL review approval failed: {response.status_code} - {response.text}"
-        except Exception as e:
-            return False, f"HITL review approval error: {str(e)}"
-
-    def blacklist_token(self) -> Tuple[bool, str]:
-        """Blacklist the current access token by logging out"""
-        if not self.access_token:
-            return False, "Not authenticated"
-            
-        try:
-            headers = {"Authorization": f"Bearer {self.access_token}"}
-            response = self.session.post(
-                f"{self.base_url}/api/v1/auth/logout",
-                headers=headers
-            )
-            
-            if response.status_code == 200:
-                old_token = self.access_token
-                self.access_token = None
-                return True, f"Token blacklisted: {old_token[:10]}..."
-            else:
-                return False, f"Token blacklist failed: {response.status_code} - {response.text}"
-        except Exception as e:
-            return False, f"Token blacklist error: {str(e)}"
-
-    def verify_token_blacklisted(self, token: str) -> Tuple[bool, str]:
-        """Verify a token is blacklisted by trying to use it"""
-        try:
-            headers = {"Authorization": f"Bearer {token}"}
-            response = self.session.get(
-                f"{self.base_url}/api/v1/auth/verify",
-                headers=headers
-            )
-            
-            # If the token is properly blacklisted, we should get a 401 Unauthorized
-            if response.status_code == 401:
-                return True, "Token correctly blacklisted (401 response)"
-            else:
-                return False, f"Token not properly blacklisted: got {response.status_code} instead of 401"
-        except Exception as e:
-            return False, f"Token blacklist verification error: {str(e)}"
+def print_success(message: str) -> None:
+    """Print a success message."""
+    print(f"{Colors.GREEN}✅ {message}{Colors.ENDC}")
 
 
-class RedisClient:
-    """Client for interacting with Redis to check JWT blacklist"""
+def print_warning(message: str) -> None:
+    """Print a warning message."""
+    print(f"{Colors.YELLOW}⚠️ {message}{Colors.ENDC}")
+
+
+def print_error(message: str) -> None:
+    """Print an error message."""
+    print(f"{Colors.RED}❌ {message}{Colors.ENDC}")
+
+
+def print_info(message: str) -> None:
+    """Print an info message."""
+    print(f"{Colors.BLUE}ℹ️ {message}{Colors.ENDC}")
+
+
+def check_environment() -> bool:
+    """
+    Check that all required services are running.
     
-    def __init__(self, host: str, port: int, password: str = None):
-        self.redis = redis.Redis(
-            host=host,
-            port=port,
-            password=password,
-            decode_responses=True
+    Returns:
+        True if all checks pass, False otherwise
+    """
+    print_header("Checking Environment")
+    all_passed = True
+    
+    # Check Redis
+    print_info("Checking Redis...")
+    try:
+        r = redis.Redis(
+            host=os.environ.get("REDIS_HOST", "localhost"),
+            port=int(os.environ.get("REDIS_PORT", 6379)),
+            password=os.environ.get("REDIS_PASSWORD", None),
+            socket_timeout=2,
         )
-        
-    def check_connection(self) -> Tuple[bool, str]:
-        """Check if Redis connection is working"""
-        try:
-            if self.redis.ping():
-                return True, "Redis connection successful"
-            return False, "Redis ping failed"
-        except Exception as e:
-            return False, f"Redis connection error: {str(e)}"
+        r.ping()
+        print_success("Redis is running")
+    except Exception as e:
+        print_error(f"Redis check failed: {e}")
+        all_passed = False
     
-    def check_aof_enabled(self) -> Tuple[bool, str]:
-        """Check if Redis AOF is enabled"""
-        try:
-            config = self.redis.config_get("appendonly")
-            if config.get("appendonly") == "yes":
-                return True, "Redis AOF is enabled"
-            return False, f"Redis AOF is not enabled: {config}"
-        except Exception as e:
-            return False, f"Redis AOF check error: {str(e)}"
+    # Check Neo4j
+    print_info("Checking Neo4j...")
+    try:
+        uri = f"neo4j://{os.environ.get('NEO4J_HOST', 'localhost')}:{os.environ.get('NEO4J_PORT', '7687')}"
+        driver = GraphDatabase.driver(
+            uri,
+            auth=(
+                os.environ.get("NEO4J_USERNAME", "neo4j"),
+                os.environ.get("NEO4J_PASSWORD", "password")
+            )
+        )
+        with driver.session() as session:
+            result = session.run("RETURN 1 AS test")
+            assert result.single()["test"] == 1
+        driver.close()
+        print_success("Neo4j is running")
+    except Exception as e:
+        print_error(f"Neo4j check failed: {e}")
+        all_passed = False
     
-    def check_token_blacklisted(self, token: str) -> Tuple[bool, str]:
-        """Check if a token is in the blacklist"""
-        try:
-            # The blacklist key format might vary based on implementation
-            # Common formats: "blacklist:{token}", "token:{token}:blacklisted", etc.
-            formats = [
-                f"blacklist:{token}",
-                f"token:{token}:blacklisted",
-                f"jwt:blacklist:{token}"
-            ]
-            
-            for key_format in formats:
-                if self.redis.exists(key_format):
-                    return True, f"Token found in Redis blacklist: {key_format}"
-            
-            # If we can't find the exact format, try a pattern search
-            keys = self.redis.keys("*blacklist*")
-            if keys:
-                return True, f"Blacklist keys exist in Redis: {keys[:3]}..."
-            
-            return False, "Token not found in Redis blacklist"
-        except Exception as e:
-            return False, f"Redis blacklist check error: {str(e)}"
-
-
-def run_smoke_test(args):
-    """Run the complete smoke test suite"""
-    results = SmokeTestResult()
-    
-    print(f"{Fore.CYAN}Starting Analystt1 Smoke Test{Style.RESET_ALL}")
-    print(f"Host: {args.host}, Port: {args.port}")
-    
-    # Initialize API client
-    api = APIClient(args.host, args.port)
-    
-    # Step 1: Authentication
-    print(f"\n{Fore.CYAN}[1/8] Testing Authentication{Style.RESET_ALL}")
-    success, message = api.login(args.username, args.password)
-    results.add_result("Authentication", success, message)
-    
-    if not success:
-        print(f"{Fore.RED}Authentication failed. Aborting smoke test.{Style.RESET_ALL}")
-        results.finish()
-        results.print_report()
-        return False
-    
-    # Step 2: Template Creation
-    print(f"\n{Fore.CYAN}[2/8] Testing Template Creation{Style.RESET_ALL}")
-    success, message, template_name = api.create_template(TEST_TEMPLATE)
-    results.add_result("Template Creation", success, message)
-    
-    if not success or not template_name:
-        print(f"{Fore.RED}Template creation failed. Aborting smoke test.{Style.RESET_ALL}")
-        results.finish()
-        results.print_report()
-        return False
-    
-    # Step 3: Analysis Execution
-    print(f"\n{Fore.CYAN}[3/8] Testing Analysis Execution{Style.RESET_ALL}")
-    success, message, task_id = api.run_analysis(template_name)
-    results.add_result("Analysis Execution", success, message)
-    
-    if not success or not task_id:
-        print(f"{Fore.RED}Analysis execution failed. Aborting smoke test.{Style.RESET_ALL}")
-        results.finish()
-        results.print_report()
-        return False
-    
-    # Step 4: Status Polling
-    print(f"\n{Fore.CYAN}[4/8] Polling Analysis Status{Style.RESET_ALL}")
-    start_time = time.time()
-    final_status = None
-    
-    while time.time() - start_time < MAX_POLL_TIME:
-        success, message, status = api.get_analysis_status(task_id)
-        
-        if not success:
-            print(f"{Fore.RED}Status polling failed: {message}{Style.RESET_ALL}")
-            break
-        
-        print(f"Current status: {status} (polling for {int(time.time() - start_time)}s)")
-        
-        if status in ("completed", "done", "finished"):
-            final_status = status
-            break
-        elif status in ("failed", "error"):
-            final_status = status
-            break
-        
-        time.sleep(POLL_INTERVAL)
-    
-    if final_status in ("completed", "done", "finished"):
-        results.add_result("Analysis Completion", True, f"Analysis completed successfully: {final_status}")
-    elif final_status in ("failed", "error"):
-        results.add_result("Analysis Completion", False, f"Analysis failed with status: {final_status}")
-    else:
-        results.add_result("Analysis Completion", False, f"Analysis timed out after {MAX_POLL_TIME}s, last status: {status}")
-        
-    # Step 5: Results Validation
-    if final_status in ("completed", "done", "finished"):
-        print(f"\n{Fore.CYAN}[5/8] Validating Results{Style.RESET_ALL}")
-        success, message, result_data = api.get_analysis_results(task_id)
-        
-        if success and result_data:
-            # Check for expected result structure
-            validation_results = []
-            
-            # Check for executive summary or risk score
-            if "risk_score" in result_data or "executive_summary" in result_data:
-                validation_results.append("Has risk score or executive summary")
-            
-            # Check for graph data
-            if "graph_data" in result_data or "nodes" in result_data:
-                validation_results.append("Has graph data")
-            
-            # Check for visualizations
-            if "visualizations" in result_data:
-                validation_results.append("Has visualizations")
-                
-            # Check for findings
-            if "findings" in result_data:
-                validation_results.append("Has findings")
-                
-            # Check for compliance data
-            if "compliance" in result_data or "policy_references" in result_data:
-                validation_results.append("Has compliance data")
-            
-            if len(validation_results) >= 3:
-                results.add_result("Results Structure", True, 
-                                 f"Results contain expected data: {', '.join(validation_results)}")
-            else:
-                results.add_result("Results Structure", False, 
-                                 f"Results missing expected data. Found only: {', '.join(validation_results)}")
+    # Check FastAPI backend
+    print_info("Checking FastAPI backend...")
+    try:
+        response = requests.get(
+            f"http://{os.environ.get('API_HOST', 'localhost')}:{os.environ.get('API_PORT', '8000')}/health",
+            timeout=5
+        )
+        if response.status_code == 200:
+            print_success("FastAPI backend is running")
         else:
-            results.add_result("Results Retrieval", False, message)
+            print_error(f"FastAPI backend returned status {response.status_code}")
+            all_passed = False
+    except Exception as e:
+        print_error(f"FastAPI backend check failed: {e}")
+        all_passed = False
     
-    # Step 6: Test HITL Workflow
-    print(f"\n{Fore.CYAN}[6/8] Testing HITL Workflow{Style.RESET_ALL}")
-    success, message, review_id = api.create_hitl_review(task_id)
-    results.add_result("HITL Review Creation", success, message)
+    # Check Celery workers
+    print_info("Checking Celery workers...")
+    try:
+        response = requests.get(
+            f"http://{os.environ.get('API_HOST', 'localhost')}:{os.environ.get('API_PORT', '8000')}/api/v1/health/workers",
+            timeout=5
+        )
+        if response.status_code == 200:
+            data = response.json()
+            if data["overall_status"] == "HEALTHY":
+                print_success("Celery workers are running")
+            else:
+                print_warning(f"Celery workers status: {data['overall_status']}")
+                all_passed = False
+        else:
+            print_error(f"Celery workers check returned status {response.status_code}")
+            all_passed = False
+    except Exception as e:
+        print_error(f"Celery workers check failed: {e}")
+        all_passed = False
     
-    if success and review_id:
-        success, message = api.approve_hitl_review(review_id)
-        results.add_result("HITL Review Approval", success, message)
-    
-    # Step 7: Test JWT Blacklist via API
-    print(f"\n{Fore.CYAN}[7/8] Testing JWT Blacklist via API{Style.RESET_ALL}")
-    
-    # Store the token before blacklisting
-    old_token = api.access_token
-    
-    if old_token:
-        success, message = api.blacklist_token()
-        results.add_result("JWT Blacklist Creation", success, message)
-        
-        if success:
-            # Try to use the blacklisted token
-            success, message = api.verify_token_blacklisted(old_token)
-            results.add_result("JWT Blacklist Validation", success, message)
-            
-            # Login again to get a new token for remaining operations
-            success, _ = api.login(args.username, args.password)
-            if not success:
-                results.add_result("Re-authentication", False, "Failed to re-authenticate after token blacklisting")
-    
-    # Step 8: Test Redis AOF for JWT Blacklist
-    print(f"\n{Fore.CYAN}[8/8] Testing Redis AOF for JWT Blacklist{Style.RESET_ALL}")
-    
-    # Connect to Redis
-    redis_client = RedisClient(args.redis_host, args.redis_port, args.redis_password)
-    
-    # Check Redis connection
-    success, message = redis_client.check_connection()
-    results.add_result("Redis Connection", success, message)
-    
-    if success:
-        # Check if AOF is enabled
-        success, message = redis_client.check_aof_enabled()
-        results.add_result("Redis AOF Enabled", success, message)
-        
-        # Check if the blacklisted token is in Redis
-        if old_token:
-            success, message = redis_client.check_token_blacklisted(old_token)
-            results.add_result("Redis Blacklist Storage", success, message, warning=not success)
-    
-    # Complete the test and print report
-    results.finish()
-    results.print_report()
-    results.save_report()
-    
-    return results.failed == 0
+    return all_passed
 
 
-def parse_args():
-    """Parse command line arguments"""
-    parser = argparse.ArgumentParser(description="Analystt1 Smoke Test")
-    parser.add_argument("--host", default=DEFAULT_HOST, help=f"API host (default: {DEFAULT_HOST})")
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"API port (default: {DEFAULT_PORT})")
-    parser.add_argument("--username", default=DEFAULT_USERNAME, help=f"Username (default: {DEFAULT_USERNAME})")
-    parser.add_argument("--password", default=DEFAULT_PASSWORD, help=f"Password (default: {DEFAULT_PASSWORD})")
-    parser.add_argument("--redis-host", default=DEFAULT_REDIS_HOST, help=f"Redis host (default: {DEFAULT_REDIS_HOST})")
-    parser.add_argument("--redis-port", type=int, default=DEFAULT_REDIS_PORT, help=f"Redis port (default: {DEFAULT_REDIS_PORT})")
-    parser.add_argument("--redis-password", default=DEFAULT_REDIS_PASSWORD, help=f"Redis password (default: {DEFAULT_REDIS_PASSWORD})")
-    return parser.parse_args()
+def run_smoke_tests(verbose: bool = False, quick: bool = False) -> Tuple[bool, Dict]:
+    """
+    Run the smoke tests.
+    
+    Args:
+        verbose: Whether to show detailed test output
+        quick: Whether to run only essential tests
+        
+    Returns:
+        Tuple of (all_passed, results)
+    """
+    print_header("Running Smoke Tests")
+    
+    # Prepare pytest arguments
+    pytest_args = ["-xvs" if verbose else "-x"]
+    
+    # Add test file
+    test_file = "tests/test_smoke_flow.py"
+    pytest_args.append(test_file)
+    
+    # Add markers for quick test if needed
+    if quick:
+        pytest_args.extend(["-k", "test_health_endpoints or test_full_system_flow"])
+    
+    # Run pytest
+    print_info(f"Running pytest with args: {' '.join(pytest_args)}")
+    
+    # Capture start time
+    start_time = time.time()
+    
+    # Run pytest and capture output
+    result = pytest.main(pytest_args)
+    
+    # Calculate duration
+    duration = time.time() - start_time
+    
+    # Parse results
+    all_passed = result == 0
+    
+    # Create results dictionary
+    results = {
+        "passed": all_passed,
+        "exit_code": result,
+        "duration_seconds": duration,
+        "timestamp": datetime.now().isoformat(),
+    }
+    
+    return all_passed, results
+
+
+def print_troubleshooting_tips(results: Dict) -> None:
+    """
+    Print troubleshooting tips based on test results.
+    
+    Args:
+        results: Test results dictionary
+    """
+    print_header("Troubleshooting Tips")
+    
+    if results["passed"]:
+        print_success("All tests passed! No troubleshooting needed.")
+        return
+    
+    print_info("Here are some tips to fix common issues:")
+    
+    # General tips
+    print(f"\n{Colors.BOLD}General Tips:{Colors.ENDC}")
+    print("1. Make sure all services are running:")
+    print("   - Redis")
+    print("   - Neo4j")
+    print("   - FastAPI backend")
+    print("   - Celery workers")
+    print("\n2. Check environment variables:")
+    print("   - REDIS_HOST, REDIS_PORT, REDIS_PASSWORD")
+    print("   - NEO4J_HOST, NEO4J_PORT, NEO4J_USERNAME, NEO4J_PASSWORD")
+    print("   - API_HOST, API_PORT")
+    print("\n3. Check logs for errors:")
+    print("   - Backend logs: docker logs analyst-droid-backend")
+    print("   - Worker logs: docker logs analyst-droid-worker")
+    print("   - Redis logs: docker logs analyst-droid-redis")
+    print("   - Neo4j logs: docker logs analyst-droid-neo4j")
+    
+    # Specific tips based on exit code
+    exit_code = results["exit_code"]
+    if exit_code == 1:
+        print(f"\n{Colors.BOLD}Specific Tips for Test Failures:{Colors.ENDC}")
+        print("- Check that the database has some data (empty database can cause test failures)")
+        print("- Verify API endpoints are accessible and returning expected data")
+        print("- Ensure Celery workers are processing tasks")
+    elif exit_code == 2:
+        print(f"\n{Colors.BOLD}Specific Tips for Test Errors:{Colors.ENDC}")
+        print("- Check for syntax errors or import errors in the codebase")
+        print("- Verify that all dependencies are installed")
+    elif exit_code == 3:
+        print(f"\n{Colors.BOLD}Specific Tips for Test Collection Errors:{Colors.ENDC}")
+        print("- Ensure test files are properly named and located")
+        print("- Check for syntax errors in test files")
+    elif exit_code == 4:
+        print(f"\n{Colors.BOLD}Specific Tips for Usage Errors:{Colors.ENDC}")
+        print("- Check pytest configuration")
+        print("- Verify command line arguments")
+    
+    print(f"\n{Colors.BOLD}For More Help:{Colors.ENDC}")
+    print("- Check the documentation in memory-bank/")
+    print("- Run tests with --verbose for more detailed output")
+    print("- Inspect the specific test failures above")
+
+
+def quick_validation() -> bool:
+    """
+    Perform a quick validation of the platform.
+    
+    Returns:
+        True if validation passes, False otherwise
+    """
+    print_header("Quick Platform Validation")
+    
+    try:
+        # Check basic health endpoint
+        print_info("Checking API health...")
+        response = requests.get(
+            f"http://{os.environ.get('API_HOST', 'localhost')}:{os.environ.get('API_PORT', '8000')}/health",
+            timeout=5
+        )
+        if response.status_code != 200:
+            print_error(f"API health check failed with status {response.status_code}")
+            return False
+        
+        health_data = response.json()
+        if health_data["status"] != "healthy":
+            print_warning(f"API health status is {health_data['status']}")
+        else:
+            print_success("API health check passed")
+        
+        # Check system health
+        print_info("Checking system health...")
+        response = requests.get(
+            f"http://{os.environ.get('API_HOST', 'localhost')}:{os.environ.get('API_PORT', '8000')}/api/v1/health/system",
+            timeout=5
+        )
+        if response.status_code != 200:
+            print_error(f"System health check failed with status {response.status_code}")
+            return False
+        
+        system_health = response.json()
+        if system_health["status"] != "healthy":
+            print_warning(f"System health status is {system_health['status']}")
+            if "issues" in system_health and system_health["issues"]:
+                for issue in system_health["issues"]:
+                    print_warning(f"  - {issue}")
+        else:
+            print_success("System health check passed")
+        
+        # Check component health
+        components = system_health.get("components", {})
+        all_healthy = True
+        
+        for component, status in components.items():
+            component_status = status.get("status", "unknown")
+            if component_status == "healthy":
+                print_success(f"Component '{component}' is healthy")
+            elif component_status == "degraded":
+                print_warning(f"Component '{component}' is degraded")
+                all_healthy = False
+            else:
+                print_error(f"Component '{component}' is {component_status}")
+                all_healthy = False
+        
+        return all_healthy
+    
+    except Exception as e:
+        print_error(f"Quick validation failed: {e}")
+        return False
+
+
+def print_summary(env_check_passed: bool, test_passed: bool, validation_passed: bool) -> None:
+    """
+    Print a summary of all checks.
+    
+    Args:
+        env_check_passed: Whether environment checks passed
+        test_passed: Whether smoke tests passed
+        validation_passed: Whether quick validation passed
+    """
+    print_header("Summary")
+    
+    if env_check_passed:
+        print_success("Environment checks: PASSED")
+    else:
+        print_error("Environment checks: FAILED")
+    
+    if test_passed:
+        print_success("Smoke tests: PASSED")
+    else:
+        print_error("Smoke tests: FAILED")
+    
+    if validation_passed:
+        print_success("Quick validation: PASSED")
+    else:
+        print_error("Quick validation: FAILED")
+    
+    # Overall status
+    print("\n")
+    if env_check_passed and test_passed and validation_passed:
+        print_success("OVERALL STATUS: 🚀 PLATFORM IS FULLY OPERATIONAL 🚀")
+    elif test_passed or validation_passed:
+        print_warning("OVERALL STATUS: ⚠️ PLATFORM IS PARTIALLY OPERATIONAL ⚠️")
+    else:
+        print_error("OVERALL STATUS: ❌ PLATFORM IS NOT OPERATIONAL ❌")
+
+
+def main():
+    """Main entry point."""
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Run smoke tests for Analyst Droid One platform")
+    parser.add_argument("--verbose", action="store_true", help="Show detailed test output")
+    parser.add_argument("--quick", action="store_true", help="Run only essential tests")
+    parser.add_argument("--skip-env-check", action="store_true", help="Skip environment checks")
+    args = parser.parse_args()
+    
+    # Print banner
+    print_header("Analyst Droid One - Smoke Test Runner")
+    print(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Mode: {'Quick' if args.quick else 'Full'}")
+    print(f"Verbose: {'Yes' if args.verbose else 'No'}")
+    
+    # Check environment
+    env_check_passed = True
+    if not args.skip_env_check:
+        env_check_passed = check_environment()
+        if not env_check_passed and not args.quick:
+            print_warning("Environment checks failed. Tests may not run correctly.")
+            response = input("Continue anyway? (y/n): ")
+            if response.lower() != "y":
+                print_info("Exiting...")
+                return
+    
+    # Run smoke tests
+    test_passed, test_results = run_smoke_tests(verbose=args.verbose, quick=args.quick)
+    
+    # Quick validation
+    validation_passed = quick_validation()
+    
+    # Print troubleshooting tips if needed
+    if not test_passed:
+        print_troubleshooting_tips(test_results)
+    
+    # Print summary
+    print_summary(env_check_passed, test_passed, validation_passed)
+    
+    # Exit with appropriate status code
+    sys.exit(0 if test_passed else 1)
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    success = run_smoke_test(args)
-    sys.exit(0 if success else 1)
+    main()
