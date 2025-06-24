@@ -36,7 +36,7 @@ _Start implementation with #1-1 once P0 items pass tests._
 | 2-1 | Chat UI progress indicator for Celery tasks | M | ☑ | Completed in commit `eb08bfa` – WebSocket real-time updates |
 | 2-2 | Graph visualisation tweaks – colour fraud scores | M | ☑ | Completed in commit `ef7bd5e` – enhanced D3/Vis graph colouring |
 | 2-3 | Data ingestion demo script (`scripts/demo_ingest.py`) | M | ☑ | Completed in commit `eb08bfa` – demo generator & fraud showcase |
-| 2-4 | Sample fraud scenario dataset & README walkthrough | S | ☐ | Helps new users reproduce demo |
+| 2-4 | Sample fraud scenario dataset & README walkthrough | S | ☑ | Completed in commit `d671622` – full demo README guide |
 
 ---
 
@@ -46,3 +46,18 @@ _Start implementation with #1-1 once P0 items pass tests._
 3. After each completed item, commit with message `feat(todo-id): …` and mark ☑ here.  
 
 _Have fun & build cool stuff!_
+
+---
+
+## 🥳 **BIG CELEBRATION — POLISH & DELIGHT 100 % COMPLETE!** 🥳
+
+All four P2 tasks are now finished – the user-facing experience is fully **polished, responsive and demo-ready**.  
+
+Highlights:
+• Real-time progress toasts via WebSockets  
+• Colour-coded graph that literally **lights up** fraud patterns  
+• One-click demo that ingest → detects → evidences complex scams  
+• Step-by-step README so newcomers see value in minutes  
+
+> 💯  This milestone marks the end of the “Polish & Delight” phase.  
+> The platform is now **production-quality for solo use** and a perfect show-and-tell for collaborators!
