@@ -21,12 +21,14 @@ Legend
 | # | Epic | Effort | Status | Notes |
 |---|------|--------|--------|-------|
 | 1-1 | ⚡ **DeFi Stress-Test What-If** (AI explains stress scenarios) | L | ☐ | Celery task + prompt template |
-| 1-2 | 🔍 **Anomaly Hunting Fraud Detector** (GNN + heuristics) | L | ☐ | Use existing gnn_fraud_detection_tool |
+| 1-2 | 🔍 **Anomaly Hunting Fraud Detector** (GNN + heuristics) | L | ☑ | Completed in commit `9405715` – full anomaly service, API & tasks |
 | 1-3 | 🌉 **Cross-Chain Liquidity Migration Predictor** | L | ☐ | Time-series model + LLM narrative |
 
 _Start implementation with #1-1 once P0 items pass tests._
 
 > 🎉 **All P0 tasks are now complete!** Move on to P1 epics.
+
+> 🥳 **Milestone:** First P1 epic finished – Anomaly Hunting Fraud Detector is live!
 
 ## P2 – Polish & Delight
 | # | Task | Effort | Status | Notes |
