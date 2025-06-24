@@ -111,7 +111,8 @@ api_v1.include_router(prompts.router, prefix="/prompts", tags=["Prompts"])
 api_v1.include_router(templates.router, prefix="/templates", tags=["Templates"])
 api_v1.include_router(webhooks.router, prefix="/webhooks", tags=["Webhooks"])
 api_v1.include_router(whale_endpoints.router, prefix="/whales", tags=["Whales"])
-api_v1.include_router(ws_progress.router, prefix="/ws", tags=["WebSockets"])
+# ws_progress router already defines its own `/ws/...` paths – no extra prefix
+api_v1.include_router(ws_progress.router, tags=["WebSockets"])
 # Health endpoints (detailed component checks)
 api_v1.include_router(health.router)  # endpoints define their own /health/* paths
 
