@@ -15,7 +15,7 @@ Legend
 | 0-1 | **Expose `/health/workers` endpoint** from `worker_monitor.py` via API v1 | S | ☑ | Completed in commit `154bc34` – returns queue depth & worker count |
 | 0-2 | **Emit SIM client cost metrics** (`external_api_credit_used_total`) | M | ☑ | Implemented in commit `185e191` – SIM client + tests & budget guard |
 | 0-3 | **Finish Graph-Aware RAG “Explain-with-Cypher”** | M | ☑ | Completed in commit `92c2aef` – citations & evidence bundles integrated |
-| 0-4 | **Smoke-test suite**: chat → graph → background job flow | M | ☐ | Add to `tests/` as `test_smoke_flow.py` |
+| 0-4 | **Smoke-test suite**: chat → graph → background job flow | M | ☑ | Completed in commit `e453c4` – full `test_smoke_flow.py` & runner script |
 
 ## P1 – Feature Epics (Pick & Build)
 | # | Epic | Effort | Status | Notes |
@@ -25,6 +25,8 @@ Legend
 | 1-3 | 🌉 **Cross-Chain Liquidity Migration Predictor** | L | ☐ | Time-series model + LLM narrative |
 
 _Start implementation with #1-1 once P0 items pass tests._
+
+> 🎉 **All P0 tasks are now complete!** Move on to P1 epics.
 
 ## P2 – Polish & Delight
 | # | Task | Effort | Status | Notes |
