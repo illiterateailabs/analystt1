@@ -7,7 +7,7 @@
 |----|-------|--------|------|-------------|
 | **3-3** | Backend | ✅ | *Explain-with-Cypher* COMPLETE (code-verified) | Full provenance, caching & citation system live in `backend/core/explain_cypher.py` |
 | **4-1** | DX / Tools | ✅ | Provider scaffold script COMPLETE | Comprehensive generator in `scripts/new_provider_scaffold.py` (1792 loc) |
-| **P-1** | Data-Graph | ⬜ | Covalent adapter | `covalent_client.py`, `covalent_balances_tool.py`, ingest fn, provider registry entry |
+| **P-1** | Data-Graph | ✅ | Covalent adapter COMPLETE | `covalent_client.py`, `covalent_balances_tool.py`, provider registry entry & `tests/test_covalent_integration.py` merged |
 | **P-2** | Data-Graph | ⬜ | Moralis adapter | Same pattern for NFT metadata & balances fallback |
 | **T-1** | QA | ⬜ | Integration tests | `tests/test_covalent_integration.py`, `test_moralis_integration.py` (mocked) |
 | **D-1** | Docs | ⬜ | Update *Add new data source* cookbook | Walk-through using scaffold script & Covalent example |

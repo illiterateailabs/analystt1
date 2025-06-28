@@ -1,0 +1,51 @@
+{
+  "name": "covalent",
+  "provider_type": "rest",
+  "base_url": "https://api.covalenthq.com/v1",
+  "auth_method": "api_key",
+  "data_types": ["blockchain_transactions", "token_transfers", "wallet_balances", "nft_data"],
+  "description": "Covalent unified API for multi-chain blockchain data",
+  "version": "1.0.0",
+  "rate_limit": {
+    "requests_per_minute": 100,
+    "requests_per_day": 10000
+  },
+  "retry_config": {
+    "max_retries": 3,
+    "backoff_factor": 1.0,
+    "retry_status_codes": [429, 500, 502, 503, 504]
+  },
+  "headers": {
+    "Accept": "application/json"
+  },
+  "endpoints": {
+    "get_token_balances": "/{chain_id}/address/{address}/balances_v2/",
+    "get_transactions": "/{chain_id}/address/{address}/transactions_v3/",
+    "get_nft_balances": "/{chain_id}/address/{address}/balances_nft/",
+    "get_token_metadata": "/{chain_id}/tokens/{token_address}/"
+  },
+  "tools": [
+    {
+      "name": "covalent_balances_tool",
+      "description": "Tool for retrieving token balances from Covalent API",
+      "endpoints": ["get_token_balances"],
+      "data_types": ["wallet_balances", "token_transfers"]
+    },
+    {
+      "name": "covalent_transactions_tool", 
+      "description": "Tool for retrieving transaction history from Covalent API",
+      "endpoints": ["get_transactions"],
+      "data_types": ["blockchain_transactions"]
+    },
+    {
+      "name": "covalent_nft_tool",
+      "description": "Tool for retrieving NFT balances from Covalent API", 
+      "endpoints": ["get_nft_balances"],
+      "data_types": ["nft_data"]
+    }
+  ],
+  "extra_config": {
+    "supported_chains": ["1", "137", "8453", "10", "42161", "43114"],
+    "free_tier_limit": 1000
+  }
+}

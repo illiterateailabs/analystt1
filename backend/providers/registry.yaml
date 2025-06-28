@@ -133,3 +133,22 @@ providers:
     retry_policy:
       attempts: 5 # Critical data source, higher retry count
       backoff_factor: 0.3
+
+  # -------------------------------------------------------------------------- #
+  # 6. Covalent (Multi-chain Blockchain Data)
+  # -------------------------------------------------------------------------- #
+  - id: "covalent"
+    name: "Covalent"
+    description: "Covalent unified API for multi-chain blockchain data."
+    auth:
+      api_key_env_var: "COVALENT_API_KEY"
+    budget:
+      monthly_usd: 0.0            # Free-tier plan (1000 calls / day)
+    rate_limits:
+      requests_per_minute: 100
+      requests_per_day: 10000
+    cost_rules:
+      default_cost_per_request: 0.0   # Free tier, costs ignored
+    retry_policy:
+      attempts: 3
+      backoff_factor: 1.0
