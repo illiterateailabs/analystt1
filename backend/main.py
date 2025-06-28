@@ -33,7 +33,8 @@ from backend.api.v1 import (
 )
 from backend.auth.dependencies import get_current_user
 from backend.core import events, logging as app_logging, metrics, sentry_config
-from backend.core.telemetry import setup_telemetry
+# OpenTelemetry tracing
+from backend.core.telemetry import init_telemetry
 from backend.database import create_db_and_tables, get_engine
 from backend.jobs import sim_graph_job
 from backend.jobs.worker_monitor import WorkerMonitor  # start Celery worker monitor
@@ -62,8 +63,12 @@ app = FastAPI(
 # Initialize OpenTelemetry telemetry
 @app.on_event("startup")
 async def initialize_telemetry() -> None:
-    """Configure OpenTelemetry tracing on startup (if OTEL_ENABLED=true)."""
-    setup_telemetry(app)
+    """Configure OpenTelemetry tracing on startup (if OTEL_TRACE_ENABLED=true)."""
+    # Environment-driven configuration (see backend/core/telemetry.py)
+    init_telemetry(
+        otlp_endpoint=os.getenv("OTLP_EXPORTER_ENDPOINT"),
+        console_export=os.getenv("OTEL_TRACE_CONSOLE", "false").lower() == "true",
+    )
     logger.info("OpenTelemetry telemetry setup executed")
 
 # Initialize Sentry for error tracking
