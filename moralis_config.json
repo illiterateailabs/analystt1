@@ -1,0 +1,59 @@
+{
+  "name": "moralis",
+  "provider_type": "rest",
+  "base_url": "https://deep-index.moralis.io/api/v2.2",
+  "auth_method": "api_key",
+  "data_types": ["nft_data", "wallet_balances", "token_transfers", "blockchain_transactions"],
+  "description": "Moralis Web3 API for NFT metadata and multi-chain data",
+  "version": "2.2.0",
+  "rate_limit": {
+    "requests_per_minute": 120,
+    "requests_per_day": 25000
+  },
+  "retry_config": {
+    "max_retries": 3,
+    "backoff_factor": 1.0,
+    "retry_status_codes": [429, 500, 502, 503, 504]
+  },
+  "headers": {
+    "Accept": "application/json"
+  },
+  "endpoints": {
+    "get_wallet_nfts": "/{address}/nft",
+    "get_nft_metadata": "/nft/{address}/{token_id}",
+    "get_wallet_tokens": "/{address}/erc20",
+    "get_token_metadata": "/erc20/metadata",
+    "get_wallet_transactions": "/{address}"
+  },
+  "tools": [
+    {
+      "name": "moralis_nft_tool",
+      "description": "Tool for retrieving NFT data and metadata from Moralis API",
+      "endpoints": ["get_wallet_nfts", "get_nft_metadata"],
+      "data_types": ["nft_data"]
+    },
+    {
+      "name": "moralis_balances_tool",
+      "description": "Tool for retrieving token balances from Moralis API",
+      "endpoints": ["get_wallet_tokens", "get_token_metadata"],
+      "data_types": ["wallet_balances", "token_transfers"]
+    },
+    {
+      "name": "moralis_transactions_tool",
+      "description": "Tool for retrieving transaction history from Moralis API",
+      "endpoints": ["get_wallet_transactions"],
+      "data_types": ["blockchain_transactions"]
+    }
+  ],
+  "extra_config": {
+    "supported_chains": ["eth", "polygon", "bsc", "avalanche", "fantom", "cronos", "palm", "arbitrum"],
+    "free_tier_limit": 40000,
+    "compute_units_per_request": {
+      "get_wallet_nfts": 5,
+      "get_nft_metadata": 2,
+      "get_wallet_tokens": 1,
+      "get_token_metadata": 1,
+      "get_wallet_transactions": 3
+    }
+  }
+}

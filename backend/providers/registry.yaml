@@ -152,3 +152,22 @@ providers:
     retry_policy:
       attempts: 3
       backoff_factor: 1.0
+
+  # -------------------------------------------------------------------------- #
+  # 7. Moralis (NFT & Multi-chain Data)
+  # -------------------------------------------------------------------------- #
+  - id: "moralis"
+    name: "Moralis"
+    description: "Moralis Web3 API for NFT metadata and multi-chain blockchain data."
+    auth:
+      api_key_env_var: "MORALIS_API_KEY"
+    budget:
+      monthly_usd: 0.0            # Free community tier (≈ 40k CU / month)
+    rate_limits:
+      requests_per_minute: 120
+      requests_per_day: 25000
+    cost_rules:
+      default_cost_per_request: 0.0   # Free tier, CU tracking handled elsewhere
+    retry_policy:
+      attempts: 3
+      backoff_factor: 1.0
