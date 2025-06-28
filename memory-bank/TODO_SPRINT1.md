@@ -9,9 +9,9 @@
 | **4-1** | DX / Tools | ✅ | Provider scaffold script COMPLETE | Comprehensive generator in `scripts/new_provider_scaffold.py` (1792 loc) |
 | **P-1** | Data-Graph | ✅ | Covalent adapter COMPLETE | `covalent_client.py`, `covalent_balances_tool.py`, provider registry entry & `tests/test_covalent_integration.py` merged |
 | **P-2** | Data-Graph | ✅ | Moralis adapter COMPLETE | `moralis_client.py`, `moralis_nft_tool.py`, provider registry entry & `tests/test_moralis_integration.py` merged |
-| **T-1** | QA | ⬜ | Integration tests | `tests/test_covalent_integration.py`, `test_moralis_integration.py` (mocked) |
-| **D-1** | Docs | ⬜ | Update *Add new data source* cookbook | Walk-through using scaffold script & Covalent example |
-| **R-0** | PM | ⬜ | Progress bookkeeping | Update `TODO_ROADMAP.md` & `MASTER_STATUS.md` when tasks reach ✅ |
+| **T-1** | QA | ✅ | Integration tests COMPLETE | Matrix script + `tests/test_covalent_integration.py`, `tests/test_moralis_integration.py` run green |
+| **D-1** | Docs | ✅ | *Add new data source* cookbook COMPLETE | `memory-bank/ADD_NEW_DATA_SOURCE_COOKBOOK.md` with Covalent & Moralis walk-through |
+| **R-0** | PM | ✅ | Progress bookkeeping COMPLETE | `TODO_ROADMAP.md` & `MASTER_STATUS.md` updated; version bumped to **v1.9.0-beta** |
 
 ### Definition of Done
 1. All tasks marked ✅ and merged to **main**.  

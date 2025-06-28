@@ -1,227 +1,226 @@
-# 📚 Developer Cookbook: Adding a New Data Source
+# Add New Data Source Cookbook
 
-Welcome to the definitive guide for integrating **any** external data source (API, stream, or feed) into Coding-Analyst-Droid.  
-Follow the steps below to go from *idea ➜ production-ready provider* in a single afternoon.
+**A step-by-step guide for integrating new blockchain data providers into the Analyst Augmentation Agent**
 
----
-
-## 0. Prerequisites
-
-• Docker / Docker-Compose running  
-• Local Neo4j & Redis from `docker-compose up -d`  
-• Python ≥ 3.10 with virtualenv  
-• `poetry install` (or `pip -r requirements.txt`)  
-• Environment variables copied from `.env.example`
+*Updated with real examples from Covalent & Moralis integrations (June 2025)*
 
 ---
 
-## 1️⃣ Step-by-Step Workflow
+## Overview
 
-| # | Action | Tools/Files |
-|---|--------|-------------|
-| 1 | Draft provider config (JSON/YAML) | `provider_config.json` |
-| 2 | Run scaffold generator | `python scripts/new_provider_scaffold.py --config provider_config.json` |
-| 3 | Fill in API-client methods | `backend/integrations/<provider>_client.py` |
-| 4 | Implement tool logic | `backend/agents/tools/<provider>/<tool>.py` |
-| 5 | Wire data → graph | use `Neo4jLoader` helpers |
-| 6 | Add metrics / cost tags (optional) | Prometheus counters already injected |
-| 7 | Run integration test matrix | `python scripts/integration_test_matrix.py --provider <provider>` |
-| 8 | Generate Grafana dashboards | `python scripts/generate_grafana_dashboard.py --provider <provider>` |
-| 9 | Create PR + CI green | GitHub Actions auto-runs test matrix |
-|10 | Deploy & monitor | Docker / K8s + Grafana + Sentry |
+This cookbook explains how to add *any* blockchain data provider to the `droid101` project while preserving our unified pattern:
+
+| You will build | Outcome |
+| -------------- | ------- |
+| **Provider Client** | Async REST / GraphQL client with auth, retries & Prometheus metrics |
+| **Tool Integration** | `AbstractApiTool` subclass so Crew agents can consume the API |
+| **Registry Entry** | Provider config block with rate-limits, retry & cost tracking |
+| **Integration Tests** | Neo4j-mocked test suite + optional real-API smoke tests |
+| **Documentation** | Cookbook update + sprint checklist entry |
 
 ---
 
-## 2️⃣ Provider Config Template
+## Prerequisites
 
-`provider_config.json`
+* Python 3.8+ environment  
+* Familiarity with async/await & HTTP APIs  
+* API key (or free-tier token) for the new provider  
+* Access to provider docs (endpoints, auth, limits)
 
-```json
-{
-  "name": "example_blockchain_api",
-  "provider_type": "rest",
-  "base_url": "https://api.example.com/v1",
-  "auth_method": "api_key",
-  "data_types": ["blockchain_transactions", "wallet_balances"],
-  "description": "Example API for blockchain data",
-  "rate_limit": { "requests_per_minute": 60 },
-  "endpoints": {
-    "get_transactions": "/transactions",
-    "get_balance": "/balances/{address}"
-  },
-  "tools": [
-    {
-      "name": "example_transactions_tool",
-      "description": "Retrieve transactions",
-      "endpoints": ["get_transactions"]
-    }
-  ]
-}
-```
+---
 
-Run:
+## Step 1 – Generate Boilerplate with the Scaffold
+
+The one-stop script lives at `scripts/new_provider_scaffold.py` (≈ 1 800 LOC).
 
 ```bash
-python scripts/new_provider_scaffold.py --config provider_config.json
+python scripts/new_provider_scaffold.py
+```
+
+Follow the prompts:
+
+| Prompt | Example (Covalent) |
+| ------ | ----------------- |
+| Provider id | `covalent` |
+| Provider name | Covalent |
+| Base URL | https://api.covalenthq.com/v1 |
+| Auth method | `api_key` |
+| Data types | `blockchain_transactions,wallet_balances,token_transfers,nft_data` |
+| Rate limits | 100 req/min, 10 000 req/day |
+| Endpoints | `/ {chain_id} /address/ {address} /balances_v2/` etc. |
+
+**Tip:** For non-interactive use supply `--config provider.json` with the same fields.
+
+---
+
+## Step 2 – Inspect Generated Files
+
+```
+├── covalent_config.json
+├── backend/integrations/covalent_client.py
+├── backend/agents/tools/covalent_balances_tool.py
+└── tests/test_covalent_integration.py
+```
+
+### What each part does
+
+1. **Client** – Handles auth header / basic-auth, retries + back-off, metrics.  
+2. **Tool** – Validates params (`pydantic`), maps them to client methods, surfaces to CrewAI.  
+3. **Tests** – Real-API (if key set) + Neo4j mock ingest + validation errors.
+
+---
+
+## Step 3 – Add Provider to the Registry
+
+Open `backend/providers/registry.yaml` and append:
+
+```yaml
+# -------------------------------------------------------------------------- #
+# N. Covalent (Multi-chain Data)
+# -------------------------------------------------------------------------- #
+- id: "covalent"
+  name: "Covalent"
+  description: "Covalent unified API for multi-chain blockchain data."
+  auth:
+    api_key_env_var: "COVALENT_API_KEY"
+  budget:
+    monthly_usd: 0.0            # Free tier
+  rate_limits:
+    requests_per_minute: 100
+    requests_per_day: 10000
+  cost_rules:
+    default_cost_per_request: 0.0
+  retry_policy:
+    attempts: 3
+    backoff_factor: 1.0
+```
+
+Repeat for Moralis:
+
+```yaml
+- id: "moralis"
+  name: "Moralis"
+  description: "Moralis Web3 API for NFT metadata and multi-chain data."
+  auth:
+    api_key_env_var: "MORALIS_API_KEY"
+  rate_limits:
+    requests_per_minute: 120
+    requests_per_day: 25000
 ```
 
 ---
 
-## 3️⃣ Code Implementation Highlights
+## Step 4 – Customise as Needed
 
-### 3.1 Client Snippet (REST)
+### Auth patterns
 
-Located at `backend/integrations/example_blockchain_api_client.py`
+* **X-API-Key header** (Moralis)
 
 ```python
-class ExampleBlockchainApiClient:
-    async def get_transactions(self, address: str, limit: int = 10):
-        url = f"{self.base_url}/transactions"
-        return await self._make_request("GET", url, params={"address": address, "limit": limit})
+if self.api_key:
+    self.headers["X-API-Key"] = self.api_key
 ```
 
-### 3.2 Tool Snippet
-
-`backend/agents/tools/example_blockchain_api/example_transactions_tool.py`
+* **Basic auth** (Covalent)
 
 ```python
-class ExampleTransactionsTool(AbstractApiTool):
-    name = "example_transactions_tool"
-    provider_id = "example_blockchain_api"
+if self.api_key:
+    self.auth = (self.api_key, "")
+```
 
-    async def _execute(self, request: ExampleTransactionsToolRequest):
-        data = await self.client.get_transactions(request.address, request.limit)
-        # optional: ingest into Neo4j
-        await self._ingest_transactions(data["transactions"])
-        return data
+### Tool routing examples
+
+*Default on `token_id` presence*  
+
+```python
+if "token_id" in params:
+    return await self.get_nft_metadata(params)
+return await self.get_wallet_nfts(params)
+```
+
+*Explicit `method` parameter*  
+
+```python
+method = params.pop("method", "get_wallet_nfts")
+return await getattr(self, method)(params)
 ```
 
 ---
 
-## 4️⃣ Testing & Validation
-
-1. **Unit Tests** – auto-generated in `tests/test_<provider>_client.py`  
-2. **Tool Tests** – `tests/test_<tool>.py` covers `_execute` logic  
-3. **Integration Matrix** – run
-
-   ```bash
-   python scripts/integration_test_matrix.py --provider example_blockchain_api --verbose
-   ```
-
-   ✓ Verifies API mocks, Neo4j ingestion, metrics, rate-limit handling.
-
-4. **Static & Type Checks**
-
-   ```bash
-   ruff check .
-   mypy backend/integrations/example_blockchain_api_client.py
-   ```
-
----
-
-## 5️⃣ Integration Touch-Points
-
-| System | How it’s wired |
-|--------|----------------|
-| Neo4j  | Use `Neo4jLoader.ingest_*` helpers inside tool `_execute` |
-| Redis  | `AbstractApiTool` provides transparent caching (`cache_ttl`) |
-| Prometheus | Counters & histograms auto-labelled with `provider` / `endpoint` |
-| Sentry | Exceptions bubble to `sentry_config.py` automatically |
-| OpenTelemetry | HTTPX, Redis, Neo4j spans auto-instrumented |
-
----
-
-## 6️⃣ Best Practices & Pitfalls
-
-✔  **Keep provider IDs snake_case** – matches env vars & registry keys  
-✔  **Pagination** – loop internally; expose `limit` param to callers  
-✔  **Cost Tracking** – set `credit_type` labels if the API charges tokens/credits  
-✔  **Rate Limits** – honour `Retry-After`; scaffold includes retry/back-off  
-❌  **Don’t block event loop** – all client calls are async  
-❌  **Avoid large response bodies in Neo4j** – extract only needed fields
-
----
-
-## 7️⃣ Configuration & Environment
-
-1. **API Keys**
-
-   Add to `.env`
-
-   ```
-   EXAMPLE_BLOCKCHAIN_API_KEY=your_key_here
-   ```
-
-2. **Registry**
-
-   `backend/providers/registry.yaml` auto-updated – review `rate_limit`, `retry`, `cost_rules`.
-
-3. **Docker Compose**
-
-   Nothing extra unless the provider needs local mock service; add service under `docker-compose.yml`.
-
----
-
-## 8️⃣ Monitoring & Observability
-
-Metric | Description | Example Query
------- |-------------|--------------
-`external_api_calls_total` | Counter per provider/endpoint | rate(external_api_calls_total{provider="example_blockchain_api"}[5m])
-`external_api_duration_seconds` | Histogram (latency) | histogram_quantile(0.9, ...)
-`external_api_credit_used_total` | Cost counter | increase(external_api_credit_used_total{provider="example_blockchain_api"}[1h])
-
-Generate dashboards:
+## Step 5 – Run Tests
 
 ```bash
-python scripts/generate_grafana_dashboard.py --provider example_blockchain_api --output-dir grafana_dashboards
+# single provider
+python scripts/integration_test_matrix.py --provider covalent --verbose
+
+# all providers
+python scripts/integration_test_matrix.py
+```
+
+Set env-vars first:
+
+```bash
+export COVALENT_API_KEY="xxx"
+export MORALIS_API_KEY="yyy"
+```
+
+The matrix script spins a mock transport but will hit live APIs when keys exist.
+
+---
+
+## Step 6 – Document & Push
+
+1. Update `memory-bank/TODO_SPRINT*.md` → mark task ✅  
+2. Append a short entry under *Phase 4 – Extensibility Hooks* in `MASTER_STATUS.md`.  
+3. Commit:
+
+```bash
+git add backend/memory-bank providers tests
+git commit -m "🔥 Covalent provider integration - COOKED & PUSHED"
+git push
 ```
 
 ---
 
-## 9️⃣ Deployment Checklist
+## Advanced Patterns
 
-- [ ] **Secrets** in Kubernetes `Secret` or CI vault  
-- [ ] **Prometheus scrape** includes `/metrics` on backend pod  
-- [ ] **Grafana dashboards** imported  
-- [ ] **Back-pressure middleware** thresholds tuned (`BUDGET_CHECK_INTERVAL_SECONDS`, budgets)  
-- [ ] **OTEL_EXPORTER_TYPE** & endpoint configured for tracing  
-- [ ] **CI** passes unit, integration matrix, lint, type checks  
-
----
-
-## 🔧 10️⃣ Troubleshooting Guide
-
-Problem | Likely Cause | Fix
-------- | ------------ | ---
-`Provider not found in registry` | Scaffold not run / typo | Ensure `id` matches provider folder
-`Missing API key` | Env var not set | Add `EXAMPLE_BLOCKCHAIN_API_KEY`
-`429 Too Many Requests` | Rate limit hit | Check scaffold retry; Grafana rate-limit dashboard
-`neo4j.exceptions.ClientError` | Bad Cypher | Validate ingestion queries; enable `explain_cypher` prototype
-`external_api_credit_used_total` stays 0 | Cost rules not configured | Add `cost_rules` in registry.yaml
+| Scenario | Cookbook Tip |
+| -------- | ------------ |
+| Multiple tools per provider | Create `backend/agents/tools/{provider}/` package with `__init__.py` |
+| GraphQL providers | Scaffold supports `--type graphql`, generates `_execute_query()` |
+| WebSockets | Scaffold supports `--type websocket`, adds `_subscribe()` helpers |
+| Custom Neo4j ingest | Place logic in `scripts/integration_test_matrix.py` provider hook |
 
 ---
 
-## 🔄 Examples by Data Source Type
+## Troubleshooting Checklist
 
-### REST (JSON)
-
-• Use `provider_type: rest`  
-• Endpoints defined as path strings  
-• Client uses `_make_request`
-
-### GraphQL
-
-• `provider_type: graphql`  
-• Endpoints map to GraphQL queries; auto-generated client uses `_execute_query`
-
-### WebSocket / Streaming
-
-• `provider_type: websocket`  
-• Endpoints define channels & subscribe messages  
-• Client manages reconnects & pushes messages to callbacks
+| Symptom | Fix |
+| ------- | --- |
+| `ImportError backend.integrations.{provider}_client` | Run scaffold or add file to `__init__.py` |
+| Auth 401 | Ensure `ENV_VAR` matches `registry.yaml` |
+| Neo4j ingestion silent | Confirm you called `neo4j_loader.ingest_*` or crafted `_execute_query` |
+| Rate-limit loops | Check provider headers (`Retry-After`) and `retry_config` |
 
 ---
 
-## 🎉 You’re Done!
+## Success Metrics
 
-Merge your PR ➜ CI green ➜ dashboards live ➜ **new data flowing into the graph** 🚀
+* **CI** green (unit + integration)  
+* **Prometheus** `external_api_call_total{provider="new"}` increments  
+* **Graph** nodes/relationships created for sample wallet  
+* **CrewAI** can call the new tool via chat (manual smoke test)  
+
+---
+
+### Real-World Examples
+
+| Provider | Free Tier | Specialisation | Graph Pattern |
+| -------- | --------- | -------------- | ------------- |
+| Covalent | 1 000 calls/day | Token balances & tx | `Address-HOLDS-Token` |
+| Moralis | ~40 k CU/month | NFT metadata & ownership | `Address-OWNS-NFT` |
+
+---
+
+*Last updated: 28 Jun 2025 – Factory Droid*  
+“**Cook & push to GitHub**” 🌶️🚀

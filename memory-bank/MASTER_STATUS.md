@@ -85,7 +85,7 @@
 | 1 – Data ⇢ Graph ⇢ Cache | ✅ Complete | Provider registry, AbstractApiTool, Redis tiering |
 | 2 – Modular Crew Platform | ✅ Complete | Crew YAML, CREW_MODE, HITL scaffold, tool discovery |
 | 3 – RAG & Explainability | ✅ Complete | Graph-Aware RAG + EvidenceBundle + Explain-with-Cypher |
-| 4 – Extensibility Hooks | 🔜 | Code-gen, cost dashboards |
+| 4 – Extensibility Hooks | 🟡 In-progress | Provider code-gen & Covalent/Moralis adapters **done** · cost dashboards next |
 | 5 – Polish & Harden | 🔜 | OTEL, back-pressure, load tests |
 
 ## 🚀 Production Readiness
@@ -95,10 +95,10 @@
 - **Extensibility**: Provider registry, tool auto-discovery, YAML crews
 
 ## 🔜 Next Phase Priorities
-1. **Phase 4 Hooks** – provider code-gen script & integration-test matrix (apply to Covalent & Moralis)  
-2. Grafana dashboards for external API cost / rate-limit monitoring  
-3. **OpenTelemetry** spans across API & crews (Phase 5-1)  
-4. Back-pressure middleware for budget protection (Phase 5-2)  
+1. Grafana dashboards for external API cost / rate-limit monitoring (Phase 4-2)  
+2. **OpenTelemetry** spans across API & crews (Phase 5-1)  
+3. Back-pressure middleware for budget protection (Phase 5-2)  
+4. End-to-end load test harness (Phase 5-4)  
 
 ---
 *Last updated by Factory Droid on 2025-06-28* 🚀
