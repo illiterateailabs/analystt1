@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation } from 'react-query'
-import { graphAPI, handleAPIError, GraphData } from '@/lib/api'
+import { graphAPI, handleAPIError, GraphData, GraphNode, GraphRelationship } from '@/lib/api'
 import toast from 'react-hot-toast'
 import { Network, DataSet } from 'vis-network/standalone/esm/vis-network'
 import { 
@@ -10,8 +10,111 @@ import {
   CircleStackIcon,
   ChartBarIcon,
   CodeBracketIcon,
-  ArrowDownTrayIcon
+  ArrowDownTrayIcon,
+  InformationCircleIcon
 } from '@heroicons/react/24/outline'
+
+// Enhanced Styling Logic
+const getNodeStyle = (node: GraphNode) => {
+  const properties = node.properties || {};
+  const riskScore = properties.risk_score || 0;
+  const isWashTrading = properties.wash_trading_indicator === true;
+  const isSuspicious = properties.suspicious_pattern === true;
+
+  let color = '#97C2FC'; // Default blue
+  let shape = 'dot';
+  let size = 25;
+
+  // Default label-based styling (backward compatible)
+  if (node.labels.includes('Person')) { color = '#FB7E81'; shape = 'diamond'; }
+  else if (node.labels.includes('Account')) { color = '#7BE141'; shape = 'square'; }
+  else if (node.labels.includes('Transaction')) { color = '#FFA807'; shape = 'triangle'; }
+  else if (node.labels.includes('Wallet')) { color = '#6E6EFD'; shape = 'hexagon'; }
+
+  // Fraud-specific overrides
+  if (riskScore > 0.8 || properties.fraud_indicator === true) {
+    color = '#ff3b30'; // Red for high risk
+  } else if (riskScore > 0.5) {
+    color = '#ff9500'; // Orange for medium risk
+  } else if (isWashTrading || isSuspicious) {
+    color = '#ff69b4'; // Pink for suspicious patterns
+  }
+
+  // Size scaling
+  if (riskScore > 0) {
+    size = 15 + Math.min(riskScore * 20, 40); // Scale size based on risk
+  } else if (properties.transaction_volume) {
+    size = 10 + Math.min(Math.log(properties.transaction_volume) * 5, 40);
+  }
+
+  return {
+    id: node.id,
+    label: node.labels[0] + '\n' + (properties.name || properties.id || ''),
+    title: `<b>${node.labels.join(', ')}</b><br><pre>${JSON.stringify(properties, null, 2)}</pre>`,
+    color,
+    shape,
+    size,
+    font: { size: 12 }
+  };
+};
+
+const getEdgeStyle = (rel: GraphRelationship) => {
+  const properties = rel.properties || {};
+  const isFraudLink = properties.is_fraud_link === true;
+  const isWashTrade = properties.is_wash_trade === true;
+  const isSuspicious = properties.is_suspicious_flow === true;
+  const transactionValue = properties.value_usd || properties.value || 0;
+
+  let color = { color: '#848484', highlight: '#6E6EFD' }; // Default gray
+  let dashes = false;
+  let width = 1;
+
+  // Fraud-specific styling
+  if (isFraudLink) {
+    color = { color: '#ff3b30', highlight: '#ff3b30' };
+  } else if (isWashTrade) {
+    color = { color: '#ff69b4', highlight: '#ff69b4' };
+    dashes = true;
+  } else if (isSuspicious) {
+    color = { color: '#cccccc', highlight: '#aaaaaa' };
+    dashes = [5, 5];
+  }
+
+  // Width scaling
+  if (transactionValue > 0) {
+    width = 1 + Math.min(Math.log10(transactionValue + 1), 10);
+  }
+
+  return {
+    id: rel.id,
+    from: rel.startNode,
+    to: rel.endNode,
+    label: rel.type,
+    arrows: 'to',
+    font: { size: 10, align: 'middle' },
+    title: `<b>${rel.type}</b><br><pre>${JSON.stringify(properties, null, 2)}</pre>`,
+    color,
+    dashes,
+    width,
+  };
+};
+
+const GraphLegend = () => (
+  <div className="absolute bottom-4 left-4 bg-white bg-opacity-80 p-3 rounded-lg shadow-md border border-gray-200">
+    <h4 className="font-semibold text-sm mb-2 flex items-center">
+      <InformationCircleIcon className="h-4 w-4 mr-1" />
+      Legend
+    </h4>
+    <div className="space-y-1 text-xs">
+      <div className="flex items-center"><div className="w-3 h-3 rounded-full mr-2" style={{ backgroundColor: '#ff3b30' }}></div> High Risk / Fraud Link</div>
+      <div className="flex items-center"><div className="w-3 h-3 rounded-full mr-2" style={{ backgroundColor: '#ff9500' }}></div> Medium Risk</div>
+      <div className="flex items-center"><div className="w-3 h-3 rounded-full mr-2" style={{ backgroundColor: '#ff69b4' }}></div> Suspicious Pattern</div>
+      <div className="flex items-center"><div className="w-3 h-0.5 mr-2 border-t-2 border-dashed" style={{ borderColor: '#ff69b4' }}></div> Wash Trading Flow</div>
+      <div className="flex items-center"><div className="w-3 h-0.5 mr-2 border-t-2 border-dashed" style={{ borderColor: '#cccccc' }}></div> Suspicious Flow</div>
+    </div>
+  </div>
+);
+
 
 export function GraphVisualization() {
   const [cypherQuery, setCypherQuery] = useState('')
@@ -89,57 +192,9 @@ export function GraphVisualization() {
   useEffect(() => {
     if (!containerRef.current || !graphData) return
 
-    // Prepare nodes with styling based on labels
-    const nodes = new DataSet(
-      graphData.nodes.map(node => {
-        // Determine node color based on labels
-        let color = '#97C2FC' // Default blue
-        let shape = 'dot'
-        let size = 25
-
-        if (node.labels.includes('Person')) {
-          color = '#FB7E81' // Red
-          shape = 'diamond'
-        } else if (node.labels.includes('Account')) {
-          color = '#7BE141' // Green
-          shape = 'square'
-        } else if (node.labels.includes('Transaction')) {
-          color = '#FFA807' // Orange
-          shape = 'triangle'
-        } else if (node.labels.includes('Wallet')) {
-          color = '#6E6EFD' // Purple
-          shape = 'hexagon'
-        }
-
-        // Determine size based on properties (if any risk score)
-        if (node.properties.risk_score) {
-          size = 15 + Math.min(node.properties.risk_score * 10, 35)
-        }
-
-        return {
-          id: node.id,
-          label: node.labels[0] + '\n' + (node.properties.name || node.properties.id || ''),
-          title: JSON.stringify(node.properties, null, 2),
-          color: color,
-          shape: shape,
-          size: size,
-          font: { size: 12 }
-        }
-      })
-    )
-
-    // Prepare edges
-    const edges = new DataSet(
-      graphData.relationships.map(rel => ({
-        id: rel.id,
-        from: rel.startNode,
-        to: rel.endNode,
-        label: rel.type,
-        arrows: 'to',
-        font: { size: 10, align: 'middle' },
-        title: JSON.stringify(rel.properties, null, 2)
-      }))
-    )
+    // Prepare nodes and edges with enhanced styling
+    const nodes = new DataSet(graphData.nodes.map(getNodeStyle));
+    const edges = new DataSet(graphData.relationships.map(getEdgeStyle));
 
     // Network options
     const options = {
@@ -162,6 +217,15 @@ export function GraphVisualization() {
         tooltipDelay: 200,
         navigationButtons: true,
         keyboard: true
+      },
+      nodes: {
+        borderWidth: 2,
+        borderWidthSelected: 4,
+      },
+      edges: {
+        smooth: {
+          type: 'continuous'
+        }
       }
     }
 
@@ -375,7 +439,7 @@ export function GraphVisualization() {
       </div>
 
       {/* Right panel - Visualization */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col relative">
         {/* Visualization header */}
         <div className="p-6 border-b border-gray-200 bg-white flex justify-between items-center">
           <div>
@@ -416,6 +480,7 @@ export function GraphVisualization() {
             </div>
           )}
         </div>
+        {graphData && <GraphLegend />}
       </div>
     </div>
   )
