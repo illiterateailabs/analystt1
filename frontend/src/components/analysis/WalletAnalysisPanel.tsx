@@ -2,8 +2,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Box, Card, CardContent, Typography, Tabs, Tab, CircularProgress, Grid, Chip, Drawer, Button, Alert, AlertTitle, Divider, LinearProgress, IconButton, Badge } from '@mui/material';
 import { styled } from '@mui/material/styles';
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
-import { getSimBalances, getSimActivity, getSimCollectibles, getSimTokenInfo, getSimRiskScore } from '../../lib/api';
-import { SimTokenBalance, SimActivityItem, SimCollectible, SimTokenInfo, SimRiskScore } from '../../lib/api';
+import { getSimBalances, getSimActivity, getSimCollectibles, getSimTokenInfo } from '../../lib/api';
+import { SimTokenBalance, SimActivityItem, SimCollectible, SimTokenInfo } from '../../lib/api';
 import { formatAddress, formatAmount, formatUSD } from '../../lib/utils';
 import InfoIcon from '@mui/icons-material/Info';
 import CloseIcon from '@mui/icons-material/Close';
@@ -12,6 +12,8 @@ import SecurityIcon from '@mui/icons-material/Security';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import ErrorBoundary from '../ui/ErrorBoundary';
 import LoadingSpinner from '../ui/LoadingSpinner';
+import RiskBadge from './RiskBadge';
+import EvidenceDrawer from './EvidenceDrawer';
 
 // Styled components
 const StyledTabPanel = styled(Box)(({ theme }) => ({
@@ -110,27 +112,6 @@ const CollectiblePlaceholder = styled(Box)(({ theme }) => ({
   color: theme.palette.text.secondary,
 }));
 
-const RiskScoreContainer = styled(Box)(({ theme }) => ({
-  marginBottom: theme.spacing(3),
-  padding: theme.spacing(2),
-  borderRadius: theme.shape.borderRadius,
-  border: `1px solid ${theme.palette.divider}`,
-}));
-
-const RiskScoreBar = styled(LinearProgress)<{ risk: 'LOW' | 'MEDIUM' | 'HIGH' }>(({ theme, risk }) => ({
-  height: 10,
-  borderRadius: 5,
-  marginTop: theme.spacing(1),
-  marginBottom: theme.spacing(1),
-  backgroundColor: theme.palette.grey[200],
-  '& .MuiLinearProgress-bar': {
-    backgroundColor: 
-      risk === 'LOW' ? theme.palette.success.main :
-      risk === 'MEDIUM' ? theme.palette.warning.main :
-      theme.palette.error.main,
-  },
-}));
-
 const DrawerContent = styled(Box)(({ theme }) => ({
   width: 400,
   padding: theme.spacing(3),
@@ -185,6 +166,8 @@ export default function WalletAnalysisPanel({ walletAddress }: WalletAnalysisPan
   const [tabValue, setTabValue] = useState(0);
   const [selectedToken, setSelectedToken] = useState<SimTokenBalance | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [evidenceDrawerOpen, setEvidenceDrawerOpen] = useState(false);
+  const [selectedEvidenceId, setSelectedEvidenceId] = useState<string | null>(null);
   
   // Refs
   const activityContainerRef = useRef<HTMLDivElement>(null);
@@ -201,16 +184,6 @@ export default function WalletAnalysisPanel({ walletAddress }: WalletAnalysisPan
   });
 
   const {
-    data: riskScoreData,
-    isLoading: riskScoreLoading,
-    error: riskScoreError,
-  } = useQuery({
-    queryKey: ['simRiskScore', walletAddress],
-    queryFn: () => getSimRiskScore(walletAddress),
-    enabled: !!walletAddress,
-  });
-
-  const {
     data: activityData,
     isLoading: activityLoading,
     error: activityError,
@@ -219,7 +192,7 @@ export default function WalletAnalysisPanel({ walletAddress }: WalletAnalysisPan
     isFetchingNextPage,
   } = useInfiniteQuery({
     queryKey: ['simActivity', walletAddress],
-    queryFn: ({ pageParam }) => getSimActivity(walletAddress, pageParam),
+    queryFn: ({ pageParam }) => getSimActivity(walletAddress, 25, pageParam),
     getNextPageParam: (lastPage) => lastPage.next_offset || undefined,
     enabled: !!walletAddress && tabValue === 1,
   });
@@ -259,6 +232,17 @@ export default function WalletAnalysisPanel({ walletAddress }: WalletAnalysisPan
 
   const handleCloseDrawer = () => {
     setDrawerOpen(false);
+  };
+
+  const handleActivityClick = (activity: SimActivityItem) => {
+    // Placeholder logic: open evidence drawer for potentially risky activities
+    const riskyTypes = ['swap', 'burn', 'approve'];
+    if (riskyTypes.includes(activity.type)) {
+      // In a real app, you'd get this ID from the activity item itself
+      // or from a related analysis endpoint.
+      setSelectedEvidenceId(`evt-${activity.transaction_hash}`);
+      setEvidenceDrawerOpen(true);
+    }
   };
 
   // Infinite scroll handler for activity tab
@@ -308,8 +292,6 @@ export default function WalletAnalysisPanel({ walletAddress }: WalletAnalysisPan
 
     return (
       <>
-        {renderRiskScore()}
-        
         {balancesData.balances.map((token) => (
           <TokenItem 
             key={`${token.chain_id}-${token.address}`} 
@@ -376,47 +358,59 @@ export default function WalletAnalysisPanel({ walletAddress }: WalletAnalysisPan
 
     return (
       <Box ref={activityContainerRef} sx={{ height: '100%', overflowY: 'auto' }}>
-        {allActivities.map((activity, index) => (
-          <ActivityItem key={`${activity.transaction_hash}-${index}`}>
-            <ActivityIcon>
-              {activity.type === 'send' && '↑'}
-              {activity.type === 'receive' && '↓'}
-              {activity.type === 'swap' && '↔'}
-              {activity.type !== 'send' && activity.type !== 'receive' && activity.type !== 'swap' && '•'}
-            </ActivityIcon>
-            <Box sx={{ flexGrow: 1 }}>
-              <Typography variant="subtitle1">
-                {activity.type.charAt(0).toUpperCase() + activity.type.slice(1)}
-                {activity.function?.name && `: ${activity.function.name}`}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                {activity.type === 'send' && `To: ${formatAddress(activity.to)}`}
-                {activity.type === 'receive' && `From: ${formatAddress(activity.from)}`}
-                {activity.type !== 'send' && activity.type !== 'receive' && 
-                  `${formatAddress(activity.from)} → ${formatAddress(activity.to)}`}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                {new Date(activity.block_time * 1000).toLocaleString()} • {activity.chain}
-              </Typography>
-            </Box>
-            {activity.value && (
-              <Box sx={{ textAlign: 'right' }}>
-                <Typography 
-                  variant="subtitle1" 
-                  color={activity.type === 'send' ? 'error.main' : activity.type === 'receive' ? 'success.main' : 'inherit'}
-                >
-                  {activity.type === 'send' ? '-' : activity.type === 'receive' ? '+' : ''}
-                  {formatAmount(activity.value, activity.token_metadata?.decimals || 18)} {activity.token_metadata?.symbol || ''}
+        {allActivities.map((activity, index) => {
+          const isRisky = ['swap', 'burn', 'approve'].includes(activity.type);
+          return (
+            <ActivityItem 
+              key={`${activity.transaction_hash}-${index}`}
+              onClick={() => handleActivityClick(activity)}
+              sx={{ 
+                cursor: isRisky ? 'pointer' : 'default',
+                '&:hover': {
+                  backgroundColor: isRisky ? 'action.hover' : 'transparent',
+                }
+              }}
+            >
+              <ActivityIcon>
+                {activity.type === 'send' && '↑'}
+                {activity.type === 'receive' && '↓'}
+                {activity.type === 'swap' && '↔'}
+                {activity.type !== 'send' && activity.type !== 'receive' && activity.type !== 'swap' && '•'}
+              </ActivityIcon>
+              <Box sx={{ flexGrow: 1 }}>
+                <Typography variant="subtitle1">
+                  {activity.type.charAt(0).toUpperCase() + activity.type.slice(1)}
+                  {activity.function?.name && `: ${activity.function.name}`}
                 </Typography>
-                {activity.value_usd && (
-                  <Typography variant="body2" color="text.secondary">
-                    {formatUSD(activity.value_usd)}
-                  </Typography>
-                )}
+                <Typography variant="body2" color="text.secondary">
+                  {activity.type === 'send' && `To: ${formatAddress(activity.to_address)}`}
+                  {activity.type === 'receive' && `From: ${formatAddress(activity.from_address)}`}
+                  {activity.type !== 'send' && activity.type !== 'receive' && 
+                    `${formatAddress(activity.from_address)} → ${formatAddress(activity.to_address)}`}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {new Date(activity.block_time).toLocaleString()} • {activity.chain}
+                </Typography>
               </Box>
-            )}
-          </ActivityItem>
-        ))}
+              {activity.amount && (
+                <Box sx={{ textAlign: 'right' }}>
+                  <Typography 
+                    variant="subtitle1" 
+                    color={activity.type === 'send' ? 'error.main' : activity.type === 'receive' ? 'success.main' : 'inherit'}
+                  >
+                    {activity.type === 'send' ? '-' : activity.type === 'receive' ? '+' : ''}
+                    {formatAmount(activity.amount, activity.token_metadata?.decimals || 18)} {activity.token_metadata?.symbol || ''}
+                  </Typography>
+                  {activity.value_usd && (
+                    <Typography variant="body2" color="text.secondary">
+                      {formatUSD(activity.value_usd)}
+                    </Typography>
+                  )}
+                </Box>
+              )}
+            </ActivityItem>
+          );
+        })}
         {isFetchingNextPage && (
           <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
             <CircularProgress size={24} />
@@ -502,62 +496,6 @@ export default function WalletAnalysisPanel({ walletAddress }: WalletAnalysisPan
     );
   };
 
-  const renderRiskScore = () => {
-    if (!riskScoreData || riskScoreLoading) {
-      return null;
-    }
-
-    if (riskScoreError) {
-      return null;
-    }
-
-    return (
-      <RiskScoreContainer>
-        <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-          <SecurityIcon color={
-            riskScoreData.risk_level === 'LOW' ? 'success' :
-            riskScoreData.risk_level === 'MEDIUM' ? 'warning' : 'error'
-          } sx={{ mr: 1 }} />
-          <Typography variant="h6">
-            Wallet Risk Score: {riskScoreData.risk_score.toFixed(0)}/100
-          </Typography>
-          <Chip 
-            label={riskScoreData.risk_level} 
-            color={
-              riskScoreData.risk_level === 'LOW' ? 'success' :
-              riskScoreData.risk_level === 'MEDIUM' ? 'warning' : 'error'
-            }
-            size="small"
-            sx={{ ml: 1 }}
-          />
-        </Box>
-        
-        <RiskScoreBar 
-          variant="determinate" 
-          value={riskScoreData.risk_score} 
-          risk={riskScoreData.risk_level as 'LOW' | 'MEDIUM' | 'HIGH'} 
-        />
-        
-        {riskScoreData.risk_factors && riskScoreData.risk_factors.length > 0 && (
-          <Box sx={{ mt: 1 }}>
-            <Typography variant="body2" color="text.secondary">
-              Risk factors:
-            </Typography>
-            <ul style={{ margin: '8px 0', paddingLeft: '20px' }}>
-              {riskScoreData.risk_factors.map((factor, index) => (
-                <li key={index}>
-                  <Typography variant="body2" color="text.secondary">
-                    {factor}
-                  </Typography>
-                </li>
-              ))}
-            </ul>
-          </Box>
-        )}
-      </RiskScoreContainer>
-    );
-  };
-
   const renderTokenInfoDrawer = () => {
     return (
       <Drawer
@@ -625,7 +563,7 @@ export default function WalletAnalysisPanel({ walletAddress }: WalletAnalysisPan
               </InfoRow>
               <InfoRow>
                 <Typography variant="body2" color="text.secondary">Value (USD)</Typography>
-                <Typography variant="body2">{formatUSD(selectedToken.value_usd)}</Typography>
+                <Typography variant="body2">{formatUSD(token.value_usd)}</Typography>
               </InfoRow>
               <InfoRow>
                 <Typography variant="body2" color="text.secondary">Chain</Typography>
@@ -700,6 +638,13 @@ export default function WalletAnalysisPanel({ walletAddress }: WalletAnalysisPan
   return (
     <ErrorBoundary>
       <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <Box sx={{ p: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Typography variant="h5" component="div">
+                {formatAddress(walletAddress)}
+            </Typography>
+            {walletAddress && <RiskBadge walletAddress={walletAddress} />}
+        </Box>
+        <Divider />
         <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
           <Tabs 
             value={tabValue} 
@@ -726,6 +671,11 @@ export default function WalletAnalysisPanel({ walletAddress }: WalletAnalysisPan
         </TabPanel>
         
         {renderTokenInfoDrawer()}
+        <EvidenceDrawer
+          evidenceBundleId={selectedEvidenceId}
+          open={evidenceDrawerOpen}
+          onClose={() => setEvidenceDrawerOpen(false)}
+        />
       </Card>
     </ErrorBoundary>
   );

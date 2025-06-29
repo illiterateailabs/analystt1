@@ -96,6 +96,16 @@ apiClient.interceptors.response.use(
 );
 
 // Error handling helper
+// Emit browser event for rate-limit so UI can show toast notifications
+if (typeof window !== 'undefined') {
+  apiClient.interceptors.response.use(undefined, (error) => {
+    if (error?.response?.status === 429) {
+      window.dispatchEvent(new CustomEvent('rate-limit', { detail: error }));
+    }
+    return Promise.reject(error);
+  });
+}
+
 export const handleAPIError = (error: any) => {
   let message = 'An unexpected error occurred';
   let status = 500;
@@ -503,6 +513,56 @@ export interface PromptResponse {
 export interface PromptUpdate {
   system_prompt: string;
   description?: string;
+
+// Unified risk-score endpoint (backend /analysis/fraud-score)
+export interface RiskScoreResponse {
+  wallet_address: string;
+  risk_score: number;
+  risk_level: 'LOW' | 'MEDIUM' | 'HIGH';
+  risk_factors?: string[];
+}
+
+// Evidence bundle schemas
+export interface EvidenceItem {
+  id: string;
+  description: string;
+  confidence: number;
+  source: string;
+  raw_data?: any;
+}
+
+export interface EvidenceBundle {
+  bundle_id: string;
+  created_at: string;
+  title: string;
+  items: EvidenceItem[];
+  summary?: string;
+}
+
+// Back-pressure provider status
+export interface ProviderStatus {
+  provider_id: string;
+  budget: {
+    daily_spent_usd: number;
+    daily_limit_usd: number;
+    monthly_spent_usd: number;
+    monthly_limit_usd: number;
+  };
+  requests: {
+    daily_count: number;
+    daily_limit: number;
+    requests_this_minute: number;
+    minute_limit: number;
+  };
+  circuit_breaker: {
+    state: 'closed' | 'open' | 'half_open';
+    failure_count: number;
+    can_request: boolean;
+  };
+}
+
+export type BackpressureStatus = Record<string, ProviderStatus>;
+
   metadata?: Record<string, any>;
 }
 
@@ -827,6 +887,22 @@ export const analysisAPI = {
     );
     return response.data;
   },
+
+  // ---------------- Risk score & Evidence -----------------
+  getRiskScore: async (wallet: string): Promise<RiskScoreResponse> => {
+    const response = await apiClient.get(`/analysis/fraud-score/${wallet}`);
+    return response.data;
+  },
+
+  listEvidenceBundles: async (): Promise<EvidenceBundle[]> => {
+    const response = await apiClient.get('/analysis/evidence');
+    return response.data?.bundles ?? [];
+  },
+
+  getEvidenceBundle: async (bundleId: string): Promise<EvidenceBundle> => {
+    const response = await apiClient.get(`/analysis/evidence/${bundleId}`);
+    return response.data;
+  },
 };
 
 // Prompt Management API
@@ -880,3 +956,28 @@ export const updateAgentPrompt = promptsAPI.updateAgentPrompt;
 export const resetAgentPrompt = promptsAPI.resetAgentPrompt;
 
 export default apiClient;
+
+// ------------------------- Back-pressure API --------------------------
+export const backpressureAPI = {
+  getAllProviderStatus: async (): Promise<BackpressureStatus> => {
+    const response = await apiClient.get('/backpressure/status');
+    return response.data;
+  },
+  getProviderStatus: async (providerId: string): Promise<ProviderStatus> => {
+    const response = await apiClient.get(`/backpressure/status/${providerId}`);
+    return response.data;
+  },
+};
+
+// ---------------------- WebSocket Progress Helper --------------------
+/**
+ * Create WebSocket connection that listens to backend task progress events.
+ * Consumers should handle JSON messages: { task_id, progress, status }
+ */
+export const createProgressSocket = (taskId: string): WebSocket => {
+  const wsBase =
+    process.env.NEXT_PUBLIC_WS_URL ||
+    (API_BASE_URL.replace(/^http/, 'ws').replace(/\\/api\\/v1$/, '') + '/ws');
+  const socket = new WebSocket(`${wsBase}/progress/${taskId}`);
+  return socket;
+};
