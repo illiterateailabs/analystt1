@@ -56,6 +56,27 @@ external_api_credit_used_total = Counter(
     ['provider', 'credit_type']
 )
 
+# Budget usage ratio (0.0-1.0) for external API providers
+external_api_budget_ratio = Gauge(
+    'external_api_budget_ratio',
+    'Ratio of budget used for external API providers (0.0-1.0)',
+    ['provider', 'budget_type']  # budget_type: 'daily', 'monthly'
+)
+
+# Rate limit remaining for external API providers
+external_api_rate_limit_remaining = Gauge(
+    'external_api_rate_limit_remaining',
+    'Number of API calls remaining before rate limit is hit',
+    ['provider', 'limit_type']  # limit_type: 'minute', 'day'
+)
+
+# Circuit breaker state for external API providers
+external_api_circuit_breaker_state = Gauge(
+    'external_api_circuit_breaker_state',
+    'Circuit breaker state for external API providers (0=closed, 1=half-open, 2=open)',
+    ['provider']
+)
+
 # --- LLM Metrics ---
 
 # Count of LLM requests by model
@@ -315,6 +336,97 @@ class ApiMetrics:
             credit_type=credit_type
         ).inc(cost)
         logger.debug(f"Recorded API cost: ${cost:.6f} for {provider}/{credit_type}")
+    
+    @staticmethod
+    def update_backpressure_metrics(provider_id: str, status_data: Dict[str, Any]) -> None:
+        """
+        Update backpressure-related metrics for a provider.
+        
+        Args:
+            provider_id: The provider identifier
+            status_data: Provider status data from backpressure manager
+        """
+        # Update budget ratios
+        budget = status_data.get("budget", {})
+        if budget:
+            # Daily budget ratio
+            daily_limit = budget.get("daily_limit_usd", 0)
+            if daily_limit > 0:
+                daily_spent = budget.get("daily_spent_usd", 0)
+                daily_ratio = daily_spent / daily_limit
+                external_api_budget_ratio.labels(
+                    provider=provider_id,
+                    budget_type="daily"
+                ).set(daily_ratio)
+                
+                # Log if approaching limit
+                if daily_ratio >= 0.8:
+                    logger.warning(f"Provider {provider_id} at {daily_ratio:.1%} of daily budget")
+            
+            # Monthly budget ratio
+            monthly_limit = budget.get("monthly_limit_usd", 0)
+            if monthly_limit > 0:
+                monthly_spent = budget.get("monthly_spent_usd", 0)
+                monthly_ratio = monthly_spent / monthly_limit
+                external_api_budget_ratio.labels(
+                    provider=provider_id,
+                    budget_type="monthly"
+                ).set(monthly_ratio)
+                
+                # Log if approaching limit
+                if monthly_ratio >= 0.8:
+                    logger.warning(f"Provider {provider_id} at {monthly_ratio:.1%} of monthly budget")
+        
+        # Update rate limit metrics
+        requests = status_data.get("requests", {})
+        if requests:
+            # Per-minute rate limit
+            minute_limit = requests.get("minute_limit", 0)
+            if minute_limit > 0:
+                minute_remaining = minute_limit - requests.get("requests_this_minute", 0)
+                external_api_rate_limit_remaining.labels(
+                    provider=provider_id,
+                    limit_type="minute"
+                ).set(minute_remaining)
+            
+            # Per-day rate limit
+            daily_limit = requests.get("daily_limit", 0)
+            if daily_limit > 0:
+                daily_remaining = daily_limit - requests.get("daily_count", 0)
+                external_api_rate_limit_remaining.labels(
+                    provider=provider_id,
+                    limit_type="day"
+                ).set(daily_remaining)
+        
+        # Update circuit breaker state
+        circuit_breaker = status_data.get("circuit_breaker", {})
+        if circuit_breaker:
+            state = circuit_breaker.get("state", "closed")
+            # Convert string state to numeric value for the gauge
+            state_value = 0  # closed (default)
+            if state == "half_open":
+                state_value = 1
+            elif state == "open":
+                state_value = 2
+                
+            external_api_circuit_breaker_state.labels(
+                provider=provider_id
+            ).set(state_value)
+            
+            # Log circuit breaker state changes
+            if state != "closed":
+                logger.warning(f"Provider {provider_id} circuit breaker in {state} state")
+    
+    @staticmethod
+    def update_all_providers_metrics(providers_status: Dict[str, Dict[str, Any]]) -> None:
+        """
+        Update metrics for all providers.
+        
+        Args:
+            providers_status: Dictionary of provider statuses from backpressure manager
+        """
+        for provider_id, status in providers_status.items():
+            ApiMetrics.update_backpressure_metrics(provider_id, status)
 
 
 class LlmMetrics:

@@ -186,6 +186,9 @@ class BackpressureManager:
         # Initialize from provider registry
         self._load_provider_limits()
         self._initialize_redis()
+        
+        # Start metrics updater task
+        self.start_metrics_updater()
     
     def _load_provider_limits(self) -> None:
         """Load provider limits from registry."""
@@ -369,6 +372,45 @@ class BackpressureManager:
                 "can_request": circuit_breaker.can_request(),
             }
         }
+    
+    def update_metrics(self) -> None:
+        """Update Prometheus metrics with current provider status."""
+        if not ApiMetrics:
+            return
+        
+        try:
+            # Get status for all providers
+            all_providers_status = {
+                provider_id: self.get_provider_status(provider_id)
+                for provider_id in self.provider_limits.keys()
+            }
+            
+            # Update metrics
+            ApiMetrics.update_all_providers_metrics(all_providers_status)
+            logger.debug("Updated provider metrics in Prometheus")
+        except Exception as e:
+            logger.error(f"Error updating provider metrics: {e}")
+    
+    async def _metrics_updater_task(self) -> None:
+        """Background task to periodically update metrics."""
+        while True:
+            try:
+                self.update_metrics()
+            except Exception as e:
+                logger.error(f"Error in metrics updater task: {e}")
+            
+            # Update every 15 seconds
+            await asyncio.sleep(15)
+    
+    def start_metrics_updater(self) -> None:
+        """Start the background metrics updater task."""
+        if not ApiMetrics:
+            logger.warning("ApiMetrics not available, metrics updater not started")
+            return
+        
+        # Start background task
+        asyncio.create_task(self._metrics_updater_task())
+        logger.info("Started provider metrics updater task")
 
 # Global manager instance
 _backpressure_manager: Optional[BackpressureManager] = None

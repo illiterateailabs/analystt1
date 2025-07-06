@@ -1,0 +1,17 @@
+apiVersion: 1
+
+providers:
+  - name: 'default'
+    orgId: 1
+    folder: 'Analyst Droid'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      # Path to dashboard JSON files
+      path: /etc/grafana/provisioning/dashboards
+      # Import dashboards with their original UIDs
+      preserveFolders: true
+      # Use folder names from the filesystem
+      foldersFromFilesStructure: true

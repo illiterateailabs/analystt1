@@ -20,6 +20,7 @@ from backend.jobs.worker_monitor import WorkerMonitor
 from backend.core.metrics import BusinessMetrics
 from backend.integrations.neo4j_client import Neo4jClient
 from backend.core.telemetry import trace
+from backend.core.backpressure import get_all_provider_status
 
 # Configure module logger
 logger = logging.getLogger(__name__)
@@ -191,6 +192,17 @@ async def worker_health() -> Dict[str, Any]:
     """
     # This simply exposes the worker monitor's health summary
     return worker_monitor.get_health_summary()
+
+@router.get("/health/providers", summary="External providers health check")
+@trace("health.providers")
+async def providers_health() -> Dict[str, Any]:
+    """
+    Returns real-time budget / rate-limit status for all configured
+    external API providers as tracked by the BackpressureManager.
+
+    This endpoint is useful for dashboards and proactive alerting.
+    """
+    return get_all_provider_status()
 
 @router.get("/health/system", summary="Comprehensive system health check")
 @trace("health.system")
