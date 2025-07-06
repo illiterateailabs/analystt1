@@ -16,6 +16,12 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
+# Rate limiting (SlowAPI)
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
+
 # Back-pressure / budget-control middleware
 from backend.core.backpressure import BackpressureMiddleware
 from backend.api.v1 import (
@@ -60,6 +66,18 @@ app = FastAPI(
     redoc_url="/api/redoc" if FASTAPI_DEBUG else None,
 )
 
+# --------------------------------------------------------------------------- #
+# OpenTelemetry – instrument FastAPI early to capture all incoming requests
+# --------------------------------------------------------------------------- #
+if os.getenv("OTEL_TRACE_ENABLED", "false").lower() == "true":
+    try:
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+        FastAPIInstrumentor().instrument_app(app)
+    except Exception as e:  # pragma: no cover
+        # We don't want instrumentation failures to break the app
+        logging.getLogger(__name__).warning(f"FastAPI OTEL instrumentation failed: {e}")
+
 # Initialize OpenTelemetry telemetry
 @app.on_event("startup")
 async def initialize_telemetry() -> None:
@@ -101,6 +119,18 @@ app.add_middleware(
     secret_key=SECRET_KEY,
     max_age=3600,  # 1 hour
 )
+
+# --------------------------------------------------------------------------- #
+# SlowAPI Rate-Limiting Middleware
+# --------------------------------------------------------------------------- #
+# Default per-IP limit can be overridden via env (e.g., "200/minute;2000/day")
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=[os.getenv("GLOBAL_RATE_LIMIT", "100/minute")],
+)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 # Mount back-pressure middleware (rate-limit, budget & circuit-breaker)
 app.add_middleware(BackpressureMiddleware)

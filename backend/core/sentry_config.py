@@ -18,6 +18,16 @@ from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 
 logger = logging.getLogger(__name__)
 
+# --------------------------------------------------------------------------- #
+# Internal helpers
+# --------------------------------------------------------------------------- #
+
+def _is_sentry_enabled() -> bool:
+    """
+    Return True if a Sentry client is currently configured for this process.
+    """
+    return sentry_sdk.Hub.current.client is not None
+
 
 def init_sentry() -> None:
     """
@@ -124,7 +134,8 @@ def set_user_context(user_id: str, username: Optional[str] = None) -> None:
         user_id: The user's ID
         username: The user's name (optional)
     """
-    sentry_sdk.set_user({"id": user_id, "username": username})
+    if _is_sentry_enabled():
+        sentry_sdk.set_user({"id": user_id, "username": username})
 
 
 def set_tag(key: str, value: str) -> None:
@@ -135,7 +146,8 @@ def set_tag(key: str, value: str) -> None:
         key: Tag name
         value: Tag value
     """
-    sentry_sdk.set_tag(key, value)
+    if _is_sentry_enabled():
+        sentry_sdk.set_tag(key, value)
 
 
 def capture_message(message: str, level: str = "info") -> None:
@@ -146,7 +158,8 @@ def capture_message(message: str, level: str = "info") -> None:
         message: The message to capture
         level: The log level (default: info)
     """
-    sentry_sdk.capture_message(message, level=level)
+    if _is_sentry_enabled():
+        sentry_sdk.capture_message(message, level=level)
 
 
 def capture_exception(exc: Optional[Exception] = None) -> None:
@@ -156,4 +169,5 @@ def capture_exception(exc: Optional[Exception] = None) -> None:
     Args:
         exc: The exception to capture (default: current exception)
     """
-    sentry_sdk.capture_exception(exc)
+    if _is_sentry_enabled():
+        sentry_sdk.capture_exception(exc)
