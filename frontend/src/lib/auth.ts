@@ -1,7 +1,7 @@
 'use client';
 
-import { jwtDecode } from 'jwt-decode'; // You might need to install this: npm install jwt-decode
-import { API_BASE_URL } from './constants'; // Assuming you have a constants file for API base URL
+import { jwtDecode } from 'jwt-decode';
+import { API_BASE_URL } from './constants';
 
 interface DecodedToken {
   sub: string; // Subject (e.g., user ID or email)
@@ -11,126 +11,121 @@ interface DecodedToken {
   // Add other fields your JWT might contain
 }
 
-const ACCESS_TOKEN_KEY = 'access_token';
-const REFRESH_TOKEN_KEY = 'refresh_token';
+interface UserInfo {
+  user_id: string;
+  username: string;
+  is_superuser: boolean;
+}
 
-// 1. Store/retrieve JWT tokens
-export const setTokens = (accessToken: string, refreshToken: string) => {
-  localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
-  localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
-};
-
-export const getAccessToken = (): string | null => {
-  return localStorage.getItem(ACCESS_TOKEN_KEY);
-};
-
-export const getRefreshToken = (): string | null => {
-  return localStorage.getItem(REFRESH_TOKEN_KEY);
-};
-
-// 2. Check if user is authenticated
-export const isAuthenticated = (): boolean => {
-  const token = getAccessToken();
-  if (!token) {
-    return false;
-  }
+// Check if user is authenticated by verifying with the server
+export const isAuthenticated = async (): Promise<boolean> => {
   try {
-    const decoded: DecodedToken = jwtDecode(token);
-    const currentTime = Date.now() / 1000; // Convert to seconds
-    return decoded.exp > currentTime; // Check if token is not expired
+    const response = await fetch(`${API_BASE_URL}/auth/verify`, {
+      method: 'GET',
+      credentials: 'include', // Important: include cookies in the request
+    });
+    
+    return response.ok;
   } catch (error) {
-    console.error('Error decoding access token:', error);
+    console.error('Authentication verification error:', error);
     return false;
   }
 };
 
-// 3. Get user info from token
-export const getUserInfo = (): DecodedToken | null => {
-  const token = getAccessToken();
-  if (!token) {
-    return null;
-  }
+// Get user info from server
+export const getUserInfo = async (): Promise<UserInfo | null> => {
   try {
-    const decoded: DecodedToken = jwtDecode(token);
-    return decoded;
+    const response = await fetch(`${API_BASE_URL}/auth/me`, {
+      method: 'GET',
+      credentials: 'include', // Important: include cookies in the request
+    });
+    
+    if (!response.ok) {
+      return null;
+    }
+    
+    return await response.json();
   } catch (error) {
-    console.error('Error decoding access token:', error);
+    console.error('Error fetching user info:', error);
     return null;
   }
 };
 
-// 4. Logout function
-export const logout = () => {
-  localStorage.removeItem(ACCESS_TOKEN_KEY);
-  localStorage.removeItem(REFRESH_TOKEN_KEY);
-  // Optionally redirect to login page
-  window.location.href = '/login';
+// Logout function - calls server to clear cookies
+export const logout = async (): Promise<void> => {
+  try {
+    await fetch(`${API_BASE_URL}/auth/logout`, {
+      method: 'POST',
+      credentials: 'include', // Important: include cookies in the request
+    });
+  } catch (error) {
+    console.error('Logout error:', error);
+  } finally {
+    // Always redirect to login page, even if the server request fails
+    window.location.href = '/login';
+  }
 };
 
-// 5. Refresh token logic
-export const refreshAccessToken = async (): Promise<string | null> => {
-  const refreshToken = getRefreshToken();
-  if (!refreshToken) {
-    console.warn('No refresh token available. User needs to re-authenticate.');
-    logout(); // Force re-login if no refresh token
-    return null;
-  }
-
+// Refresh token logic - server handles token rotation via cookies
+export const refreshAccessToken = async (): Promise<boolean> => {
   try {
     const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
       method: 'POST',
+      credentials: 'include', // Important: include cookies in the request
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ refresh_token: refreshToken }),
+      // No need to send tokens in body - they're in the cookies
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      console.error('Failed to refresh token:', errorData.error || response.statusText);
-      logout(); // Logout if refresh fails
-      return null;
+      console.error('Failed to refresh token:', response.statusText);
+      await logout(); // Logout if refresh fails
+      return false;
     }
 
-    const data = await response.json();
-    setTokens(data.access_token, data.refresh_token);
-    return data.access_token;
+    return true;
   } catch (error) {
     console.error('Network error during token refresh:', error);
-    logout(); // Logout on network errors during refresh
-    return null;
+    await logout(); // Logout on network errors during refresh
+    return false;
   }
 };
 
-// 6. Auth header helper for API calls
+// Auth header helper for API calls - now just includes CSRF token if needed
 export const getAuthHeaders = async (): Promise<HeadersInit> => {
-  let token = getAccessToken();
-
-  // If token is expired or missing, try to refresh
-  if (!token || !isAuthenticated()) {
-    token = await refreshAccessToken();
+  // With cookie auth, we only need Content-Type and CSRF token (if applicable)
+  // The CSRF token would typically be read from a cookie that is not httpOnly
+  const headers: HeadersInit = {
+    'Content-Type': 'application/json',
+  };
+  
+  // If your app uses CSRF protection, get the token from the cookie
+  const csrfToken = document.cookie
+    .split('; ')
+    .find(row => row.startsWith('csrf_token='))
+    ?.split('=')[1];
+    
+  if (csrfToken) {
+    headers['X-CSRF-Token'] = csrfToken;
   }
-
-  if (token) {
-    return {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
-    };
-  } else {
-    // If no token after refresh, return basic headers or throw error
-    return {
-      'Content-Type': 'application/json',
-    };
-  }
+  
+  return headers;
 };
 
-// Helper to check if token is about to expire (e.g., within 5 minutes)
-export const isTokenAboutToExpire = (token: string, minutesThreshold: number = 5): boolean => {
+// Helper to check if user session needs refresh (for proactive refreshing)
+export const checkSessionStatus = async (): Promise<void> => {
   try {
-    const decoded: DecodedToken = jwtDecode(token);
-    const currentTime = Date.now() / 1000;
-    return (decoded.exp - currentTime) < (minutesThreshold * 60);
+    const response = await fetch(`${API_BASE_URL}/auth/status`, {
+      method: 'GET',
+      credentials: 'include',
+    });
+    
+    if (response.status === 401) {
+      // Session expired, try to refresh
+      await refreshAccessToken();
+    }
   } catch (error) {
-    return true; // Assume it's about to expire if decoding fails
+    console.error('Session check error:', error);
   }
 };

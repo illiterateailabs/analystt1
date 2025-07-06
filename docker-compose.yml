@@ -63,6 +63,23 @@ services:
       timeout: 5s
       retries: 5
 
+  # Dedicated cache Redis (db 1) for Backpressure & Vector indices
+  redis-cache:
+    image: redis:7-alpine
+    container_name: analyst_agent_redis_cache
+    ports:
+      - "6380:6379"          # Map host 6380 -> container 6379
+    command: ["redis-server", "--databases", "2"]  # enable multiple DBs; we'll use db 1
+    volumes:
+      - redis_cache_data:/data
+    networks:
+      - analyst_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6379", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # Backend API service
   backend:
     build:
@@ -103,6 +120,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      redis-cache:
         condition: service_healthy
     networks:
       - analyst_network
@@ -156,6 +175,7 @@ volumes:
   neo4j_plugins:
   postgres_data:
   redis_data:
+  redis_cache_data:
 
 networks:
   analyst_network:

@@ -33,7 +33,6 @@ from typing import Any, Callable, Dict, Optional, Union
 
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.instrumentation.logging import LoggingInstrumentor
 from opentelemetry.instrumentation.psycopg2 import Psycopg2Instrumentor
@@ -187,17 +186,7 @@ def _setup_auto_instrumentation(excluded_urls_str: Optional[str]) -> None:
     if excluded_urls_str:
         excluded_urls.extend(excluded_urls_str.split(","))
     
-    # FastAPI instrumentation
-    try:
-        FastAPIInstrumentor.instrument_app(
-            None, # app object will be passed later in main.py
-            excluded_urls=excluded_urls,
-            server_request_hook=_fastapi_request_hook,
-            client_request_hook=_fastapi_response_hook
-        )
-        logger.info("FastAPI auto-instrumentation configured")
-    except Exception as e:
-        logger.warning(f"FastAPI instrumentation failed: {e}")
+    # FastAPI instrumentation is handled explicitly in `backend.main`
     
     # HTTP client instrumentation
     try:
