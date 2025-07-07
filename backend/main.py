@@ -26,6 +26,7 @@ from backend.api.v1 import (
     crew,
     ml_scoring,      # NEW: ML risk-scoring endpoints
     graph,
+    streaming,       # NEW: live streaming websocket endpoints
     prompts,
     templates,
     webhooks,
@@ -131,6 +132,11 @@ api_v1.include_router(prompts.router, prefix="/prompts", tags=["Prompts"])
 api_v1.include_router(templates.router, prefix="/templates", tags=["Templates"])
 api_v1.include_router(webhooks.router, prefix="/webhooks", tags=["Webhooks"])
 api_v1.include_router(whale_endpoints.router, prefix="/whales", tags=["Whales"])
+# Streaming WebSocket endpoints (router already declares /ws prefix)
+api_v1.include_router(
+    streaming.router,
+    tags=["Streaming"],
+)
 # ML Scoring endpoints
 api_v1.include_router(
     ml_scoring.router,
