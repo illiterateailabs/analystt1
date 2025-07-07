@@ -6,6 +6,10 @@ from fastapi import APIRouter, HTTPException, Depends, Request, UploadFile, File
 from pydantic import BaseModel, Field
 import base64
 
+# Import SlowAPI for rate limiting
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
 from backend.integrations.gemini_client import GeminiClient
 from backend.integrations.neo4j_client import Neo4jClient
 from backend.integrations.e2b_client import E2BClient
@@ -72,7 +76,7 @@ class ImageAnalysisRequest(BaseModel):
 class ImageAnalysisResponse(BaseModel):
     analysis: str = Field(..., description="Image analysis result")
     entities: Optional[List[Dict[str, Any]]] = Field(None, description="Extracted entities")
-    graph_updates: Optional[Dict[str, Any]] = Field(None, description="Graph database updates")
+    graph_updates: Optional[Dict[str, Any]]] = Field(None, description="Graph database updates")
 
 
 # Dependency functions
@@ -92,16 +96,31 @@ async def get_e2b_client(request: Request) -> E2BClient:
     return request.app.state.e2b
 
 
+async def get_limiter(request: Request) -> Limiter:
+    """Get the global rate limiter from app state."""
+    return request.app.state.limiter
+
+
 @router.post("/message", response_model=ChatResponse)
 @trace()  # OpenTelemetry span for full request handling
+# Add stricter rate limit for chat endpoint: 5 requests per 10 seconds
 async def send_message(
     request: ChatRequest,
+    req: Request,
     gemini: GeminiClient = Depends(get_gemini_client),
     neo4j: Neo4jClient = Depends(get_neo4j_client),
     e2b: E2BClient = Depends(get_e2b_client),
     db: AsyncSession = Depends(get_db),
+    limiter: Limiter = Depends(get_limiter),
 ):
     """Process a chat message and return AI response."""
+    # Apply rate limiting at runtime
+    await limiter.check_request(
+        req, 
+        key_func=get_remote_address, 
+        rate="5/10seconds"  # Stricter limit: 5 requests per 10 seconds
+    )
+    
     try:
         logger.info(f"Processing chat message: {request.message[:100]}...")
         
@@ -240,13 +259,23 @@ Graph Database Schema:
 
 @router.post("/analyze-image", response_model=ImageAnalysisResponse)
 @trace()  # Trace image-analysis pipeline
+# Add stricter rate limit for image analysis endpoint: 3 requests per 30 seconds
 async def analyze_image(
     file: UploadFile = File(...),
     request: ImageAnalysisRequest = ImageAnalysisRequest(),
+    req: Request = Request,
     gemini: GeminiClient = Depends(get_gemini_client),
-    neo4j: Neo4jClient = Depends(get_neo4j_client)
+    neo4j: Neo4jClient = Depends(get_neo4j_client),
+    limiter: Limiter = Depends(get_limiter),
 ):
     """Analyze an uploaded image using Gemini's vision capabilities."""
+    # Apply rate limiting at runtime
+    await limiter.check_request(
+        req, 
+        key_func=get_remote_address, 
+        rate="3/30seconds"  # Even stricter limit for image analysis: 3 requests per 30 seconds
+    )
+    
     try:
         logger.info(f"Analyzing image: {file.filename}")
         
@@ -321,15 +350,41 @@ async def _get_conversation_or_404(conversation_id: str, db: AsyncSession) -> Co
 
 
 @router.get("/conversation/{conversation_id}")
-async def get_conversation(conversation_id: str, db: AsyncSession = Depends(get_db)):
+# Add moderate rate limit for conversation retrieval: 20 requests per minute
+async def get_conversation(
+    conversation_id: str, 
+    req: Request,
+    db: AsyncSession = Depends(get_db),
+    limiter: Limiter = Depends(get_limiter),
+):
     """Retrieve a conversation from the database."""
+    # Apply rate limiting at runtime
+    await limiter.check_request(
+        req, 
+        key_func=get_remote_address, 
+        rate="20/minute"  # More lenient limit for read operations
+    )
+    
     conversation = await _get_conversation_or_404(conversation_id, db)
     return conversation.to_dict()
 
 
 @router.delete("/conversation/{conversation_id}")
-async def delete_conversation(conversation_id: str, db: AsyncSession = Depends(get_db)):
+# Add moderate rate limit for conversation deletion: 10 requests per minute
+async def delete_conversation(
+    conversation_id: str, 
+    req: Request,
+    db: AsyncSession = Depends(get_db),
+    limiter: Limiter = Depends(get_limiter),
+):
     """Delete a conversation and its messages from the database."""
+    # Apply rate limiting at runtime
+    await limiter.check_request(
+        req, 
+        key_func=get_remote_address, 
+        rate="10/minute"  # Moderate limit for deletion operations
+    )
+    
     conversation = await _get_conversation_or_404(conversation_id, db)
     try:
         await db.delete(conversation)
@@ -360,6 +415,7 @@ def _conversation_meta(convo: Conversation) -> Dict[str, Any]:
 
 
 @router.get("/conversations")
+# Add moderate rate limit for listing conversations: 20 requests per minute
 async def list_conversations(
     limit: int = Query(20, ge=1, le=100, description="Max items to return"),
     offset: int = Query(0, ge=0, description="Items to skip"),
@@ -368,13 +424,22 @@ async def list_conversations(
         regex=r"^[0-9a-fA-F\-]{36}$",
         description="Filter by owner user_id (UUID)",
     ),
+    req: Request = Request,
     db: AsyncSession = Depends(get_db),
+    limiter: Limiter = Depends(get_limiter),
 ):
     """
     List conversations with optional **pagination** and **user filtering**.
 
     Results are ordered by `created_at` descending.
     """
+    # Apply rate limiting at runtime
+    await limiter.check_request(
+        req, 
+        key_func=get_remote_address, 
+        rate="20/minute"  # More lenient limit for read operations
+    )
+    
     try:
         base_stmt = select(Conversation)
         if user_id:
