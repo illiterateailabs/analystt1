@@ -9,7 +9,8 @@ This folder centralises **architecture diagrams, design notes, research, hand-of
 
 | Domain | Document | Purpose |
 | ------ | -------- | ------- |
-| **Project Status** | [`MASTER_STATUS.md`](MASTER_STATUS.md) | Single-source high-level status (roadmap, open risks, release notes). |
+| **Project Status** | [`PROJECT_STATUS.md`](PROJECT_STATUS.md) | Single-source high-level status (open risks, release notes). |
+| **Phase 2 Roadmap** | [`PHASE_2_ROADMAP.md`](PHASE_2_ROADMAP.md) | Canonical backlog & timeline for the current feature wave. |
 | **Architecture** | [`TECHNICAL_ARCHITECTURE.md`](TECHNICAL_ARCHITECTURE.md) | Component breakdown of the FastAPI + Next.js + Neo4j/PostgreSQL stack. |
 | **Capabilities** | [`CAPABILITIES_CATALOG.md`](CAPABILITIES_CATALOG.md) | Catalogue of built-in analysis & fraud-detection capabilities. |
 | **Sessions / Hand-offs** | `session-handoff-YYYY-MM-DD-*.md` | Daily transfer logs to preserve decision context across shifts. |
@@ -51,12 +52,15 @@ For deeper detail read [`TECHNICAL_ARCHITECTURE.md`](TECHNICAL_ARCHITECTURE.md).
 
 ```
 memory-bank/
+├─ PROJECT_STATUS.md             # Project health dashboard
+├─ PHASE_2_ROADMAP.md            # Current roadmap & backlog
+├─ CLEANUP_SUMMARY.md            # Rationale for doc consolidation
 ├─ CAPABILITIES_CATALOG.md        # Feature index
 ├─ DOCUMENTATION_*.md             # Doc cleanup & plans
-├─ MASTER_STATUS.md               # Project health dashboard
 ├─ TECHNICAL_ARCHITECTURE.md      # System diagrams & flows
 ├─ research/                      # External research notes
 ├─ session-handoff-*.md           # Shift-change / on-call logs
+├─ archive/                       # Historical, read-only docs
 └─ (additional reference files)
 ```
 
@@ -78,7 +82,8 @@ Obsolete or duplicated docs have been removed; if you find outdated material ope
 
 | Doc Type | Owner | Refresh Cycle |
 | -------- | ----- | ------------- |
-| **MASTER_STATUS.md** | Tech Lead | Weekly (Friday) |
+| **PROJECT_STATUS.md** | Tech Lead | Weekly (Friday) |
+| **PHASE_2_ROADMAP.md** | Tech Lead | Sprint planning & mid-sprint review |
 | **Architecture & Capabilities** | Lead Architect | On every major feature merge |
 | **Hand-off Logs** | On-call / Pair | End of shift |
 | **Research Notes** | Feature Squad | Ad-hoc |
