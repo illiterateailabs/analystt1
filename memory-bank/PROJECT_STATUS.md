@@ -1,15 +1,18 @@
 # Project Status — Analyst Droid One  
-**Version:** v1.9.0-beta  **Last updated:** 2025-07-07  
+**Version:** v2.0.0-beta  **Last updated:** 2025-07-07  
 
 ---
 
 ## 🚀 Executive Summary  
-Analyst Droid One is a production-ready AI platform for blockchain fraud analysis. Phases 0-3 of the modernisation programme are **100 % complete**, delivering a hardened FastAPI + CrewAI stack with graph-aware RAG, background jobs and full observability. The codebase now prepares for **Phase 2 Feature Enhancements (4-6 weeks)** focused on:
+Analyst Droid One is a production-ready AI platform for blockchain fraud analysis.  
+With the **Feature Wave 2 (Phase 2) enhancements now fully shipped**, the system delivers:
 
-1. Advanced graph algorithms → deeper fraud pattern discovery  
-2. Real-time streaming → live transaction monitoring  
-3. ML model integration → automated risk scoring  
-4. Multi-tenant architecture → SaaS readiness  
+1. **Advanced graph algorithms** – GAT, community detection & risk propagation  
+2. **Real-time streaming** – Redis Streams + `/ws/tx_stream` WebSocket endpoint  
+3. **ML risk-scoring service** – ensemble models with explainability & caching  
+4. **Multi-tenant architecture** – tenant middleware, DB isolation & billing hooks  
+
+All four objectives have been merged to `main`, tagged **v2.0.0-beta**, and validated by an end-to-end integration test suite.  
 
 ---
 
@@ -25,12 +28,15 @@ Analyst Droid One is a production-ready AI platform for blockchain fraud analysi
 | **Task Queue** | Celery + Redis broker | ✅ Online |
 | **LLM** | Google Gemini 1.5-pro | ✅ Integrated |
 | **Sandbox** | e2b.dev python-data-science | ✅ Integrated |
+| **Streaming** | Redis Streams + WebSocket relay | ✅ Live |
+| **ML Risk Service** | Ensemble models (XGB/LGBM/CB) | ✅ Live |
+| **Multi-Tenancy** | Tenant middleware + DB isolation | ✅ Enabled |
 | **Observability** | Prometheus metrics, Sentry errors, OpenTelemetry traces | ✅ Live |
 | **CI/CD** | GitHub Actions matrix, Docker images | ✅ Passing |
 
 ---
 
-## 🎯 Capability Snapshot (Phase 0-3 Delivered)  
+## 🎯 Capability Snapshot (Core Phases 0-3 + Feature Wave 2 Delivered)  
 
 ### Fraud Detection & Graph Analytics  
 - GNN-based fraud detection, anomaly hunting  
@@ -42,6 +48,20 @@ Analyst Droid One is a production-ready AI platform for blockchain fraud analysi
 - Multi-chain ingestion via SIM, Covalent, Moralis clients  
 - Typed EventBus + back-pressure middleware with provider budgets  
 - Celery pipelines for SIM graph ingestion & GNN training  
+
+### Streaming & Real-Time Monitoring  
+- Redis Streams ingestion pipeline  
+- `/ws/tx_stream` WebSocket with tenant & risk filtering  
+
+### ML Risk-Scoring Service  
+- Ensemble model registry (local/S3/MLflow)  
+- Transaction, entity & subgraph scoring with confidence intervals  
+- SHAP-based explainability & Prometheus metrics  
+
+### Multi-Tenancy  
+- Tenant context middleware (`X-Tenant-ID` header / JWT)  
+- Field-level isolation in PostgreSQL; label/db isolation in Neo4j  
+- Tenant-aware caching & streaming prefixes  
 
 ### Multi-Agent Platform (CrewAI)  
 - Declarative crew YAML, prompt library, HITL pause/resume  
@@ -77,11 +97,12 @@ Analyst Droid One is a production-ready AI platform for blockchain fraud analysi
 | 3 | RAG & Explainability Loop | ✅ Complete |
 | 4 | Extensibility Hooks (code-gen, cost dashboards) | 🟡 In progress |
 | 5 | Polish & Harden (OTEL spans, load tests) | 🟡 In progress |
-| **Feature Wave 2** | Advanced graphs, streaming, ML risk, multi-tenant | 🔜 Kick-off |
+| **Feature Wave 2** | Advanced graphs, streaming, ML risk, multi-tenant | ✅ Complete |
+| 6 | Ops & Scaling (dashboards, perf, security hardening) | 🔜 Planned |
 
 ---
 
-## 🔮 Next Priorities (Phase 2 Kick-off)
+## 🔮 Post-Phase 2 Priorities (Heading into Phase 6 – Ops & Scaling)
 
 1. **Advanced Graph Algorithms**  
    • Implement Graph Attention Networks (GAT) in `gnn_fraud_detection_tool.py`  
@@ -101,17 +122,18 @@ Analyst Droid One is a production-ready AI platform for blockchain fraud analysi
    • Tenant admin UI & billing hooks  
 
 5. **Ops Enhancements**  
-   • Grafana dashboards for provider spend & queue depth  
-   • End-to-end load test harness (1 M rows / 100 k queries)  
+   • Grafana dashboards for spend, streaming lag & model drift  
+   • End-to-end load test harness (≥ 1 M rows / 100 k queries)  
+   • Full SLO/SLI definition & alert rules  
 
 ---
 
-## 📌 Action Items Before Sprint Start
-- [ ] Confirm multi-tenancy isolation level (DB-per-tenant vs shared)  
-- [ ] Finalise streaming stack selection (Kafka vs Redis Streams)  
-- [ ] Create `phase-2` branch & break down epics into GitHub issues  
-- [ ] Draft technical design docs for GAT & ensemble model services  
-- [ ] Update Helm chart scaffold for new services  
+## 📌 Action Items Before Next Sprint
+- [ ] Promote v2.0.0-beta to **v2.0.0 GA** after soak tests  
+- [ ] Harden Helm chart & CI deploy for multi-tenant clusters  
+- [ ] Roll out real ML models & scheduled retraining pipeline  
+- [ ] Add rate-limiting & secure cookie auth migration  
+- [ ] Complete OTEL spans for CrewAI execution path  
 
 ---
 
