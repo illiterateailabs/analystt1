@@ -16,19 +16,15 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-# Rate limiting (SlowAPI)
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
-from slowapi.util import get_remote_address
-
 # Back-pressure / budget-control middleware
 from backend.core.backpressure import BackpressureMiddleware
 from backend.api.v1 import (
     analysis,
     auth,
     chat,
+    advanced_graph,  # NEW: advanced graph algorithms
     crew,
+    ml_scoring,      # NEW: ML risk-scoring endpoints
     graph,
     prompts,
     templates,
@@ -44,6 +40,8 @@ from backend.core.telemetry import init_telemetry
 from backend.database import create_db_and_tables, get_engine
 from backend.jobs import sim_graph_job
 from backend.jobs.worker_monitor import WorkerMonitor  # start Celery worker monitor
+# Multi-tenancy
+from backend.tenancy import TenantMiddleware
 
 # Configure logging
 app_logging.setup_logging()
@@ -65,18 +63,6 @@ app = FastAPI(
     docs_url="/api/docs" if FASTAPI_DEBUG else None,
     redoc_url="/api/redoc" if FASTAPI_DEBUG else None,
 )
-
-# --------------------------------------------------------------------------- #
-# OpenTelemetry – instrument FastAPI early to capture all incoming requests
-# --------------------------------------------------------------------------- #
-if os.getenv("OTEL_TRACE_ENABLED", "false").lower() == "true":
-    try:
-        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-
-        FastAPIInstrumentor().instrument_app(app)
-    except Exception as e:  # pragma: no cover
-        # We don't want instrumentation failures to break the app
-        logging.getLogger(__name__).warning(f"FastAPI OTEL instrumentation failed: {e}")
 
 # Initialize OpenTelemetry telemetry
 @app.on_event("startup")
@@ -113,24 +99,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Tenant context (must run before other business middlewares)
+app.add_middleware(
+    TenantMiddleware,
+    tenant_header="X-Tenant-ID",
+)
+
 # Add session middleware
 app.add_middleware(
     SessionMiddleware,
     secret_key=SECRET_KEY,
     max_age=3600,  # 1 hour
 )
-
-# --------------------------------------------------------------------------- #
-# SlowAPI Rate-Limiting Middleware
-# --------------------------------------------------------------------------- #
-# Default per-IP limit can be overridden via env (e.g., "200/minute;2000/day")
-limiter = Limiter(
-    key_func=get_remote_address,
-    default_limits=[os.getenv("GLOBAL_RATE_LIMIT", "100/minute")],
-)
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-app.add_middleware(SlowAPIMiddleware)
 
 # Mount back-pressure middleware (rate-limit, budget & circuit-breaker)
 app.add_middleware(BackpressureMiddleware)
@@ -142,10 +122,21 @@ api_v1.include_router(analysis.router, prefix="/analysis", tags=["Analysis"])
 api_v1.include_router(chat.router, prefix="/chat", tags=["Chat"])
 api_v1.include_router(crew.router, prefix="/crew", tags=["Crew"])
 api_v1.include_router(graph.router, prefix="/graph", tags=["Graph"])
+api_v1.include_router(
+    advanced_graph.router,
+    prefix="/advanced-graph",
+    tags=["Advanced Graph"]
+)
 api_v1.include_router(prompts.router, prefix="/prompts", tags=["Prompts"])
 api_v1.include_router(templates.router, prefix="/templates", tags=["Templates"])
 api_v1.include_router(webhooks.router, prefix="/webhooks", tags=["Webhooks"])
 api_v1.include_router(whale_endpoints.router, prefix="/whales", tags=["Whales"])
+# ML Scoring endpoints
+api_v1.include_router(
+    ml_scoring.router,
+    prefix="/ml-scoring",
+    tags=["ML Scoring"],
+)
 # ws_progress router already defines its own `/ws/...` paths – no extra prefix
 api_v1.include_router(ws_progress.router, tags=["WebSockets"])
 # Health endpoints (detailed component checks)

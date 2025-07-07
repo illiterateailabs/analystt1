@@ -11,6 +11,8 @@ from backend.api.v1 import graph
 from backend.api.v1 import crew
 from backend.api.v1 import prompts
 from backend.api.v1 import webhooks
+from backend.api.v1 import advanced_graph
+from backend.api.v1 import ml_scoring
 
 __all__ = [
     "auth",
@@ -20,4 +22,6 @@ __all__ = [
     "crew",
     "prompts",
     "webhooks",
+    "advanced_graph",
+    "ml_scoring",
 ]
